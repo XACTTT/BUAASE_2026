@@ -1,0 +1,13 @@
+albumentations
+baal
+easydict
+einops
+numpy
+opencv_python
+Pillow
+scikit_learn
+scipy
+timm
+torchmetrics
+torchsnooper
+tqdm
