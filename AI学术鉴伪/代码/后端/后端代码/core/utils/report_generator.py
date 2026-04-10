@@ -9,18 +9,42 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 from reportlab.pdfbase.ttfonts import TTFont
 
 from ..models import DetectionTask, DetectionResult, SubDetectionResult
 
-# ─── 字体注册（宋体） ──────────────────────────────────────
+# ─── 字体注册（优先使用本地宋体文件，缺失时回退到内置中文字体） ──────────────────────────────────────
 BASE_DIR = Path(__file__).resolve().parent.parent
-pdfmetrics.registerFont(TTFont('SimSun', 'SimSun.ttf'))  # 中文字体
-pdfmetrics.registerFont(TTFont('SimSun-Bold', 'SimSun-Bold.ttf'))  # 中文加粗字体
+FONT_REGULAR = 'SimSun'
+FONT_BOLD = 'SimSun-Bold'
+
+_font_candidates = [
+    BASE_DIR / 'SimSun.ttf',
+    BASE_DIR / 'SimSun-Bold.ttf',
+    Path(__file__).resolve().parent / 'SimSun.ttf',
+    Path(__file__).resolve().parent / 'SimSun-Bold.ttf',
+]
+
+try:
+    if (_font_candidates[0]).exists():
+        pdfmetrics.registerFont(TTFont('SimSun', str(_font_candidates[0])))
+        if (_font_candidates[1]).exists():
+            pdfmetrics.registerFont(TTFont('SimSun-Bold', str(_font_candidates[1])))
+        else:
+            pdfmetrics.registerFont(TTFont('SimSun-Bold', str(_font_candidates[0])))
+    else:
+        pdfmetrics.registerFont(UnicodeCIDFont('STSong-Light'))
+        FONT_REGULAR = 'STSong-Light'
+        FONT_BOLD = 'STSong-Light'
+except Exception:
+    pdfmetrics.registerFont(UnicodeCIDFont('STSong-Light'))
+    FONT_REGULAR = 'STSong-Light'
+    FONT_BOLD = 'STSong-Light'
 
 
 # ─── 工具函数：自动换行绘制 ───────────────────────────────
-def _draw_multiline(c, x, y, text, max_chars=48, leading=14, font='SimSun', size=9):
+def _draw_multiline(c, x, y, text, max_chars=48, leading=14, font=FONT_REGULAR, size=9):
     c.setFont(font, size)
     for line in textwrap.wrap(text, width=max_chars):
         c.drawString(x, y, line)
@@ -58,11 +82,11 @@ def generate_detection_task_report(task: DetectionTask) -> str:
     c.addOutlineEntry("任务概览", "cover", level=0)
 
     y = H - 120
-    c.setFont("SimSun-Bold", 40)
+    c.setFont(FONT_BOLD, 40)
     c.drawCentredString(W / 2, y, '“听泉鉴图”图像造假检测报告')
     y -= 80
 
-    c.setFont("SimSun", 24)
+    c.setFont(FONT_REGULAR, 24)
     c.drawString(MARGIN, y, f"任务编号：{task.id}")
     y -= 40
     c.drawString(MARGIN, y, f"任务名称：{task.task_name}")
@@ -80,10 +104,10 @@ def generate_detection_task_report(task: DetectionTask) -> str:
 
     # 参数
     y -= 10
-    c.setFont("SimSun-Bold", 24)
+    c.setFont(FONT_BOLD, 24)
     c.drawString(MARGIN, y, "检测参数")
     y -= 36
-    c.setFont("SimSun", 22)
+    c.setFont(FONT_REGULAR, 22)
     c.drawString(MARGIN, y, f"cmd_block_size：{task.cmd_block_size}")
     y -= 36
     c.drawString(MARGIN, y, f"urn_k：{task.urn_k}")
@@ -102,7 +126,7 @@ def generate_detection_task_report(task: DetectionTask) -> str:
         c.addOutlineEntry(page_label, f"img_{dr.image_upload.id}", level=1)
 
         y = H - MARGIN
-        c.setFont("SimSun-Bold", 14)
+        c.setFont(FONT_BOLD, 14)
         c.drawString(MARGIN, y, page_label)
         y -= 25
 
@@ -117,7 +141,7 @@ def generate_detection_task_report(task: DetectionTask) -> str:
             # 更新 y 坐标，确保图像与后续内容的间距
             y -= 100  # 图片高度 + 适当的间距
         # 总体结论
-        c.setFont("SimSun", 11)
+        c.setFont(FONT_REGULAR, 11)
         c.drawString(MARGIN, y - 20, f"判定：{'造假' if dr.is_fake else '真实'}")
         c.drawString(MARGIN, y - 45, f"造假概率：{dr.confidence_score:.2f}")
         y -= 70
@@ -125,7 +149,7 @@ def generate_detection_task_report(task: DetectionTask) -> str:
         # LLM 结果
         if task.if_use_llm:
             y -= 10
-            c.setFont("SimSun-Bold", 11)
+            c.setFont(FONT_BOLD, 11)
             c.drawString(MARGIN, y, "大语言模型分析：")
             y -= 18
             y = _draw_multiline(c, MARGIN + 15, y, dr.llm_judgment or "无", max_chars=50)
@@ -146,12 +170,12 @@ def generate_detection_task_report(task: DetectionTask) -> str:
         y -= 130
 
         # 子方法
-        c.setFont("SimSun-Bold", 11)
+        c.setFont(FONT_BOLD, 11)
         c.drawString(MARGIN, y, "深度学习检测方法：")
         y -= 20
         for sub in dr.sub_results.all():
             y = _check_and_create_new_page(c, y, H, MARGIN)  # 调用检查函数
-            c.setFont("SimSun", 10)
+            c.setFont(FONT_REGULAR, 10)
             c.drawString(MARGIN + 10, y, f"{sub.method}  造假概率：{sub.probability:.2f}")
             if sub.mask_image and os.path.exists(sub.mask_image.path):
                 c.drawImage(ImageReader(sub.mask_image.path), MARGIN + 220, y - 40, width=60, height=60,
@@ -188,11 +212,11 @@ def generate_manual_review_report(review: ManualReview) -> str:
     c.addOutlineEntry("人工审核概览", "cover", level=0)
 
     y = H - MARGIN - 20
-    c.setFont("SimSun-Bold", 30)
+    c.setFont(FONT_BOLD, 30)
     c.drawCentredString(W / 2, y, '“听泉鉴图”人工审核报告')
     y -= 60
 
-    c.setFont("SimSun", 18)
+    c.setFont(FONT_REGULAR, 18)
     c.drawString(MARGIN, y, f"审核编号：{review.id}")
     y -= 30
     # 获取关联的任务名称（通过 DetectionTask）
@@ -229,10 +253,10 @@ def generate_manual_review_report(review: ManualReview) -> str:
 
     # 审核图片列表
     image_ids = ", ".join(str(img.id) for img in review.imgs.all())
-    c.setFont("SimSun-Bold", 14)
+    c.setFont(FONT_BOLD, 14)
     c.drawString(MARGIN, y, "审核图像列表：")
     y -= 20
-    c.setFont("SimSun", 12)
+    c.setFont(FONT_REGULAR, 12)
     for img in review.imgs.all():
         y = _draw_multiline(c, MARGIN + 10, y, f"图片 {img.id} —— 路径：{img.image.name}", max_chars=90)
         y -= 10
@@ -248,7 +272,7 @@ def generate_manual_review_report(review: ManualReview) -> str:
         c.bookmarkPage(f"manual_img_{image_upload.id}")
         c.addOutlineEntry(page_label, f"manual_img_{image_upload.id}", level=1)
 
-        c.setFont("SimSun-Bold", 14)
+        c.setFont(FONT_BOLD, 14)
         c.drawString(MARGIN, y, page_label)
         y -= 20
 

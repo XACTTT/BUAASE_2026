@@ -9,6 +9,7 @@ https://docs.djangoproject.com/en/4.1/topics/settings/
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/4.1/ref/settings/
 """
+import os
 from datetime import timedelta
 from pathlib import Path
 
@@ -20,12 +21,17 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 # See https://docs.djangoproject.com/en/4.1/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = "django-insecure-_v)h&d+^b=y_^u+di=au%*yf(u&j2nx((pcflfls*c1fn**3!d"
+SECRET_KEY = os.getenv(
+    "DJANGO_SECRET_KEY",
+    "django-insecure-_v)h&d+^b=y_^u+di=au%*yf(u&j2nx((pcflfls*c1fn**3!d",
+)
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.getenv("DJANGO_DEBUG", "False").lower() in ("1", "true", "yes", "on")
 
-ALLOWED_HOSTS = ['*']
+ALLOWED_HOSTS = [
+    host.strip() for host in os.getenv("DJANGO_ALLOWED_HOSTS", "*").split(",") if host.strip()
+]
 
 
 # Application definition
@@ -101,11 +107,11 @@ WSGI_APPLICATION = "fake_image_detector.wsgi.application"
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
-        'NAME': 'fake_image_detector_db_beta',  # 替换为你的数据库名
-        'USER': 'lzy',         # 替换为你的MySQL用户名
-        'PASSWORD': 'root123', # 替换为你的MySQL密码
-        'HOST': '122.9.45.122',
-        'PORT': '3306',
+        'NAME': os.getenv('DB_NAME', 'fake_image_detector_db_beta'),
+        'USER': os.getenv('DB_USER', 'TUE-xsjw-2'),
+        'PASSWORD': os.getenv('DB_PASSWORD', 'root123'),
+        'HOST': os.getenv('DB_HOST', 'localhost'),
+        'PORT': os.getenv('DB_PORT', '3306'),
     }
 }
 
@@ -173,8 +179,8 @@ MEDIA_URL = '/media/'  # 图像文件的公开访问URL前缀
 MEDIA_ROOT = BASE_DIR / 'media'  # 存储图像文件的本地目录
 
 # Celery配置
-CELERY_BROKER_URL = 'redis://localhost:6379/0'  # Redis作为任务队列
-CELERY_RESULT_BACKEND = 'redis://localhost:6379/0'  # Redis作为结果存储
+CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0')  # Redis作为任务队列
+CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', 'redis://localhost:6379/0')  # Redis作为结果存储
 CELERY_BROKER_TRANSPORT_OPTIONS = {
     "priority_steps": list(range(10)),       # 0..9
     "sep": ":",
@@ -187,11 +193,11 @@ CORS_ALLOW_ALL_ORIGINS = True
 
 # 在生产环境中使用真实的邮件服务（例如Gmail、SendGrid等）
 EMAIL_BACKEND = 'core.email_backends.MyEmailBackend'  # 使用自定义的邮件后端
-EMAIL_HOST = 'smtp.qq.com'
-EMAIL_PORT = 465
-EMAIL_USE_TLS = False
-EMAIL_USE_SSL = True
-EMAIL_HOST_USER = '2406854677@qq.com'
-EMAIL_HOST_PASSWORD = 'wvuwcljhdsvfebcj'
+EMAIL_HOST = os.getenv('EMAIL_HOST', 'smtp.qq.com')
+EMAIL_PORT = int(os.getenv('EMAIL_PORT', '465'))
+EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS', 'False').lower() in ('1', 'true', 'yes', 'on')
+EMAIL_USE_SSL = os.getenv('EMAIL_USE_SSL', 'True').lower() in ('1', 'true', 'yes', 'on')
+EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '2406854677@qq.com')
+EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', 'wvuwcljhdsvfebcj')
 
-DEFAULT_FROM_EMAIL = '2406854677@qq.com'  # 发件人邮箱
+DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', EMAIL_HOST_USER)  # 发件人邮箱
