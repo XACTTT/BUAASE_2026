@@ -10,6 +10,7 @@ declare module 'vue' {
     DetectionReviewStep: typeof import('./components/steps/DetectionReviewStep.vue')['default']
     DrawingDialog: typeof import('./components/DrawingDialog.vue')['default']
     DynamicCaptcha: typeof import('./components/DynamicCaptcha.vue')['default']
+    ExtractedContentStep: typeof import('./components/steps/ExtractedContentStep.vue')['default']
     ForgotPassword: typeof import('./components/ForgotPassword.vue')['default']
     ImageSelectionStep: typeof import('./components/steps/ImageSelectionStep.vue')['default']
     Notification: typeof import('./components/Notification.vue')['default']
