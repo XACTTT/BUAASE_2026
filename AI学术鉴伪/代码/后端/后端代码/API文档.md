@@ -2277,7 +2277,64 @@ Content-Type: application/json
 {"error": "错误信息"}
 ```
 
-## 9. 通知接口
+## **9. 模型管理接口（规划）**
+
+这一组接口用于管理后台的 AI 鉴伪大模型配置。页面分成两层权限：
+
+- 软件管理员：维护模型源、API Key、Base URL、默认模型等源级配置。
+- 组织管理员：在本组织范围内选择启用哪些模型，并调整参数。
+
+### **9.1 获取模型列表**
+- **URL**: `/api/admin/models/`
+- **方法**: `GET`
+- **说明**: 获取当前管理员可见的模型源列表，以及每个模型源下已配置的模型项。
+
+### **9.2 校验模型配置**
+- **URL**: `/api/admin/models/verify/`
+- **方法**: `POST`
+- **说明**: 新增或修改前，先验证 API Key、Base URL、模型名和组织可见性是否合法。
+
+### **9.3 新增模型源**
+- **URL**: `/api/admin/models/add/`
+- **方法**: `POST`
+- **权限**: 软件管理员
+- **说明**: 新增一个可管理的模型源，通常对应一个供应商或一组服务端点。
+
+### **9.4 修改模型源或组织配置**
+- **URL**: `/api/admin/models/<int:model_id>/update/`
+- **方法**: `PUT`
+- **说明**:
+  - 软件管理员可修改模型源级字段：`name`、`vendor`、`scope`、`base_url`、`api_key`、`default_model`、`description`。
+  - 组织管理员可修改组织可见模型的参数：`enabled`、`temperature`、`top_p`、`max_tokens`、`use_case`。
+
+### **9.5 删除模型源**
+- **URL**: `/api/admin/models/<int:model_id>/delete/`
+- **方法**: `DELETE`
+- **权限**: 软件管理员
+- **说明**: 删除模型源前应检查是否已被组织绑定；若已绑定，推荐采用软删除或返回提示让管理员先解除关联。
+
+### **9.6 推荐后端数据结构**
+
+建议拆成两层表，避免把“供应商配置”和“组织配置”混在一起：
+
+- `AIModelSource`：模型源基础信息，保存 `name`、`vendor`、`base_url`、`api_key`、`scope`、`status`、`created_by`。
+- `AIModelConfig`：模型项配置，保存 `source`、`model_id`、`display_name`、`module`、`enabled`、`temperature`、`top_p`、`max_tokens`、`description`。
+- `OrganizationModelBinding`：组织与模型的绑定关系，保存 `organization`、`model_config`、`enabled`、`priority`、`extra_params`。
+
+### **9.7 权限建议**
+
+- 软件管理员可以看到全部模型源和全部组织绑定信息。
+- 组织管理员只能看到自己组织可用的模型源和绑定关系。
+- 若后续需要更细粒度控制，可将“组织管理员”拆成“模型配置管理员”和“普通组织管理员”两个权限位。
+
+### **9.8 交互建议**
+
+- 新增和修改前先调用校验接口。
+- 删除模型源前提示是否存在组织绑定。
+- 组织管理员在前端只暴露“启用/禁用”和参数调节，不暴露 API Key 编辑入口。
+- 模型参数变更后建议写入操作日志，便于审计。
+
+## 10. 通知接口
 
 ### 9.1 获取未读通知数量
 
