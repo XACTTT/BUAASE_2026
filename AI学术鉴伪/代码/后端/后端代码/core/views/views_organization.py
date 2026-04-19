@@ -142,8 +142,12 @@ def get_pending_organization_applications(request):
     })
 
 
+from ..utils.log_utils import action_log, log_action, get_client_ip
+
+
 @api_view(['POST'])
 @permission_classes([IsAdminUser])
+@action_log('entity_update', target_type='OrganizationApplication', target_id_field='app_id')
 def approve_organization_application(request, app_id):
     try:
         application = OrganizationApplication.objects.get(id=app_id, status='pending')
@@ -228,6 +232,7 @@ def approve_organization_application(request, app_id):
 
 @api_view(['POST'])
 @permission_classes([IsAdminUser])
+@action_log('entity_update', target_type='OrganizationApplication', target_id_field='app_id')
 def reject_organization_application(request, app_id):
     try:
         application = OrganizationApplication.objects.get(id=app_id, status='pending')
@@ -246,6 +251,7 @@ def reject_organization_application(request, app_id):
 
 @api_view(['POST'])
 @permission_classes([IsAdminUser])
+@action_log('entity_create', target_type='Organization', target_id_field='organization_id')
 def create_organization_root(request):
     admin_email = request.data.get('admin_email')
     admin_username = request.data.get('admin_username')
@@ -432,6 +438,7 @@ def get_organization_detail(request, org_id):
 
 @api_view(['POST'])
 @permission_classes([IsAdminUser])
+@action_log('model_config_change', target_type='Organization', target_id_field='org_id')
 def update_organization_role_permissions(request, org_id):
     try:
         organization = Organization.objects.get(id=org_id)

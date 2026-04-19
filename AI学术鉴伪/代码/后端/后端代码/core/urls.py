@@ -15,6 +15,8 @@ from .views.views_admin import (
     UserActionLogGetView,
     UserActionLogDeleteView,
     UserActionLogDownloadView,
+    UserActionLogMarkAnomalyView,
+    LogStatisticsView,
     get_task_summary,
     get_detection_task_status,
     get_all_user_tasks,
@@ -108,11 +110,12 @@ urlpatterns = [
     # 用户权限管理视图
     path('user_permission/<int:user_id>/', UserPermissionView.as_view(), name='user_permission'),
     # 帖子举报处理视图
-    path('post_report/<int:post_id>/', PostReportView.as_view(), name='post_report'),
+    path('post_report/<int:post_id>/', PostReportView, name='post_report'),
     # 用户操作日志视图
     path('user_action_log/', UserActionLogGetView.as_view(), name='user_action_log'),
     path('user_action_log/<int:log_id>/', UserActionLogDeleteView.as_view(), name='delete_user_action_log'),
-    path('user_action_log/download/', UserActionLogDownloadView.as_view(), name='download_user_action_log'),
+    path('user_action_log/<int:log_id>/mark_anomaly/', UserActionLogMarkAnomalyView.as_view(), name='mark_anomaly_user_action_log'),
+    path('user_action_log/statistics/', LogStatisticsView.as_view(), name='user_action_log_statistics'),
     # 获取任务概览
     path('get_task_summary/', get_task_summary, name='get_task_summary'),
     # 获取检测任务状态
