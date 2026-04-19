@@ -173,28 +173,32 @@
                   @click="triggerFileInput">
                   <v-icon size="64" color="grey">mdi-cloud-upload</v-icon>
                   <div class="text-h6 mt-4">点击或拖拽{{ currentModule.label }}文件到此处上传</div>
-                  <div class="text-caption text-grey">支持格式：{{ currentModule.acceptText }}，单个文件不超过100MB</div>
+                  <div class="text-caption text-grey">支持格式：{{ currentModule.acceptText }}，单个文件不超过{{ currentModule.maxSizeMB }}MB</div>
                   <input type="file" ref="fileInput" style="display: none" @change="handleFileSelect"
-                    :accept="currentModule.acceptAttr">
+                    :accept="currentModule.acceptAttr" multiple>
                 </div>
                 <div v-else class="file-preview pa-4">
+                  <div class="text-subtitle-1 mb-3">已选择 {{ selectedFiles.length }} 个文件</div>
                   <v-row>
-                    <v-col cols="12" md="6" class="mx-auto">
-                      <v-card>
+                    <v-col v-for="(file, index) in selectedFiles" :key="`${file.name}-${file.lastModified}`" cols="12" md="6">
+                      <v-card class="h-100">
                         <v-card-text class="d-flex align-center">
                           <v-icon size="48" color="primary" class="mr-4">mdi-file</v-icon>
                           <div>
-                            <div class="text-h6">{{ selectedFiles[0].name }}</div>
+                            <div class="text-h6">{{ file.name }}</div>
                             <div class="text-caption text-grey">
-                              {{ formatFileSize(selectedFiles[0].size) }}
+                              {{ formatFileSize(file.size) }}
                             </div>
                           </div>
                           <v-spacer></v-spacer>
-                          <v-btn icon="mdi-close" variant="text" @click="selectedFiles = []"></v-btn>
+                          <v-btn icon="mdi-close" variant="text" @click="removeSelectedFile(index)"></v-btn>
                         </v-card-text>
                       </v-card>
                     </v-col>
                   </v-row>
+                  <div class="d-flex justify-end mt-2">
+                    <v-btn variant="text" color="error" @click="selectedFiles = []">清空全部</v-btn>
+                  </div>
                 </div>
               </v-card-text>
             </v-card>
@@ -263,7 +267,6 @@
         <ImageSelectionStep
           v-if="fileId && selectedModule === 'image'"
           :fileId="fileId"
-          @update="updateSelectedImages"
           @tagChanged="handleSelectedTag"
           @add-name="handleName"
         />
@@ -273,7 +276,6 @@
           :fileId="fileId"
           contentType="paper"
           moduleLabel="论文"
-          @update="updateSelectedPaperContents"
           @tagChanged="handleSelectedTag"
           @add-name="handleName"
         />
@@ -283,7 +285,6 @@
           :fileId="fileId"
           contentType="review"
           moduleLabel="Review"
-          @update="updateSelectedReviewContents"
           @tagChanged="handleSelectedTag"
           @add-name="handleName"
         />
@@ -317,7 +318,6 @@
               <ImageSelectionStep
                 :fileId="fileId"
                 :showMetaControls="false"
-                @update="updateSelectedImages"
               />
             </v-card-text>
           </v-card>
@@ -330,7 +330,6 @@
                 contentType="paper"
                 moduleLabel="论文"
                 :showMetaControls="false"
-                @update="updateSelectedPaperContents"
               />
             </v-card-text>
           </v-card>
@@ -343,7 +342,6 @@
                 contentType="review"
                 moduleLabel="Review"
                 :showMetaControls="false"
-                @update="updateSelectedReviewContents"
               />
             </v-card-text>
           </v-card>
@@ -353,7 +351,7 @@
         <v-spacer></v-spacer>
         <v-btn color="primary" variant="elevated" @click="handleNext" :disabled="!canProceed"
           append-icon="mdi-arrow-right">
-          确认关联并启动检测
+          启动检测
         </v-btn>
       </v-card-actions>
     </v-card>
@@ -383,6 +381,7 @@ interface UploadModule {
   basicFormat: string
   proFormat: string
   allowedExtensions: string[]
+  maxSizeMB: number
 }
 
 const uploadModules: UploadModule[] = [
@@ -394,7 +393,8 @@ const uploadModules: UploadModule[] = [
     acceptAttr: '.jpg,.jpeg,.png,.pdf,.zip',
     basicFormat: 'JPG/PNG',
     proFormat: 'JPG/PNG/PDF/ZIP',
-    allowedExtensions: ['jpg', 'jpeg', 'png', 'pdf', 'zip']
+    allowedExtensions: ['jpg', 'jpeg', 'png', 'pdf', 'zip'],
+    maxSizeMB: 100
   },
   {
     key: 'paper',
@@ -404,7 +404,8 @@ const uploadModules: UploadModule[] = [
     acceptAttr: '.pdf,.doc,.docx,.txt,.zip',
     basicFormat: 'PDF/DOCX',
     proFormat: 'PDF/DOC/DOCX/TXT/ZIP',
-    allowedExtensions: ['pdf', 'doc', 'docx', 'txt', 'zip']
+    allowedExtensions: ['pdf', 'doc', 'docx', 'txt', 'zip'],
+    maxSizeMB: 100
   },
   {
     key: 'review',
@@ -414,7 +415,8 @@ const uploadModules: UploadModule[] = [
     acceptAttr: '.pdf,.doc,.docx,.txt,.zip',
     basicFormat: 'PDF/TXT',
     proFormat: 'PDF/DOC/DOCX/TXT/ZIP',
-    allowedExtensions: ['pdf', 'doc', 'docx', 'txt', 'zip']
+    allowedExtensions: ['pdf', 'doc', 'docx', 'txt', 'zip'],
+    maxSizeMB: 100
   },
   {
     key: 'multi',
@@ -424,7 +426,8 @@ const uploadModules: UploadModule[] = [
     acceptAttr: '.jpg,.jpeg,.png,.pdf,.doc,.docx,.txt,.zip',
     basicFormat: 'JPG/PDF/DOCX',
     proFormat: '全格式',
-    allowedExtensions: ['jpg', 'jpeg', 'png', 'pdf', 'doc', 'docx', 'txt', 'zip']
+    allowedExtensions: ['jpg', 'jpeg', 'png', 'pdf', 'doc', 'docx', 'txt', 'zip'],
+    maxSizeMB: 100
   }
 ]
 
@@ -439,10 +442,6 @@ const snackbar = useSnackbarStore()
 
 // 进度页面相关状态
 const showProgress = ref(false)
-const extractedImages = ref<Image[]>([])
-const selectedImages = ref<Image[]>([])
-const selectedPaperContents = ref<ExtractedContent[]>([])
-const selectedReviewContents = ref<ExtractedContent[]>([])
 const currentTag = ref<string>('')
 const currentTaskName = ref('')
 
@@ -458,30 +457,10 @@ const actionButtonText = computed(() => {
   return '校验上传内容'
 })
 
-interface Image {
-  image_id: number
-  image_url: string
-  page_number?: number
-  extracted_from_pdf: boolean
-  selected: boolean
-}
-
-interface ExtractedContent {
-  content_id: number
-  title: string
-  text: string
-  source: string
-  selected: boolean
-}
-
 const resetCurrentUploadState = () => {
   selectedFiles.value = []
   selectedVersion.value = null
   fileId.value = ''
-  extractedImages.value = []
-  selectedImages.value = []
-  selectedPaperContents.value = []
-  selectedReviewContents.value = []
   currentTag.value = ''
   currentTaskName.value = ''
 }
@@ -502,29 +481,49 @@ const getFileExtension = (fileName: string): string => {
   return segments[segments.length - 1].toLowerCase()
 }
 
+const processIncomingFiles = (files: File[]) => {
+  const validFiles: File[] = []
+  const invalidFiles: File[] = []
+
+  files.forEach(file => {
+    if (isValidFile(file)) {
+      validFiles.push(file)
+    } else {
+      invalidFiles.push(file)
+    }
+  })
+
+  if (validFiles.length > 0) {
+    selectedFiles.value = validFiles
+  }
+
+  if (invalidFiles.length > 0) {
+    snackbar.showMessage(
+      `有 ${invalidFiles.length} 个文件格式不支持或超过 ${currentModule.value.maxSizeMB}MB，已自动忽略`,
+      'warning'
+    )
+  }
+}
+
 const handleDrop = (event: DragEvent) => {
   event.preventDefault()
   const files = event.dataTransfer?.files
   if (files && files.length > 0) {
-    const file = files[0]
-    if (isValidFile(file)) {
-      selectedFiles.value = [file]
-    } else {
-      snackbar.showMessage(`不支持的文件格式，请上传 ${currentModule.value.acceptText} 文件`, 'error')
-    }
+    processIncomingFiles(Array.from(files))
   }
 }
 
 const handleFileSelect = (event: Event) => {
-  const files = (event.target as HTMLInputElement).files
+  const input = event.target as HTMLInputElement
+  const files = input.files
   if (files && files.length > 0) {
-    const file = files[0]
-    if (isValidFile(file)) {
-      selectedFiles.value = [file]
-    } else {
-      snackbar.showMessage(`不支持的文件格式，请上传 ${currentModule.value.acceptText} 文件`, 'error')
-    }
+    processIncomingFiles(Array.from(files))
   }
+  input.value = ''
+}
+
+const removeSelectedFile = (index: number) => {
+  selectedFiles.value.splice(index, 1)
 }
 
 const handleName = async (newName: string) => {
@@ -539,7 +538,7 @@ const handleSelectedTag = async (newTag: string) => {
 
 const isValidFile = (file: File): boolean => {
   const extension = getFileExtension(file.name)
-  const maxSize = 100 * 1024 * 1024 // 100MB
+  const maxSize = currentModule.value.maxSizeMB * 1024 * 1024
   return currentModule.value.allowedExtensions.includes(extension) && file.size <= maxSize
 }
 
@@ -565,7 +564,9 @@ const handleSubmit = async () => {
   loading.value = true
   try {
     const formData = new FormData()
-    formData.append('file', selectedFiles.value[0])
+    selectedFiles.value.forEach(file => {
+      formData.append('file', file)
+    })
     formData.append('detect_type', selectedModule.value)
     const { data } = await uploadApi.uploadFile(formData)
     fileId.value = data.file_id
@@ -603,41 +604,8 @@ const triggerFileInput = () => {
 
 // 进度页面相关方法
 const canProceed = computed(() => {
-  const hasValidName = !currentTaskName.value || currentTaskName.value.length <= 10
-  if (!hasValidName) {
-    return false
-  }
-
-  if (selectedModule.value === 'image') {
-    return selectedImages.value.length > 0
-  }
-
-  if (selectedModule.value === 'paper') {
-    return selectedPaperContents.value.length > 0
-  }
-
-  if (selectedModule.value === 'review') {
-    return selectedReviewContents.value.length > 0
-  }
-
-  return (
-    selectedImages.value.length +
-    selectedPaperContents.value.length +
-    selectedReviewContents.value.length
-  ) > 0
+  return !!fileId.value && (!currentTaskName.value || currentTaskName.value.length <= 10)
 })
-
-const updateSelectedImages = (images: typeof extractedImages.value) => {
-  selectedImages.value = images
-}
-
-const updateSelectedPaperContents = (contents: ExtractedContent[]) => {
-  selectedPaperContents.value = contents
-}
-
-const updateSelectedReviewContents = (contents: ExtractedContent[]) => {
-  selectedReviewContents.value = contents
-}
 
 const handleTag = async (tag: string) => {
   console.log('parent: ' + tag)
@@ -655,21 +623,10 @@ const handleNext = async () => {
   if (canProceed.value) {
     try {
       const payload: Record<string, any> = {
+        file_id: fileId.value,
         task_name: currentTaskName.value,
         mode: selectedVersion.value,
         detect_type: selectedModule.value
-      }
-
-      if (selectedImages.value.length) {
-        payload.image_ids = selectedImages.value.map(img => img.image_id)
-      }
-
-      if (selectedPaperContents.value.length) {
-        payload.paper_content_ids = selectedPaperContents.value.map(item => item.content_id)
-      }
-
-      if (selectedReviewContents.value.length) {
-        payload.review_content_ids = selectedReviewContents.value.map(item => item.content_id)
       }
 
       await publisher.submitDetection(payload)

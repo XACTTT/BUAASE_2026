@@ -14,10 +14,6 @@
     <v-col cols="12">
       <div class="d-flex align-center mb-4">
         <span class="text-h6">已提取图片</span>
-        <v-spacer></v-spacer>
-        <v-btn color="primary" prepend-icon="mdi-check-all" @click="selectAllImages">
-          全选
-        </v-btn>
       </div>
     </v-col>
   </v-row>
@@ -29,7 +25,7 @@
         <v-card-text class="pa-0" :style="thumbnailBodyStyle">
           <v-list lines="two" class="thumbnail-scroll" :style="thumbnailBodyStyle">
             <v-list-item v-for="(image, index) in pagedImages" :key="image.image_id"
-              :class="{ 'selected-item': image.selected }" @click="selectImage(image)">
+              :class="{ 'selected-item': selectedImage?.image_id === image.image_id }" @click="selectImage(image)">
               <template v-slot:prepend>
                 <v-avatar size="60" class="me-2">
                   <v-img :src="image.image_url" cover class="bg-grey-lighten-2"></v-img>
@@ -41,10 +37,6 @@
               <v-list-item-subtitle>
                 {{ image.extracted_from_pdf ? 'PDF提取' : '上传图片' }}
               </v-list-item-subtitle>
-              <template v-slot:append>
-                <v-checkbox v-model="image.selected" hide-details density="compact" @click.stop
-                  @update:model-value="emitUpdate"></v-checkbox>
-              </template>
             </v-list-item>
           </v-list>
 
@@ -101,7 +93,6 @@ interface Image {
   image_url: string
   page_number?: number
   extracted_from_pdf: boolean
-  selected: boolean
 }
 
 const props = withDefaults(defineProps<{
@@ -119,7 +110,6 @@ const showMetaControls = computed(() => props.showMetaControls)
 const compactMode = computed(() => !showMetaControls.value)
 
 const emit = defineEmits<{
-  (e: 'update', selectedImages: Image[]): void
   (e: 'tagChanged', tag: string): void
   (e: 'addName', task_name: string): void
 }>()
@@ -153,7 +143,7 @@ const thumbnailBodyStyle = computed(() => {
   }
   return {
     maxHeight: `${visibleItemCount.value * 84}px`,
-    overflowY: 'auto'
+    overflowY: 'auto' as const
   }
 })
 
@@ -203,8 +193,7 @@ const loadMoreImages = async () => {
       image_id: img.image_id,
       image_url: import.meta.env.VITE_API_URL + img.image_url,
       page_number: img.page_number,
-      extracted_from_pdf: img.extracted_from_pdf,
-      selected: false
+      extracted_from_pdf: img.extracted_from_pdf
     }))
     localImages.value.push(...newImages)
     page.value++
@@ -260,20 +249,8 @@ const navigateNext = () => {
   }
 }
 
-const selectAllImages = () => {
-  const allSelected = displayImages.value.every(img => img.selected)
-  displayImages.value.forEach(img => {
-    img.selected = !allSelected
-  })
-  emitUpdate()
-}
-
 const handleName = () => {
   emit('addName', task_name.value)
-}
-
-const emitUpdate = () => {
-  emit('update', displayImages.value.filter(img => img.selected))
 }
 
 // 获取提取的图片
@@ -308,10 +285,6 @@ watch(displayImages, () => {
     listPage.value = pageCount.value
   }
 }, { deep: true })
-
-const canProceed = computed(() => {
-  return displayImages.value.length > 0 && (!task_name.value || task_name.value.length <= 10)
-})
 
 </script>
 

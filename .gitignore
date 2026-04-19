@@ -110,3 +110,6 @@ mlruns/
 # Keep templates / examples tracked
 !.env.example
 !.env.template
+
+# Others------------------------
+test_resources/

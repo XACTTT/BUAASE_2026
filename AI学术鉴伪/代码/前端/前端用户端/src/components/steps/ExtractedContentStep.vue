@@ -26,10 +26,6 @@
     <v-col cols="12">
       <div class="d-flex align-center mb-4">
         <span class="text-h6">已提取{{ moduleLabel }}内容</span>
-        <v-spacer />
-        <v-btn color="primary" prepend-icon="mdi-check-all" @click="toggleAll">
-          {{ isAllSelected ? '取消全选' : '全选' }}
-        </v-btn>
       </div>
     </v-col>
   </v-row>
@@ -42,7 +38,7 @@
             <v-list-item
               v-for="(item, index) in pagedContents"
               :key="item.content_id"
-              :class="{ 'selected-item': item.selected }"
+              :class="{ 'selected-item': activeItem?.content_id === item.content_id }"
               @click="selectItem(item)"
             >
               <template #prepend>
@@ -52,15 +48,6 @@
               </template>
               <v-list-item-title>{{ item.title || `${moduleLabel}片段${index + 1}` }}</v-list-item-title>
               <v-list-item-subtitle>{{ item.source || '提取内容' }}</v-list-item-subtitle>
-              <template #append>
-                <v-checkbox
-                  v-model="item.selected"
-                  hide-details
-                  density="compact"
-                  @click.stop
-                  @update:model-value="emitUpdate"
-                />
-              </template>
             </v-list-item>
 
             <v-list-item v-if="!pagedContents.length" class="empty-list-item">
@@ -108,7 +95,6 @@ interface ExtractedContent {
   title: string
   text: string
   source: string
-  selected: boolean
 }
 
 const props = withDefaults(defineProps<{
@@ -122,7 +108,6 @@ const props = withDefaults(defineProps<{
 })
 
 const emit = defineEmits<{
-  (e: 'update', selectedContents: ExtractedContent[]): void
   (e: 'tagChanged', tag: string): void
   (e: 'addName', name: string): void
 }>()
@@ -156,8 +141,9 @@ const listBodyStyle = computed(() => {
 })
 
 const contentScrollStyle = computed(() => {
+  const overflowY = pagedContents.value.length > 0 ? 'auto' : 'hidden'
   return {
-    overflowY: pagedContents.value.length > 0 ? 'auto' : 'hidden'
+    overflowY: overflowY as 'auto' | 'hidden'
   }
 })
 
@@ -189,7 +175,6 @@ const previewCardStyle = computed(() => {
 })
 
 const moduleIcon = computed(() => (props.contentType === 'paper' ? 'mdi-file-document-outline' : 'mdi-file-search-outline'))
-const isAllSelected = computed(() => contents.value.length > 0 && contents.value.every(item => item.selected))
 
 const mappedTag = [
   { title: '医学', value: 'Medicine' },
@@ -203,20 +188,8 @@ const emitTaskName = () => {
   emit('addName', taskName.value)
 }
 
-const emitUpdate = () => {
-  emit('update', contents.value.filter(item => item.selected))
-}
-
 const selectItem = (item: ExtractedContent) => {
   activeItem.value = item
-}
-
-const toggleAll = () => {
-  const next = !isAllSelected.value
-  contents.value.forEach(item => {
-    item.selected = next
-  })
-  emitUpdate()
 }
 
 const normalizeItems = (raw: any): ExtractedContent[] => {
@@ -230,8 +203,7 @@ const normalizeItems = (raw: any): ExtractedContent[] => {
     content_id: Number(item.content_id ?? item.id ?? index + 1),
     title: String(item.title ?? item.name ?? `${props.moduleLabel}片段${index + 1}`),
     text: String(item.text ?? item.content ?? item.summary ?? '暂无提取内容'),
-    source: String(item.source ?? item.source_type ?? '提取内容'),
-    selected: false
+    source: String(item.source ?? item.source_type ?? '提取内容')
   }))
 }
 
