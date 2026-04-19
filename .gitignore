@@ -112,4 +112,4 @@ mlruns/
 !.env.template
 
 # Others------------------------
-test_resources/
+test_resource/
