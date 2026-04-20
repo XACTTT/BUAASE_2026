@@ -32,7 +32,7 @@
 
     <v-alert class="mb-6" type="info" variant="tonal" border="start">
       软件管理员可新增、删除和维护模型源；组织管理员可在已配置模型中启用模型并调整参数。
-      校验连通性和获取模型列表都只针对左侧当前选中的模型源执行。
+      两种管理员都可执行模型校验；获取模型列表仅软件管理员可用。
     </v-alert>
 
     <v-row align="stretch">
@@ -112,7 +112,7 @@
                     <div class="text-subtitle-1 font-weight-bold">源配置</div>
                     <div class="d-flex flex-wrap gap-2">
                       <v-btn
-                        v-if="canManageSources"
+                        v-if="canVerifyModels"
                         size="small"
                         color="success"
                         variant="tonal"
@@ -234,6 +234,17 @@
                         <v-btn
                           size="small"
                           variant="text"
+                          color="success"
+                          prepend-icon="mdi-check-circle-outline"
+                          :loading="isVerifyingModel(model.modelId)"
+                          :disabled="!canVerifyModels"
+                          @click="verifyModelConnectivity(model.modelId, model.displayName)"
+                        >
+                          校验
+                        </v-btn>
+                        <v-btn
+                          size="small"
+                          variant="text"
                           color="error"
                           prepend-icon="mdi-delete"
                           :disabled="!canConfigureOrganizationModels"
@@ -256,7 +267,7 @@
             <div class="d-flex align-center justify-space-between flex-wrap gap-3 mb-4">
               <div>
                 <div class="text-h6 font-weight-bold">模型库</div>
-                <div class="text-body-2 text-medium-emphasis">根据当前模型源获取可用模型，按行选择并添加到已配置模型。</div>
+                <div class="text-body-2 text-medium-emphasis">根据当前模型源获取可用模型，按行选择并添加到已配置模型（已添加模型优先展示）。</div>
               </div>
               <v-btn
                 v-if="canManageSources"
@@ -273,7 +284,7 @@
             <v-card variant="outlined" rounded="lg" class="model-library-list">
               <v-list density="comfortable" class="py-0">
                 <v-list-item
-                  v-for="candidate in selectedSource.availableModels"
+                  v-for="candidate in pagedModelLibraryCandidates"
                   :key="candidate.modelId"
                   class="library-item"
                 >
@@ -291,21 +302,43 @@
                   </v-list-item-subtitle>
 
                   <template #append>
-                    <v-btn
-                      size="small"
-                      color="primary"
-                      variant="tonal"
-                      prepend-icon="mdi-plus"
-                      :disabled="!canConfigureOrganizationModels || isConfigured(candidate.modelId)"
-                      @click="addModelToConfigured(candidate)"
-                    >
-                      {{ isConfigured(candidate.modelId) ? '已添加' : '添加' }}
-                    </v-btn>
+                    <div class="d-flex align-center gap-1">
+                      <v-btn
+                        size="small"
+                        color="success"
+                        variant="text"
+                        prepend-icon="mdi-check-circle-outline"
+                        :loading="isVerifyingModel(candidate.modelId)"
+                        :disabled="!canVerifyModels"
+                        @click="verifyModelConnectivity(candidate.modelId, candidate.displayName)"
+                      >
+                        校验
+                      </v-btn>
+                      <v-btn
+                        size="small"
+                        color="primary"
+                        variant="tonal"
+                        prepend-icon="mdi-plus"
+                        :disabled="!canConfigureOrganizationModels || isConfigured(candidate.modelId)"
+                        @click="addModelToConfigured(candidate)"
+                      >
+                        {{ isConfigured(candidate.modelId) ? '已添加' : '添加' }}
+                      </v-btn>
+                    </div>
                   </template>
                 </v-list-item>
               </v-list>
 
-              <v-alert v-if="selectedSource.availableModels.length === 0" type="warning" variant="tonal" border="start" class="ma-4">
+              <div v-if="modelLibraryTotalPages > 1" class="d-flex justify-center py-3 model-library-pagination">
+                <v-pagination
+                  v-model="modelLibraryPage"
+                  :length="modelLibraryTotalPages"
+                  :total-visible="6"
+                  size="small"
+                />
+              </div>
+
+              <v-alert v-if="sortedModelLibraryCandidates.length === 0" type="warning" variant="tonal" border="start" class="ma-4">
                 当前还没有可选模型，请先点击“获取模型列表”。
               </v-alert>
             </v-card>
@@ -463,6 +496,7 @@ const userStore = useUserStore()
 
 const canManageSources = computed(() => userStore.admin_type === 'software_admin')
 const canConfigureOrganizationModels = computed(() => userStore.admin_type === 'organization_admin')
+const canVerifyModels = computed(() => ['software_admin', 'organization_admin'].includes(userStore.admin_type))
 
 const moduleOptions = ['图像真伪检测', 'LLM解释', '元数据辅助', '人工审核辅助']
 const providerTemplateOptions = [
@@ -508,6 +542,7 @@ const statusOptions = [
 ]
 const sources = ref<ModelSource[]>([])
 const selectedSourceId = ref<number | null>(sources.value[0]?.id ?? null)
+const modelLibraryPage = ref(1)
 const showApiKey = ref(false)
 const showAddSourceDialog = ref(false)
 const showModelDialog = ref(false)
@@ -515,6 +550,7 @@ const showDeleteConfirm = ref(false)
 const deletingSourceId = ref<number | null>(null)
 const editingModel = ref<ManagedModel | null>(null)
 const selectedProviderTemplate = ref('custom')
+const verifyingModelKeys = ref<string[]>([])
 
 const newSourceForm = ref({
   name: '',
@@ -525,6 +561,33 @@ const newSourceForm = ref({
 })
 
 const selectedSource = computed(() => sources.value.find((source) => source.id === selectedSourceId.value) ?? null)
+const MODEL_LIBRARY_PAGE_SIZE = 10
+
+const sortedModelLibraryCandidates = computed(() => {
+  const source = selectedSource.value
+  if (!source) return []
+
+  const configuredIds = new Set(source.models.map((model) => model.modelId))
+  return [...source.availableModels].sort((a, b) => {
+    const aConfigured = configuredIds.has(a.modelId)
+    const bConfigured = configuredIds.has(b.modelId)
+
+    if (aConfigured !== bConfigured) {
+      return aConfigured ? -1 : 1
+    }
+
+    return a.displayName.localeCompare(b.displayName, 'zh-CN')
+  })
+})
+
+const modelLibraryTotalPages = computed(() => {
+  return Math.max(1, Math.ceil(sortedModelLibraryCandidates.value.length / MODEL_LIBRARY_PAGE_SIZE))
+})
+
+const pagedModelLibraryCandidates = computed(() => {
+  const start = (modelLibraryPage.value - 1) * MODEL_LIBRARY_PAGE_SIZE
+  return sortedModelLibraryCandidates.value.slice(start, start + MODEL_LIBRARY_PAGE_SIZE)
+})
 
 function resolveErrorMessage(error: unknown, fallback: string) {
   const maybeError = error as {
@@ -541,6 +604,16 @@ function resolveErrorMessage(error: unknown, fallback: string) {
 
 watch(selectedSourceId, () => {
   showApiKey.value = false
+  modelLibraryPage.value = 1
+})
+
+watch(modelLibraryTotalPages, (totalPages) => {
+  if (modelLibraryPage.value > totalPages) {
+    modelLibraryPage.value = totalPages
+  }
+  if (modelLibraryPage.value < 1) {
+    modelLibraryPage.value = 1
+  }
 })
 
 onMounted(async () => {
@@ -591,6 +664,7 @@ async function fetchSourceModels() {
       timeout: selectedSource.value.timeout,
     })
     selectedSource.value.availableModels = response.data.availableModels || []
+    modelLibraryPage.value = 1
     snackbar.showMessage(`模型源 ${selectedSource.value.name} 已获取 ${selectedSource.value.availableModels.length} 个模型`, 'success')
   } catch (error) {
     snackbar.showMessage(resolveErrorMessage(error, '获取模型列表失败'), 'error')
@@ -612,6 +686,57 @@ function applyProviderTemplate(templateKey: string | null) {
 
 function isConfigured(modelId: string) {
   return !!selectedSource.value?.models.some((model) => model.modelId === modelId)
+}
+
+function getModelVerifyKey(modelId: string) {
+  return selectedSource.value ? `${selectedSource.value.id}:${modelId}` : modelId
+}
+
+function isVerifyingModel(modelId: string) {
+  return verifyingModelKeys.value.includes(getModelVerifyKey(modelId))
+}
+
+function setModelVerifying(modelId: string, loading: boolean) {
+  const key = getModelVerifyKey(modelId)
+  if (!key) return
+
+  if (loading) {
+    if (!verifyingModelKeys.value.includes(key)) {
+      verifyingModelKeys.value = [...verifyingModelKeys.value, key]
+    }
+    return
+  }
+
+  verifyingModelKeys.value = verifyingModelKeys.value.filter((item) => item !== key)
+}
+
+async function verifyModelConnectivity(modelId: string, displayName?: string) {
+  if (!selectedSource.value) return
+  if (!canVerifyModels.value) {
+    snackbar.showMessage('当前账号无模型校验权限', 'warning')
+    return
+  }
+
+  setModelVerifying(modelId, true)
+  try {
+    const response = await modelApi.verifyAIModelConfig({
+      source_id: selectedSource.value.id,
+      base_url: selectedSource.value.baseUrl,
+      api_key: selectedSource.value.apiKey,
+      timeout: selectedSource.value.timeout,
+      model_name: modelId,
+    })
+
+    if (response.data.model_exists) {
+      snackbar.showMessage(`模型 ${displayName || modelId} 校验通过`, 'success')
+    } else {
+      snackbar.showMessage(response.data.message || `模型 ${displayName || modelId} 校验未通过`, 'warning')
+    }
+  } catch (error) {
+    snackbar.showMessage(resolveErrorMessage(error, `模型 ${displayName || modelId} 校验失败`), 'error')
+  } finally {
+    setModelVerifying(modelId, false)
+  }
 }
 
 async function addModelToConfigured(candidate: SourceModelCandidate) {
@@ -637,6 +762,7 @@ async function addModelToConfigured(candidate: SourceModelCandidate) {
       description: candidate.description,
     })
     selectedSource.value.models.push(response.data.config)
+    modelLibraryPage.value = 1
     snackbar.showMessage('模型已添加到已配置模型', 'success')
   } catch (error) {
     snackbar.showMessage('添加模型配置失败', 'error')
@@ -686,17 +812,20 @@ async function saveSelectedSource() {
 
 async function verifySelectedSource() {
   if (!selectedSource.value) return
-  if (!canManageSources.value) {
-    snackbar.showMessage('只有软件管理员可以校验模型源', 'warning')
+  if (!canVerifyModels.value) {
+    snackbar.showMessage('当前账号无模型校验权限', 'warning')
     return
   }
 
   try {
-    const response = await modelApi.verifyAIModelConfig({
+    const payload = {
+      source_id: selectedSource.value.id,
       base_url: selectedSource.value.baseUrl,
       api_key: selectedSource.value.apiKey,
       model_name: selectedSource.value.defaultModel,
-    })
+      timeout: selectedSource.value.timeout,
+    }
+    const response = await modelApi.verifyAIModelConfig(payload)
     if (response.data.model_exists) {
       snackbar.showMessage(`连接正常：${selectedSource.value.name}`, 'success')
     } else {
@@ -859,6 +988,10 @@ async function saveModelConfig() {
 
 .model-library-list {
   background: rgb(var(--v-theme-surface));
+}
+
+.model-library-pagination {
+  border-top: 1px solid rgba(var(--v-border-color), 0.4);
 }
 
 .library-item {
