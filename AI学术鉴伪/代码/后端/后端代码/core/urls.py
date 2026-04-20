@@ -3,6 +3,7 @@ from .views.views_review import get_manualReview_from_reviewRequestId
 from .views.views_user import *
 from .views.views_imageupload import *
 from .views.views_dectection import *
+from .views.views_resource_container import *
 # 新增: 导入人工审查相关的视图类
 from .views import views_review, views_organization
 from .views import views_admin
@@ -58,6 +59,15 @@ urlpatterns = [
     path('upload/<int:file_id>/addTag/', add_file_tag, name='add_file_tag'),
     path('upload/<int:file_id>/delete/', delete_upload, name='delete_upload'),
     path('upload/get_all_file_images/<int:file_management_id>/', get_all_file_images, name='get_all_file_images'),
+
+    # 学术资源容器相关 URL
+    path('resource-containers/', resource_container_list_create, name='resource_container_list_create'),
+    path('resource-containers/<int:container_id>/', resource_container_detail, name='resource_container_detail'),
+    path('resource-containers/<int:container_id>/review-text/', resource_container_review_text, name='resource_container_review_text'),
+    path('resource-containers/<int:container_id>/validate-materials/', validate_materials, name='validate_materials'),
+    path('resource-containers/<int:container_id>/files/', resource_container_files, name='resource_container_files'),
+    path('resource-containers/<int:container_id>/images/', resource_container_images, name='resource_container_images'),
+    path('resource-containers/<int:container_id>/materials-summary/', resource_container_materials_summary, name='resource_container_materials_summary'),
     # 图片检测相关的URL
     path('detection/<int:image_id>/', get_detection_result, name='image_detection'),
     path('detection/submit/', submit_detection2, name='submit_detection'),

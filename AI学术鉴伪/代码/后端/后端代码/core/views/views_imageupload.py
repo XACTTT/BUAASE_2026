@@ -3,63 +3,58 @@ import uuid
 from PIL import Image
 import zipfile
 from django.core.files.storage import FileSystemStorage
-from ..models import FileManagement, ImageUpload, Log, User
+from ..models import FileManagement, ImageUpload, User, ResourceContainer
 from django.core.paginator import Paginator, EmptyPage
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework.response import Response
 from ..models import ImageUpload
+from core.services.file_ingest_service import FileIngestService
 
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def upload_file(request):
-    user_id = request.user.id
-    user = User.objects.get(id=user_id)
+    user = request.user
     if not user.has_permission('upload'):
         return Response({"错误": "该用户没有上传文件的权限"}, status=403)
 
-    # 获取上传的文件
-    uploaded_file = request.FILES['file']
-    file_name = uploaded_file.name
-    file_size = uploaded_file.size
-    file_type = uploaded_file.content_type
+    uploaded_file = request.FILES.get('file')
+    if not uploaded_file:
+        return Response({'error_code': 'MISSING_FILE', 'message': 'file is required'}, status=400)
 
-    # 存储文件到 FileManagement 表
-    file_management = FileManagement.objects.create(
-        organization=user.organization,
-        user=request.user,
-        file_name=file_name,
-        file_size=file_size,
-        file_type=file_type
-    )
+    container = None
+    container_id = request.data.get('container_id')
+    resource_role = request.data.get('resource_role', 'material_other')
+    batch_id = request.data.get('batch_id')
 
-    # 使用 FileSystemStorage 保存上传文件，路径基于 MEDIA_ROOT 下的 uploads 目录
-    unique_filename = f"{uuid.uuid4().hex}_{file_name}"
-    fs = FileSystemStorage()
-    file_path = fs.save(f'uploads/{unique_filename}', uploaded_file)
-    file_url = fs.url(file_path)
+    if container_id:
+        container = ResourceContainer.objects.filter(id=container_id).first()
+        if not container:
+            return Response({'error_code': 'CONTAINER_NOT_FOUND', 'message': 'container not found'}, status=404)
 
-    # 根据文件类型处理
-    if file_type == 'application/pdf':  # 处理PDF文件
-        extract_images_from_pdf(file_management, file_path)
-    elif file_type == 'application/zip' or file_type == 'application/x-zip-compressed' or file_type == 'application/octet-stream':  # 处理ZIP文件
-        extract_images_from_zip(file_management, uploaded_file)
-    else:  # 处理图片文件（png/jpg等）
-        store_image(file_management, uploaded_file)
-
-    # 在Log表中记录上传操作
-    Log.objects.create(
-        user=request.user,
-        operation_type='upload',
-        related_model='FileManagement',
-        related_id=file_management.id
-    )
+    try:
+        file_management, file_url = FileIngestService.ingest_upload(
+            user=user,
+            uploaded_file=uploaded_file,
+            container=container,
+            resource_role=resource_role,
+            batch_id=batch_id,
+        )
+    except PermissionError:
+        return Response(
+            {'error_code': 'CONTAINER_UPLOAD_FORBIDDEN', 'message': 'no permission to upload to this container'},
+            status=403,
+        )
+    except Exception as exc:
+        return Response({'error_code': 'UPLOAD_FAILED', 'message': str(exc)}, status=500)
 
     return Response({
         "message": "File uploaded successfully",
         "file_id": file_management.id,
-        "file_url": file_url
+        "file_url": file_url,
+        "container_id": file_management.container_id,
+        "parse_status": file_management.parse_status,
     })
 
 

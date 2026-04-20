@@ -252,6 +252,54 @@ class PublisherReviewerRelationship(models.Model):
         unique_together = ('publisher', 'reviewer')  # 防止重复关联
 
 
+class ResourceContainer(models.Model):
+    CONTAINER_TYPE_CHOICES = [
+        ('paper', 'Paper'),
+        ('review', 'Review'),
+        ('multi_material', 'Multi Material'),
+    ]
+
+    STATUS_CHOICES = [
+        ('draft', 'Draft'),
+        ('uploaded', 'Uploaded'),
+        ('archived', 'Archived'),
+    ]
+
+    PROGRESS_STATUS_CHOICES = [
+        ('pending_upload', 'Pending Upload'),
+        ('validating', 'Validating'),
+        ('parsing', 'Parsing'),
+        ('ready', 'Ready'),
+        ('failed', 'Failed'),
+    ]
+
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, db_index=True)
+    owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name='resource_containers')
+    container_type = models.CharField(max_length=30, choices=CONTAINER_TYPE_CHOICES)
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True, null=True)
+    source_ref = models.CharField(max_length=255, blank=True, null=True)
+
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
+    progress_status = models.CharField(max_length=30, choices=PROGRESS_STATUS_CHOICES, default='pending_upload')
+    failure_reason = models.TextField(blank=True, null=True)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    created_at = models.DateTimeField(default=timezone.localtime)
+    updated_at = models.DateTimeField(auto_now=True)
+    submitted_at = models.DateTimeField(blank=True, null=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['organization', 'container_type']),
+            models.Index(fields=['owner', 'created_at']),
+            models.Index(fields=['status', 'progress_status']),
+        ]
+
+    def __str__(self):
+        return f"Container {self.id} ({self.container_type})"
+
+
 class FileManagement(models.Model):
     TAG_CHOICES = [
         ('Biology', 'Biology'),
@@ -263,11 +311,57 @@ class FileManagement(models.Model):
 
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE, db_index=True, null=True, blank=True)
+    container = models.ForeignKey(
+        ResourceContainer,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='files'
+    )
+
+    RESOURCE_ROLE_CHOICES = [
+        ('paper_main', 'Paper Main'),
+        ('paper_supplementary', 'Paper Supplementary'),
+        ('paper_revision', 'Paper Revision'),
+        ('review_main', 'Review Main'),
+        ('review_attachment', 'Review Attachment'),
+        ('material_other', 'Material Other'),
+    ]
+
+    ORIGIN_TYPE_CHOICES = [
+        ('upload', 'Upload'),
+        ('system_generated', 'System Generated'),
+        ('imported', 'Imported'),
+    ]
+
+    PARSE_STATUS_CHOICES = [
+        ('uploaded', 'Uploaded'),
+        ('validating', 'Validating'),
+        ('parsing', 'Parsing'),
+        ('parsed', 'Parsed'),
+        ('failed', 'Failed'),
+    ]
+
     file_name = models.CharField(max_length=255)
     file_size = models.BigIntegerField()
     file_type = models.CharField(max_length=50)
+    resource_role = models.CharField(max_length=40, choices=RESOURCE_ROLE_CHOICES, default='material_other')
+    origin_type = models.CharField(max_length=30, choices=ORIGIN_TYPE_CHOICES, default='upload')
+    storage_path = models.CharField(max_length=512, blank=True, null=True)
+    file_ext = models.CharField(max_length=30, blank=True, null=True)
+    mime_type = models.CharField(max_length=128, blank=True, null=True)
+    checksum = models.CharField(max_length=128, blank=True, null=True, db_index=True)
+    parse_status = models.CharField(max_length=20, choices=PARSE_STATUS_CHOICES, default='uploaded')
+    parse_error = models.TextField(blank=True, null=True)
+    extra_metadata = models.JSONField(default=dict, blank=True)
     upload_time = models.DateTimeField(default=timezone.localtime)
     tag = models.CharField(max_length=20, choices=TAG_CHOICES, default='Other')
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['container', 'parse_status']),
+            models.Index(fields=['organization', 'upload_time']),
+        ]
 
     def __str__(self):
         return f"File {self.file_name} uploaded by {self.user.username}"
@@ -301,16 +395,84 @@ class ImageUpload(models.Model):
     detection_task = models.ForeignKey(DetectionTask, on_delete=models.CASCADE, related_name='image_uploads',
                                        null=True)  # 关联任务
     file_management = models.ForeignKey(FileManagement, on_delete=models.CASCADE, related_name='image_uploads')
+    container = models.ForeignKey(
+        ResourceContainer,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='images'
+    )
+
+    IMAGE_ROLE_CHOICES = [
+        ('figure', 'Figure'),
+        ('table_snapshot', 'Table Snapshot'),
+        ('review_screenshot', 'Review Screenshot'),
+        ('supplementary_figure', 'Supplementary Figure'),
+        ('unknown', 'Unknown'),
+    ]
+
+    SOURCE_KIND_CHOICES = [
+        ('direct_image', 'Direct Image'),
+        ('pdf_extracted', 'PDF Extracted'),
+        ('zip_image', 'ZIP Image'),
+        ('zip_pdf_extracted', 'ZIP PDF Extracted'),
+    ]
+
     image = models.ImageField(upload_to='extracted_images/')  # 存储提取出的图片
     extracted_from_pdf = models.BooleanField(default=False)  # 标记是否来自PDF提取
     page_number = models.IntegerField(null=True, blank=True)  # 对于PDF文件，记录该图片是哪个页面
+    image_role = models.CharField(max_length=40, choices=IMAGE_ROLE_CHOICES, default='unknown')
+    source_kind = models.CharField(max_length=40, choices=SOURCE_KIND_CHOICES, default='direct_image')
+    file_name = models.CharField(max_length=255, blank=True, null=True)
+    image_index = models.IntegerField(blank=True, null=True)
+    width = models.IntegerField(blank=True, null=True)
+    height = models.IntegerField(blank=True, null=True)
+    hash_value = models.CharField(max_length=128, blank=True, null=True)
     upload_time = models.DateTimeField(default=timezone.localtime)
     isDetect = models.BooleanField(default=False)  # 是否已提交AI检测
     isReview = models.BooleanField(default=False)  # 是否已提交人工审核
     isFake = models.BooleanField(default=False)  # AI检测结果，是否为假图
 
+    class Meta:
+        indexes = [
+            models.Index(fields=['container', 'upload_time']),
+            models.Index(fields=['file_management', 'image_index']),
+        ]
+
     def __str__(self):
         return f"Image {self.id} from file {self.file_management.file_name}"
+
+
+class ReviewTextResource(models.Model):
+    SOURCE_TYPE_CHOICES = [
+        ('paste', 'Paste'),
+        ('file_parsed', 'File Parsed'),
+    ]
+
+    PARSE_STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('parsed', 'Parsed'),
+        ('failed', 'Failed'),
+    ]
+
+    container = models.ForeignKey(ResourceContainer, on_delete=models.CASCADE, related_name='review_texts')
+    source_type = models.CharField(max_length=20, choices=SOURCE_TYPE_CHOICES, default='paste')
+    language = models.CharField(max_length=20, blank=True, null=True)
+    raw_text = models.TextField()
+    normalized_text = models.TextField(blank=True, null=True)
+    token_count = models.IntegerField(default=0)
+    parse_status = models.CharField(max_length=20, choices=PARSE_STATUS_CHOICES, default='pending')
+    parse_error = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(default=timezone.localtime)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['container', 'created_at']),
+        ]
+
+    def __str__(self):
+        return f"ReviewTextResource {self.id} of container {self.container_id}"
 
 
 class DetectionResult(models.Model):
@@ -469,7 +631,11 @@ class Log(models.Model):
         ('upload', 'Upload'),
         ('detection', 'Detection'),
         ('review_request', 'Review Request'),
-        ('manual_review', 'Manual Review')
+        ('manual_review', 'Manual Review'),
+        ('resource_container', 'Resource Container'),
+        ('file_bind', 'File Bind'),
+        ('review_text', 'Review Text'),
+        ('material_validation', 'Material Validation'),
     ]
 
     operation_time = models.DateTimeField(default=timezone.localtime)  # 记录操作时间
