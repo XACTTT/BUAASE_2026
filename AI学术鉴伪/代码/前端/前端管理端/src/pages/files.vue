@@ -876,7 +876,11 @@ const fetchFiles = async (page: number, pageSize: number) => {
     totalFiles.value = total_files
   } catch (error) {
     console.error('获取文件数据失败:', error)
-    snackbar.showMessage('获取文件数据失败', 'error')
+    snackbar.showMessage('获取文件数据失败 - API可能未实现', 'error')
+    // 设置默认值以避免页面卡住
+    files.value = []
+    totalFiles.value = 0
+    totalPages.value = 0
   } finally {
     loading.value = false
   }

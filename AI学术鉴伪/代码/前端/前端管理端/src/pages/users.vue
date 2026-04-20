@@ -780,7 +780,11 @@ const fetchUsers = async (page: number, pageSize: number) => {
     originalUsers.value = [...users.value]
   } catch (error) {
     console.error('获取用户数据失败:', error)
-    snackbar.showMessage('获取用户数据失败', 'error')
+    snackbar.showMessage('获取用户数据失败 - API可能未实现', 'error')
+    // 设置默认值以避免页面卡住
+    users.value = []
+    totalUsers.value = 0
+    totalPages.value = 0
   } finally {
     loading.value = false
   }

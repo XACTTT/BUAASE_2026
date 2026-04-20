@@ -27,6 +27,8 @@
           @click="goToModelManagement"></v-list-item>
         <v-list-item v-if="isLoggedIn" prepend-icon="mdi-folder" title="图像管理" value="files"
           @click="goToFiles"></v-list-item>
+        <v-list-item v-if="isLoggedIn" prepend-icon="mdi-database" title="资源管理" value="resources"
+          @click="goToResources"></v-list-item>
         <v-list-item v-if="isLoggedIn" prepend-icon="mdi-account-group" title="用户管理" value="users"
           @click="goToUsers"></v-list-item>
         <v-list-item v-if="isLoggedIn" prepend-icon="mdi-clipboard-text-clock" title="日志记录" value="logs"
@@ -84,6 +86,10 @@
       <v-btn v-if="isLoggedIn" to="/files" value="files">
         <v-icon>mdi-folder</v-icon>
         <span>图像管理</span>
+      </v-btn>
+      <v-btn v-if="isLoggedIn" to="/resources" value="resources">
+        <v-icon>mdi-database</v-icon>
+        <span>资源管理</span>
       </v-btn>
       <v-btn v-if="isLoggedIn" to="/users" value="users">
         <v-icon>mdi-account-group</v-icon>
@@ -321,6 +327,10 @@ const goToOrganizationProfile = () => {
 
 const goToModelManagement = () => {
   router.push('/model-management')
+}
+
+const goToResources = () => {
+  router.push('/resources')
 }
 
 onMounted(async () => {
