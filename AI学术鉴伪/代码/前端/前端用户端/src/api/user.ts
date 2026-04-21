@@ -3,7 +3,9 @@ import http from './request'
 import { ref } from 'vue'
 
 // 使用ref直接管理登录状态
-export const isLoggedIn = ref(localStorage.getItem("2-isLoggedIn") === "true")
+export const isLoggedIn = ref(
+  localStorage.getItem('2-isLoggedIn') === 'true' && !!localStorage.getItem('2-token')
+)
 
 export default {
   login(data: any) {

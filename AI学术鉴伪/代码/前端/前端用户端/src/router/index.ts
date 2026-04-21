@@ -36,7 +36,14 @@ router.isReady().then(() => {
 })
 
 router.beforeEach((to, from, next) => {
-  if (!isLoggedIn.value) {
+  const hasToken = !!localStorage.getItem('2-token')
+  const isAuthenticated = isLoggedIn.value && hasToken
+
+  if (!isAuthenticated) {
+    // 防止仅有2-isLoggedIn而无token的脏状态导致误判
+    isLoggedIn.value = false
+    localStorage.setItem('2-isLoggedIn', 'false')
+
     if (to.path === '/login') {
       next()
     } else {

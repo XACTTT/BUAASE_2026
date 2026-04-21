@@ -1,5 +1,5 @@
 <template>
-  <v-row>
+  <v-row v-if="showMetaControls">
     <v-col cols="6" class="mb-2">
       <v-select v-model="selectedTag" :items="mappedTag" label="为本批图片添加标签" clearable variant="outlined" hide-details />
     </v-col>
@@ -14,48 +14,44 @@
     <v-col cols="12">
       <div class="d-flex align-center mb-4">
         <span class="text-h6">已提取图片</span>
-        <v-spacer></v-spacer>
-        <v-btn color="primary" prepend-icon="mdi-check-all" @click="selectAllImages">
-          全选
-        </v-btn>
       </div>
     </v-col>
   </v-row>
 
-  <v-row class="h-100">
+  <v-row>
     <!-- 左侧缩略图列表 -->
-    <v-col cols="4" class="thumbnail-list pa-0">
-      <v-card class="h-100">
-        <v-card-text class="pa-0 h-100">
-          <v-list lines="two" class="thumbnail-scroll h-100">
-            <v-list-item v-for="(image, index) in displayImages" :key="image.image_id"
-              :class="{ 'selected-item': image.selected }" @click="selectImage(image)">
+    <v-col cols="4" class="thumbnail-list pa-0" :class="{ 'full-height-panel': !compactMode }">
+      <v-card :style="thumbnailCardStyle">
+        <v-card-text class="pa-0" :style="thumbnailBodyStyle">
+          <v-list lines="two" class="thumbnail-scroll" :style="thumbnailBodyStyle">
+            <v-list-item v-for="(image, index) in pagedImages" :key="image.image_id"
+              :class="{ 'selected-item': selectedImage?.image_id === image.image_id }" @click="selectImage(image)">
               <template v-slot:prepend>
                 <v-avatar size="60" class="me-2">
                   <v-img :src="image.image_url" cover class="bg-grey-lighten-2"></v-img>
                 </v-avatar>
               </template>
               <v-list-item-title>
-                {{ `图片${index + 1}` }}
+                {{ `图片${(listPage - 1) * itemsPerPage + index + 1}` }}
               </v-list-item-title>
               <v-list-item-subtitle>
                 {{ image.extracted_from_pdf ? 'PDF提取' : '上传图片' }}
               </v-list-item-subtitle>
-              <template v-slot:append>
-                <v-checkbox v-model="image.selected" hide-details density="compact" @click.stop
-                  @update:model-value="emitUpdate"></v-checkbox>
-              </template>
             </v-list-item>
           </v-list>
+
+          <div class="d-flex justify-center py-3" v-if="pageCount > 1">
+            <v-pagination v-model="listPage" :length="pageCount" :total-visible="5" density="comfortable"></v-pagination>
+          </div>
         </v-card-text>
       </v-card>
     </v-col>
 
     <!-- 右侧大图预览 -->
-    <v-col cols="8" class="preview-section pa-0">
-      <v-card class="h-100">
-        <v-card-text class="pa-0 preview-wrapper h-100">
-          <div v-if="selectedImage" class="preview-container h-100">
+    <v-col cols="8" class="preview-section pa-0" :class="{ 'full-height-panel': !compactMode }">
+      <v-card :style="previewCardStyle">
+        <v-card-text class="pa-0 preview-wrapper" :style="previewBodyStyle">
+          <div v-if="selectedImage" class="preview-container" :style="previewBodyStyle">
             <v-btn icon="mdi-chevron-left" variant="text" size="x-large" class="preview-nav-btn preview-nav-left"
               :disabled="!canNavigatePrev" @click="navigatePrev"></v-btn>
 
@@ -85,7 +81,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { ref, computed, onMounted, watch } from 'vue';
 import { useSnackbarStore } from '@/stores/snackbar';
 import upload from '@/api/upload'
 
@@ -97,19 +93,23 @@ interface Image {
   image_url: string
   page_number?: number
   extracted_from_pdf: boolean
-  selected: boolean
 }
 
 const props = withDefaults(defineProps<{
   images?: Image[]
   fileId?: number
+  showMetaControls?: boolean
 }>(), {
   images: () => [],
-  fileId: 0
+  fileId: 0,
+  showMetaControls: true
 })
 
+const showMetaControls = computed(() => props.showMetaControls)
+// 多材料复用时隐藏顶部输入区，启用紧凑展示模式
+const compactMode = computed(() => !showMetaControls.value)
+
 const emit = defineEmits<{
-  (e: 'update', selectedImages: Image[]): void
   (e: 'tagChanged', tag: string): void
   (e: 'addName', task_name: string): void
 }>()
@@ -126,13 +126,61 @@ const displayImages = computed(() => {
   return localImages.value.length > 0 ? localImages.value : props.images
 })
 
+// 列表分页：每页最多展示5条
+const itemsPerPage = 5
+const listPage = ref(1)
+const pageCount = computed(() => Math.max(1, Math.ceil(displayImages.value.length / itemsPerPage)))
+const pagedImages = computed(() => {
+  const start = (listPage.value - 1) * itemsPerPage
+  return displayImages.value.slice(start, start + itemsPerPage)
+})
+
+// 紧凑模式下根据当前页条目数动态调整卡片高度
+const visibleItemCount = computed(() => Math.max(1, Math.min(pagedImages.value.length, itemsPerPage)))
+const thumbnailBodyStyle = computed(() => {
+  if (!compactMode.value) {
+    return {}
+  }
+  return {
+    maxHeight: `${visibleItemCount.value * 84}px`,
+    overflowY: 'auto' as const
+  }
+})
+
+const thumbnailCardStyle = computed(() => {
+  if (!compactMode.value) {
+    return {}
+  }
+  return {
+    minHeight: `${visibleItemCount.value * 84}px`
+  }
+})
+
+const previewBodyStyle = computed(() => {
+  if (!compactMode.value) {
+    return {}
+  }
+  return {
+    minHeight: selectedImage.value ? '320px' : `${visibleItemCount.value * 84}px`
+  }
+})
+
+const previewCardStyle = computed(() => {
+  if (!compactMode.value) {
+    return {}
+  }
+  return {
+    minHeight: selectedImage.value ? '320px' : `${visibleItemCount.value * 84}px`
+  }
+})
+
 // 添加滚动加载相关变量
 const loading = ref(false)
 const page = ref(1)
 const hasMore = ref(true)
-const pageSize = ref(20)
+const pageSize = ref(50)
 
-// 添加滚动加载方法
+// 分页拉取后端提取图片
 const loadMoreImages = async () => {
   if (loading.value || !hasMore.value) return
 
@@ -145,42 +193,34 @@ const loadMoreImages = async () => {
       image_id: img.image_id,
       image_url: import.meta.env.VITE_API_URL + img.image_url,
       page_number: img.page_number,
-      extracted_from_pdf: img.extracted_from_pdf,
-      selected: false
+      extracted_from_pdf: img.extracted_from_pdf
     }))
     localImages.value.push(...newImages)
     page.value++
     hasMore.value = localImages.value.length < response.total
   } catch (error) {
+    hasMore.value = false
     snackbar.showMessage('图片加载失败', 'error')
   } finally {
     loading.value = false
   }
 }
 
-// 监听滚动事件
-const handleScroll = (e: Event) => {
-  const target = e.target as HTMLElement
-  if (target.scrollHeight - target.scrollTop - target.clientHeight < 50) {
-    loadMoreImages()
+const loadAllImages = async () => {
+  if (!props.fileId) {
+    return
+  }
+
+  // 首次进入时尽量拉齐所有图片，方便前端统一分页展示
+  let safeGuard = 0
+  while (hasMore.value) {
+    safeGuard++
+    if (safeGuard > 200) {
+      break
+    }
+    await loadMoreImages()
   }
 }
-
-// 组件挂载时添加滚动监听
-onMounted(() => {
-  const thumbnailList = document.querySelector('.thumbnail-scroll')
-  if (thumbnailList) {
-    thumbnailList.addEventListener('scroll', handleScroll)
-  }
-})
-
-// 组件卸载时移除滚动监听
-onUnmounted(() => {
-  const thumbnailList = document.querySelector('.thumbnail-scroll')
-  if (thumbnailList) {
-    thumbnailList.removeEventListener('scroll', handleScroll)
-  }
-})
 
 const selectedImage = ref<Image | null>(null)
 const currentIndex = ref(-1)
@@ -209,26 +249,14 @@ const navigateNext = () => {
   }
 }
 
-const selectAllImages = () => {
-  const allSelected = displayImages.value.every(img => img.selected)
-  displayImages.value.forEach(img => {
-    img.selected = !allSelected
-  })
-  emitUpdate()
-}
-
 const handleName = () => {
   emit('addName', task_name.value)
-}
-
-const emitUpdate = () => {
-  emit('update', displayImages.value.filter(img => img.selected))
 }
 
 // 获取提取的图片
 onMounted(async () => {
   if (props.fileId) {
-    loadMoreImages()
+    await loadAllImages()
   }
 })
 
@@ -251,25 +279,29 @@ watch(selectedTag, (newVal) => {
   }
 })
 
-const canProceed = computed(() => {
-  return displayImages.value.length > 0 && (!task_name.value || task_name.value.length <= 10)
-})
+watch(displayImages, () => {
+  // 列表总数变化时，自动修正越界页码
+  if (listPage.value > pageCount.value) {
+    listPage.value = pageCount.value
+  }
+}, { deep: true })
 
 </script>
 
 <style scoped>
 .thumbnail-list {
-  height: calc(100vh - 300px);
   overflow: hidden;
 }
 
 .preview-section {
-  height: calc(100vh - 300px);
   overflow: hidden;
 }
 
+.full-height-panel {
+  height: calc(100vh - 300px);
+}
+
 .thumbnail-scroll {
-  height: 100%;
   overflow-y: auto;
   overflow-x: hidden;
 }
