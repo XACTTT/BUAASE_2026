@@ -11,6 +11,7 @@ interface UserState {
   isLoaded: boolean;
   admin_type: string;
   organization: number;
+  organization_name: string;
 }
 
 const API_BASE_URL = import.meta.env.VITE_API_URL;
@@ -24,7 +25,8 @@ export const useUserStore = defineStore('user', {
     avatar: './192.png',
     isLoaded: false,
     admin_type: '',
-    organization: 0
+    organization: 0,
+    organization_name: ''
   }),
 
   actions: {
@@ -39,6 +41,7 @@ export const useUserStore = defineStore('user', {
         this.admin_type = response.data.admin_type;
         this.isLoaded = true;
         this.organization = response.data.organization;
+        this.organization_name = response.data.organization_name || '';
         return true;
       } catch (error) {
         console.error('获取用户信息失败:', error);
@@ -56,6 +59,7 @@ export const useUserStore = defineStore('user', {
       this.isLoaded = false;
       this.admin_type = '';
       this.organization = 0;
+      this.organization_name = '';
     }
   },
 

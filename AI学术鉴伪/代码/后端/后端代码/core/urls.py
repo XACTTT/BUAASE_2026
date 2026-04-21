@@ -8,6 +8,7 @@ from .views.views_resource_container import *
 from .views import views_review, views_organization
 from .views import views_admin
 from .views import views_notify
+from .views import views_model_management
 from django.urls import path
 from .views.views_admin import (
     AdminDashboardView,
@@ -100,6 +101,15 @@ urlpatterns = [
     # 管理端URL配置
     path('admin/details/', AdminDetailView.as_view(), name='admin-details-default'),
     path('admin/details/<int:user_id>', AdminDetailView.as_view(), name='admin-details'),
+    path('admin/models/', views_model_management.list_ai_models, name='list_ai_models'),
+    path('admin/models/verify/', views_model_management.verify_ai_model_config, name='verify_ai_model_config'),
+    path('admin/models/add/', views_model_management.add_ai_model, name='add_ai_model'),
+    path('admin/models/<int:source_id>/update/', views_model_management.update_ai_model, name='update_ai_model'),
+    path('admin/models/<int:source_id>/delete/', views_model_management.delete_ai_model, name='delete_ai_model'),
+    path('admin/models/<int:source_id>/fetch-models/', views_model_management.fetch_source_models, name='fetch_source_models'),
+    path('admin/models/<int:source_id>/configs/add/', views_model_management.add_organization_model_config, name='add_organization_model_config'),
+    path('admin/models/configs/<int:config_id>/update/', views_model_management.update_organization_model_config, name='update_organization_model_config'),
+    path('admin/models/configs/<int:config_id>/delete/', views_model_management.delete_organization_model_config, name='delete_organization_model_config'),
     path('manage-associations/', views_admin.add_reviewer_to_publisher),
 
     # 仪表盘视图 dashboard部分

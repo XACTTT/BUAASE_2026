@@ -688,3 +688,83 @@ class Notification(models.Model):
 
     def __str__(self):
         return f"{self.get_category_display()} - {self.title}"
+
+
+class AIModelSource(models.Model):
+    STATUS_CHOICES = [
+        ('active', 'Active'),
+        ('inactive', 'Inactive'),
+    ]
+
+    name = models.CharField(max_length=120)
+    vendor = models.CharField(max_length=120)
+    base_url = models.CharField(max_length=255)
+    api_key = models.CharField(max_length=255)
+    default_model = models.CharField(max_length=120)
+    timeout = models.PositiveIntegerField(default=30)
+    retry_count = models.PositiveIntegerField(default=2)
+    description = models.TextField(blank=True, null=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='active')
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='created_model_sources')
+    created_at = models.DateTimeField(default=timezone.localtime)
+    updated_at = models.DateTimeField(default=timezone.localtime)
+
+    class Meta:
+        db_table = 'ai_model_source'
+        ordering = ['-updated_at']
+
+    def save(self, *args, **kwargs):
+        self.updated_at = timezone.localtime()
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.vendor} - {self.name}"
+
+
+class ProviderModel(models.Model):
+    source = models.ForeignKey(AIModelSource, on_delete=models.CASCADE, related_name='provider_models')
+    model_id = models.CharField(max_length=160)
+    display_name = models.CharField(max_length=160)
+    module = models.CharField(max_length=120, default='LLM解释')
+    use_case = models.CharField(max_length=255, blank=True, null=True)
+    description = models.TextField(blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(default=timezone.localtime)
+    updated_at = models.DateTimeField(default=timezone.localtime)
+
+    class Meta:
+        db_table = 'provider_model'
+        unique_together = ('source', 'model_id')
+        ordering = ['model_id']
+
+    def save(self, *args, **kwargs):
+        self.updated_at = timezone.localtime()
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.source.vendor}/{self.model_id}"
+
+
+class OrganizationModelConfig(models.Model):
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='model_configs')
+    provider_model = models.ForeignKey(ProviderModel, on_delete=models.CASCADE, related_name='organization_configs')
+    enabled = models.BooleanField(default=True)
+    temperature = models.FloatField(default=0.2)
+    top_p = models.FloatField(default=0.9)
+    max_tokens = models.PositiveIntegerField(default=2048)
+    description = models.TextField(blank=True, null=True)
+    updated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='updated_model_configs')
+    created_at = models.DateTimeField(default=timezone.localtime)
+    updated_at = models.DateTimeField(default=timezone.localtime)
+
+    class Meta:
+        db_table = 'organization_model_config'
+        unique_together = ('organization', 'provider_model')
+        ordering = ['-updated_at']
+
+    def save(self, *args, **kwargs):
+        self.updated_at = timezone.localtime()
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.organization.name} - {self.provider_model.model_id}"

@@ -23,6 +23,8 @@
         <v-list-item v-if="isLoggedIn && userStore.admin_type === 'organization_admin'" 
           prepend-icon="mdi-account-circle" title="组织信息" value="organization_profile"
           @click="goToOrganizationProfile"></v-list-item>
+        <v-list-item v-if="isLoggedIn" prepend-icon="mdi-brain" title="模型管理" value="model_management"
+          @click="goToModelManagement"></v-list-item>
         <v-list-item v-if="isLoggedIn" prepend-icon="mdi-folder" title="图像管理" value="files"
           @click="goToFiles"></v-list-item>
         <v-list-item v-if="isLoggedIn" prepend-icon="mdi-account-group" title="用户管理" value="users"
@@ -74,6 +76,10 @@
       <v-btn v-if="isLoggedIn && userStore.admin_type === 'organization_admin'" to="/organization_profile" value="organization_profile">
         <v-icon>mdi-account-circle</v-icon>
         <span>组织信息</span>
+      </v-btn>
+      <v-btn v-if="isLoggedIn" to="/model-management" value="model_management">
+        <v-icon>mdi-brain</v-icon>
+        <span>模型管理</span>
       </v-btn>
       <v-btn v-if="isLoggedIn" to="/files" value="files">
         <v-icon>mdi-folder</v-icon>
@@ -311,6 +317,10 @@ const goToReviews = () => {
 
 const goToOrganizationProfile = () => {
   router.push('/organization_profile')
+}
+
+const goToModelManagement = () => {
+  router.push('/model-management')
 }
 
 onMounted(async () => {
