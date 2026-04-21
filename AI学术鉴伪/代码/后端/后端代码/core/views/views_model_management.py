@@ -145,15 +145,43 @@ def list_ai_models(request):
 @api_view(['POST'])
 @permission_classes([IsAdminUser])
 def verify_ai_model_config(request):
+    source_id_raw = request.data.get('source_id')
+    source = None
+
+    if source_id_raw not in (None, ''):
+        try:
+            source_id = int(source_id_raw)
+        except (TypeError, ValueError):
+            return Response({'error': 'source_id is invalid'}, status=400)
+
+        source = AIModelSource.objects.filter(id=source_id).first()
+        if source is None:
+            return Response({'error': 'Model source not found'}, status=404)
+
     base_url = (request.data.get('base_url') or '').strip()
     api_key = (request.data.get('api_key') or '').strip()
     model_name = (request.data.get('model_name') or '').strip()
+    timeout_raw = request.data.get('timeout')
+
+    if source is not None:
+        if not base_url:
+            base_url = (source.base_url or '').strip()
+        if not api_key:
+            api_key = (source.api_key or '').strip()
+        if timeout_raw is None:
+            timeout_raw = source.timeout
 
     if not base_url or not api_key:
         return Response({'error': 'base_url and api_key are required'}, status=400)
 
     try:
-        model_ids = _fetch_models_from_provider(base_url, api_key)
+        timeout = int(timeout_raw or 15)
+    except (TypeError, ValueError):
+        timeout = 15
+    timeout = timeout if timeout > 0 else 15
+
+    try:
+        model_ids = _fetch_models_from_provider(base_url, api_key, timeout=timeout)
     except (url_error.URLError, TimeoutError):
         return Response({'error': '模型平台连接失败，请检查 base_url 或网络'}, status=400)
     except ValueError as exc:
