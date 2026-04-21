@@ -9,9 +9,10 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework.response import Response
 from ..models import ImageUpload
-
+from ..utils.log_utils import action_log
 
 @api_view(['POST'])
+@action_log('upload', target_type='FileManagement', target_id_field='file_id')
 @permission_classes([IsAuthenticated])
 def upload_file(request):
     user_id = request.user.id
@@ -47,14 +48,6 @@ def upload_file(request):
         extract_images_from_zip(file_management, uploaded_file)
     else:  # 处理图片文件（png/jpg等）
         store_image(file_management, uploaded_file)
-
-    # 在Log表中记录上传操作
-    Log.objects.create(
-        user=request.user,
-        operation_type='upload',
-        related_model='FileManagement',
-        related_id=file_management.id
-    )
 
     return Response({
         "message": "File uploaded successfully",

@@ -11,6 +11,7 @@ declare module 'vue' {
     ActiveUserTrend: typeof import('./components/analytics/ActiveUserTrend.vue')['default']
     DynamicCaptcha: typeof import('./components/DynamicCaptcha.vue')['default']
     ImageTagStats: typeof import('./components/analytics/ImageTagStats.vue')['default']
+    LogStats: typeof import('./components/analytics/LogStats.vue')['default']
     MethodStats: typeof import('./components/analytics/MethodStats.vue')['default']
     OrgRanking: typeof import('./components/analytics/OrgRanking.vue')['default']
     PublisherRanking: typeof import('./components/analytics/PublisherRanking.vue')['default']

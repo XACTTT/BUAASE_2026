@@ -80,15 +80,51 @@
       </template>
 
       <template v-slot:item.operation_type="{ item }">
-        <v-chip :color="getOperationTypeColor(item.operation_type)" size="small" class="operation-chip">
-          {{ getOperationType(item.operation_type) }}
-        </v-chip>
+        <v-tooltip :text="item.operation_detail ? JSON.stringify(item.operation_detail, null, 2) : '无详情'">
+          <template v-slot:activator="{ props }">
+            <v-chip v-bind="props" :color="getOperationTypeColor(item.operation_type)" size="small" class="operation-chip">
+              {{ getOperationType(item.operation_type) }}
+            </v-chip>
+          </template>
+        </v-tooltip>
       </template>
 
-      <template v-slot:item.related_model="{ item }">
-        <v-chip :color="getModelColor(item.related_model)" size="small" class="model-chip">
-          {{ getRelatedModel(item.related_model) }}
-        </v-chip>
+      <template v-slot:item.target_type="{ item }">
+        <div class="d-flex flex-column align-center">
+          <v-chip :color="getModelColor(item.target_type)" size="x-small" class="model-chip mb-1">
+            {{ getRelatedModel(item.target_type) }}
+          </v-chip>
+          <span class="text-caption text-medium-emphasis">ID: {{ item.target_id || '-' }}</span>
+        </div>
+      </template>
+
+      <template v-slot:item.result="{ item }">
+        <v-tooltip :text="item.error_msg || '操作成功'">
+          <template v-slot:activator="{ props }">
+            <v-icon v-bind="props" :color="item.result === 'success' ? 'success' : 'error'" size="small">
+              {{ item.result === 'success' ? 'mdi-check-circle' : 'mdi-alert-circle' }}
+            </v-icon>
+          </template>
+        </v-tooltip>
+      </template>
+
+      <template v-slot:item.is_anomaly="{ item }">
+        <v-icon :color="item.is_anomaly ? 'error' : 'grey-lighten-1'" size="small">
+          {{ item.is_anomaly ? 'mdi-shield-alert' : 'mdi-shield-check' }}
+        </v-icon>
+      </template>
+
+      <template v-slot:item.actions="{ item }">
+        <v-btn
+          icon
+          variant="text"
+          size="small"
+          :color="item.is_anomaly ? 'grey' : 'error'"
+          :title="item.is_anomaly ? '取消标记异常' : '标记为异常'"
+          @click="toggleAnomaly(item)"
+        >
+          <v-icon>{{ item.is_anomaly ? 'mdi-shield-off' : 'mdi-shield-alert' }}</v-icon>
+        </v-btn>
       </template>
     </v-data-table>
 
@@ -113,6 +149,12 @@
           <v-select v-model="filters.operationType" :items="operationTypeOptions" label="操作类型" clearable
             hide-details></v-select>
 
+          <v-select v-model="filters.targetType" :items="targetTypeOptions" label="目标对象类型" clearable
+            hide-details></v-select>
+
+          <v-select v-model="filters.result" :items="resultOptions" label="操作结果" hide-details></v-select>
+
+          <v-select v-model="filters.isAnomaly" :items="anomalyOptions" label="是否异常" hide-details></v-select>
 
           <v-select v-model="filters.timeRange" :items="timeRangeOptions" label="快速选择时间范围" clearable hide-details
             @update:model-value="handleTimeRangeChange"></v-select>
@@ -181,6 +223,11 @@
           <v-select v-model="downloadFilters.operationType" :items="operationTypeOptions" label="操作类型" clearable
             hide-details></v-select>
 
+          <v-select v-model="downloadFilters.targetType" :items="targetTypeOptions" label="目标对象类型" clearable
+            hide-details></v-select>
+
+          <v-select v-model="downloadFilters.isAnomaly" :items="anomalyOptions" label="是否异常" hide-details></v-select>
+
           <v-select v-model="downloadFilters.timeRange" :items="timeRangeOptions" label="快速选择时间范围" clearable hide-details
             @update:model-value="handleDownloadTimeRangeChange"></v-select>
 
@@ -213,11 +260,18 @@ const snackbar = useSnackbarStore()
 
 interface Log {
   id: number
+  user_id: number
   user: string
+  user_role: string
   organization: string
   operation_type: string
-  related_model: string
-  related_id: number
+  target_type: string
+  target_id: number
+  operation_detail: any
+  ip_address: string
+  result: string
+  error_msg: string
+  is_anomaly: boolean
   operation_time: string
 }
 
@@ -232,9 +286,12 @@ const headers = computed(() => {
   const baseHeaders = [
     { title: '操作用户', key: 'user', align: 'start' },
     { title: '操作类型', key: 'operation_type', align: 'center' },
-    { title: '相关模型', key: 'related_model', align: 'center' },
-    { title: '相关ID', key: 'related_id', align: 'center' },
+    { title: '目标对象', key: 'target_type', align: 'center' },
+    { title: '结果', key: 'result', align: 'center' },
+    { title: 'IP地址', key: 'ip_address', align: 'center' },
+    { title: '异常', key: 'is_anomaly', align: 'center' },
     { title: '操作时间', key: 'operation_time', align: 'center' },
+    { title: '操作', key: 'actions', align: 'center', sortable: false },
   ]
   
   if (currentUser.value?.admin_type === 'software_admin') {
@@ -263,21 +320,54 @@ const searchQuery = ref('')
 const showFilterDialog = ref(false)
 const filters = ref<{
   operationType: string | null
+  targetType: string | null
+  result: string | null
+  isAnomaly: boolean | null
   timeRange: string | null
   startDate: string | null
   endDate: string | null
 }>({
   operationType: null,
+  targetType: null,
+  result: null,
+  isAnomaly: null,
   timeRange: null,
   startDate: null,
   endDate: null
 })
 
 const operationTypeOptions = [
-  { title: '上传图像', value: 'upload' },
-  { title: 'AI检测', value: 'detection' },
-  { title: '发布审核', value: 'review_request' },
-  { title: '提交审核', value: 'manual_review' }
+  { title: '用户登录', value: 'login' },
+  { title: '用户登出', value: 'logout' },
+  { title: '上传文件', value: 'upload' },
+  { title: 'AI检测', value: 'ai_detect' },
+  { title: '发起审核', value: 'audit_submit' },
+  { title: '执行审核', value: 'audit_op' },
+  { title: '实体创建', value: 'entity_create' },
+  { title: '实体删除', value: 'entity_delete' },
+  { title: '实体更新', value: 'entity_update' },
+  { title: '异常标记', value: 'mark_anomaly' }
+]
+
+const targetTypeOptions = [
+  { title: '用户', value: 'User' },
+  { title: '文件管理', value: 'FileManagement' },
+  { title: '检测任务', value: 'DetectionTask' },
+  { title: '审核请求', value: 'ReviewRequest' },
+  { title: '人工审核', value: 'ManualReview' },
+  { title: '模型', value: 'Model' }
+]
+
+const resultOptions = [
+  { title: '全部', value: null },
+  { title: '成功', value: 'success' },
+  { title: '失败', value: 'failure' }
+]
+
+const anomalyOptions = [
+  { title: '全部', value: null },
+  { title: '仅异常', value: true },
+  { title: '正常', value: false }
 ]
 
 const getImageUrl =(url:string)=>{
@@ -328,11 +418,15 @@ const handleCustomTimeChange = () => {
 const resetFilters = () => {
   filters.value = {
     operationType: null,
+    targetType: null,
+    result: null,
+    isAnomaly: null,
     timeRange: null,
     startDate: null,
     endDate: null
   }
   searchSelectedUser.value = null
+  searchSelectedOrg.value = null
   timeError.value = ''
   currentPage.value = 1
   pageSize.value = 10
@@ -382,23 +476,17 @@ const fetchLogs = async (page: number, pageSize: number) => {
       query: searchSelectedUser.value?.username || '',
       organization: searchSelectedOrg.value || '',
       operation_type: filters.value.operationType || '',
+      target_type: filters.value.targetType || '',
+      result: filters.value.result || '',
+      is_anomaly: filters.value.isAnomaly === null ? undefined : filters.value.isAnomaly,
       startTime: startTimeFilter,
       endTime: endTimeFilter
     }
-    const response = await logApi.getLogs(params)
+    const response = await logApi.getLogs(params as any)
     const { data } = response
 
     if (data && data.logs) {
-      logs.value = data.logs.map((log: any) => ({
-        id: log.id,
-        user: log.user,
-        organization: log.organization || '未知组织',
-        operation_type: log.operation_type,
-        related_model: log.related_model,
-        related_id: log.related_id,
-        operation_time: log.operation_time
-      }))
-
+      logs.value = data.logs
       currentPage.value = data.current_page
       totalPages.value = data.total_pages
       totalLogs.value = data.total_logs
@@ -443,45 +531,37 @@ const formatDateFilter = (timestamp: number) => {
 
 
 const getOperationType = (type: string) => {
-  switch (type) {
-    case 'upload':
-      return '上传图像'
-    case 'detection':
-      return 'AI检测'
-    case 'review_request':
-      return '发布审核'
-    case 'manual_review':
-      return '提交审核'
-    default:
-      return '未知'
-  }
+  const option = operationTypeOptions.find(opt => opt.value === type)
+  return option ? option.title : type
 }
 
 const getRelatedModel = (model: string) => {
-  switch (model) {
-    case 'DetectionTask':
-      return "检测任务"
-    case 'FileManagement':
-      return "文件管理"
-    case 'ReviewRequest':
-      return "人工审核请求"
-    case 'ManualReview':
-      return "人工审核提交"
-    default:
-      return '未知'
-  }
+  const option = targetTypeOptions.find(opt => opt.value === model)
+  return option ? option.title : model
 }
 
 const getOperationTypeColor = (type: string) => {
   switch (type) {
+    case 'login':
+    case 'logout':
+      return 'grey'
     case 'upload':
       return 'info'
+    case 'ai_detect':
     case 'detection':
       return 'success'
+    case 'audit_submit':
     case 'review_request':
       return 'warning'
+    case 'audit_op':
     case 'manual_review':
       return 'primary'
+    case 'entity_create':
+      return 'teal'
+    case 'entity_delete':
+      return 'red'
+    case 'entity_update':
+      return 'orange'
     default:
       return 'grey'
   }
@@ -489,6 +569,8 @@ const getOperationTypeColor = (type: string) => {
 
 const getModelColor = (model: string) => {
   switch (model) {
+    case 'User':
+      return 'brown'
     case 'DetectionTask':
       return 'info'
     case 'FileManagement':
@@ -499,6 +581,18 @@ const getModelColor = (model: string) => {
       return 'success'
     default:
       return 'grey'
+  }
+}
+
+const toggleAnomaly = async (log: Log) => {
+  try {
+    const newStatus = !log.is_anomaly
+    await logApi.markAnomaly(log.id, newStatus)
+    log.is_anomaly = newStatus
+    snackbar.showMessage(newStatus ? '已标记为异常' : '已取消异常标记', 'success')
+  } catch (error) {
+    console.error('切换异常状态失败:', error)
+    snackbar.showMessage('操作失败', 'error')
   }
 }
 
@@ -525,11 +619,15 @@ onMounted(async () => {
 const showDownloadDialog = ref(false)
 const downloadFilters = ref<{
   operationType: string | null
+  targetType: string | null
+  isAnomaly: boolean | null
   timeRange: string | null
   startDate: string | null
   endDate: string | null
 }>({
   operationType: null,
+  targetType: null,
+  isAnomaly: null,
   timeRange: null,
   startDate: null,
   endDate: null
@@ -569,6 +667,8 @@ const handleDownloadCustomTimeChange = () => {
 const resetDownloadFilters = () => {
   downloadFilters.value = {
     operationType: null,
+    targetType: null,
+    isAnomaly: null,
     timeRange: null,
     startDate: null,
     endDate: null
@@ -633,6 +733,8 @@ const downloadLogs = async () => {
     const params = {
       query: downloadSelectedUsers.value.map(user => user.id),
       operation_type: downloadFilters.value.operationType || '',
+      target_type: downloadFilters.value.targetType || '',
+      is_anomaly: downloadFilters.value.isAnomaly === null ? undefined : downloadFilters.value.isAnomaly,
       startTime: startTimeFilter,
       endTime: endTimeFilter
     }
