@@ -12,8 +12,11 @@ from core.models import FileManagement, ImageUpload
 from core.services.audit_service import audit_log
 from core.services.permissions import can_upload_to_container
 
+import fitz
 
 class FileIngestService:
+    IMAGE_EXTENSIONS = {'png', 'jpg', 'jpeg', 'bmp', 'gif', 'webp'}
+
     @staticmethod
     def _checksum_for_upload(uploaded_file):
         sha256 = hashlib.sha256()
@@ -25,6 +28,25 @@ class FileIngestService:
     @staticmethod
     def _image_hash(image_data: bytes) -> str:
         return hashlib.sha256(image_data).hexdigest()
+
+    @staticmethod
+    def _is_zip_upload(uploaded_file, content_type: str, file_ext: str) -> bool:
+        zip_mime_types = {'application/zip', 'application/x-zip-compressed'}
+
+        if content_type in zip_mime_types:
+            return True
+
+        if file_ext == 'zip':
+            return True
+
+        if content_type == 'application/octet-stream':
+            position = uploaded_file.tell()
+            try:
+                return zipfile.is_zipfile(uploaded_file)
+            finally:
+                uploaded_file.seek(position)
+
+        return False
 
     @staticmethod
     def _save_pil_image(image: Image.Image, relative_path: str) -> None:
@@ -57,7 +79,6 @@ class FileIngestService:
 
     @staticmethod
     def _extract_images_from_pdf(file_management, container, file_path, source_kind='pdf_extracted'):
-        import fitz
 
         full_file_path = os.path.join(settings.MEDIA_ROOT, file_path)
         with fitz.open(full_file_path) as pdf_document:
@@ -103,8 +124,10 @@ class FileIngestService:
                 if lower_name.endswith(('.png', '.jpg', '.jpeg')):
                     image_data = zip_file.read(member_name)
                     image_counter += 1
-                    image_filename = f"{file_management.id}_{os.path.basename(member_name)}"
-                    unique_name = f"{uuid.uuid4().hex}_{image_filename}"
+                    file_ext = os.path.splitext(member_name)[1].lstrip('.').lower()
+                    if not file_ext or not file_ext.isalnum():
+                        file_ext = 'png'
+                    unique_name = f"{file_management.id}_{uuid.uuid4().hex}.{file_ext}"
                     relative_path = os.path.join('extracted_images', unique_name).replace('\\', '/')
 
                     with Image.open(io.BytesIO(image_data)) as pil_image:
@@ -144,15 +167,18 @@ class FileIngestService:
         image_data = uploaded_file.read()
         uploaded_file.seek(0)
 
-        unique_filename = f"{uuid.uuid4().hex}_{uploaded_file.name}"
+        file_ext = os.path.splitext(uploaded_file.name)[1].lstrip('.').lower()
+        if not file_ext or not file_ext.isalnum():
+            file_ext = 'png'
+        unique_filename = f"{uuid.uuid4().hex}.{file_ext}"
         relative_path = os.path.join('extracted_images', f"{file_management.id}_{unique_filename}").replace('\\', '/')
         fs = FileSystemStorage()
-        fs.save(relative_path, uploaded_file)
+        saved_relative_path = fs.save(relative_path, uploaded_file)
 
         FileIngestService._create_image_record(
             file_management=file_management,
             container=container,
-            relative_path=relative_path,
+            relative_path=saved_relative_path,
             image_data=image_data,
             image_role=image_role,
             source_kind='direct_image',
@@ -196,12 +222,12 @@ class FileIngestService:
             file_management.parse_status = 'parsing'
             file_management.save(update_fields=['parse_status'])
 
-            if content_type == 'application/pdf':
+            if content_type == 'application/pdf' or file_ext == 'pdf':
                 FileIngestService._extract_images_from_pdf(file_management, container, storage_path)
-            elif content_type in ('application/zip', 'application/x-zip-compressed', 'application/octet-stream'):
+            elif FileIngestService._is_zip_upload(uploaded_file, content_type, file_ext):
                 uploaded_file.seek(0)
                 FileIngestService._extract_images_from_zip(file_management, container, uploaded_file)
-            elif content_type.startswith('image/'):
+            elif content_type.startswith('image/') or file_ext in FileIngestService.IMAGE_EXTENSIONS:
                 uploaded_file.seek(0)
                 FileIngestService._store_single_image(file_management, container, uploaded_file, image_role='figure')
 

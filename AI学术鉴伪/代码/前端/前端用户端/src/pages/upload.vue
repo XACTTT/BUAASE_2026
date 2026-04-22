@@ -608,6 +608,10 @@ const canProceed = computed(() => {
 })
 
 const handleTag = async (tag: string) => {
+  if (!tag) {
+    return
+  }
+
   console.log('parent: ' + tag)
   try {
     await uploadApi.addTag({ fileId: fileId.value, tag })
@@ -622,8 +626,14 @@ const handleNext = async () => {
   await handleTag(currentTag.value)
   if (canProceed.value) {
     try {
+      const normalizedFileId = Number(fileId.value)
+      if (!Number.isFinite(normalizedFileId) || normalizedFileId <= 0) {
+        snackbar.showMessage('文件ID无效，请重新上传', 'error')
+        return
+      }
+
       const payload: Record<string, any> = {
-        file_id: fileId.value,
+        image_ids: [normalizedFileId],
         task_name: currentTaskName.value,
         mode: selectedVersion.value,
         detect_type: selectedModule.value

@@ -15,6 +15,17 @@ interface UserState {
 }
 
 const API_BASE_URL = import.meta.env.VITE_API_URL;
+const DEFAULT_AVATAR = '/default-avatar.svg';
+
+function resolveAvatarUrl(avatar?: string | null): string {
+  if (!avatar) {
+    return DEFAULT_AVATAR;
+  }
+  if (avatar.startsWith('http://') || avatar.startsWith('https://')) {
+    return avatar;
+  }
+  return `${API_BASE_URL}${avatar}`;
+}
 
 export const useUserStore = defineStore('user', {
   state: (): UserState => ({
@@ -22,7 +33,7 @@ export const useUserStore = defineStore('user', {
     email: '',
     role: '',
     profile: '',
-    avatar: './192.png',
+    avatar: DEFAULT_AVATAR,
     isLoaded: false,
     admin_type: '',
     organization: 0,
@@ -37,7 +48,7 @@ export const useUserStore = defineStore('user', {
         this.email = response.data.email || '';
         this.role = response.data.role || '';
         this.profile = response.data.profile || '';
-        this.avatar = response.data.avatar ? `${API_BASE_URL}${response.data.avatar}` : './192.png';
+        this.avatar = resolveAvatarUrl(response.data.avatar);
         this.admin_type = response.data.admin_type;
         this.isLoaded = true;
         this.organization = response.data.organization;
@@ -55,7 +66,7 @@ export const useUserStore = defineStore('user', {
       this.email = '';
       this.role = '';
       this.profile = '';
-      this.avatar = './192.png';
+      this.avatar = DEFAULT_AVATAR;
       this.isLoaded = false;
       this.admin_type = '';
       this.organization = 0;

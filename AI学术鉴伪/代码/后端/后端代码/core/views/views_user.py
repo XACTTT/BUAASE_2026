@@ -16,6 +16,14 @@ class EmailBackend(BaseBackend):
             return None
 
 
+from rest_framework import serializers
+
+def _safe_avatar_url(user):
+    avatar = getattr(user, 'avatar', None)
+    if avatar and avatar.name and avatar.storage.exists(avatar.name):
+        return avatar.url
+    return None
+
 class UserRegisterSerializer(serializers.ModelSerializer):
     invitation_code = serializers.CharField(write_only=True)
 
@@ -84,7 +92,7 @@ class UserLoginView(views.APIView):
                     'role': user.role,
                     'organization': user.organization.name if user.organization else None,
                     'profile': user.profile,
-                    'avatar': user.avatar.url
+                    'avatar': _safe_avatar_url(user)
                 })
             return Response({"message": "Invalid credentials"}, status=status.HTTP_401_UNAUTHORIZED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)

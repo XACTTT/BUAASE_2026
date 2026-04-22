@@ -280,7 +280,13 @@ const operationTypeOptions = [
   { title: '提交审核', value: 'manual_review' }
 ]
 
-const getImageUrl =(url:string)=>{
+const getImageUrl = (url?: string | null) => {
+  if (!url) {
+    return '/default-avatar.svg'
+  }
+  if (url.startsWith('http://') || url.startsWith('https://')) {
+    return url
+  }
   return import.meta.env.VITE_API_URL + url
 }
 

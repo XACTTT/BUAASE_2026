@@ -14,7 +14,9 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 from django.contrib import admin
-from django.urls import path, include
+from django.urls import path, include, re_path
+from django.views.static import serve
+import sys
 
 urlpatterns = [
     path("admin/", admin.site.urls),
@@ -22,7 +24,10 @@ urlpatterns = [
 ]
 
 from django.conf import settings
-from django.conf.urls.static import static
-# 在开发环境中配置媒体文件的URL访问
-if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+
+# runserver 调试环境下，即使 DEBUG=False 也允许直接访问 media。
+if settings.DEBUG or 'runserver' in sys.argv:
+    media_prefix = settings.MEDIA_URL.lstrip('/').rstrip('/')
+    urlpatterns += [
+        re_path(rf'^{media_prefix}/(?P<path>.*)$', serve, {'document_root': settings.MEDIA_ROOT})
+    ]

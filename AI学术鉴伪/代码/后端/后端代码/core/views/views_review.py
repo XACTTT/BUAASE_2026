@@ -14,6 +14,13 @@ from core.util import send_notification
 from core.models import Notification
 
 
+def _safe_avatar_url(user):
+    avatar = getattr(user, 'avatar', None)
+    if avatar and avatar.name and avatar.storage.exists(avatar.name):
+        return avatar.url
+    return None
+
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def get_all_reviewers_in_org(request):
@@ -40,7 +47,7 @@ def get_all_reviewers_in_org(request):
             filtered_reviewers.append({
                 'id': reviewer.id,
                 'username': reviewer.username,
-                'avatar': reviewer.avatar.url if reviewer.avatar else None,
+                'avatar': _safe_avatar_url(reviewer),
             })
 
     return Response(filtered_reviewers)
@@ -71,7 +78,7 @@ def get_reviewers_for_publisher(request, publisher_id):
     reviewer_list = [{
         'id': user.id,
         'username': user.username,
-        'avatar': user.avatar.url if user.avatar else None,
+        'avatar': _safe_avatar_url(user),
     } for user in reviewers]
 
     return Response({
@@ -210,7 +217,7 @@ def get_img_review_all(request):
             reviewers_results.append({
                 'id': reviewer.id,
                 'username': reviewer.username,
-                'avatar': reviewer.avatar.url if reviewer.avatar else None,
+                'avatar': _safe_avatar_url(reviewer),
                 'result': image_review.result  # 0/1 表示人工审核的结果是真还是假
             })
 
@@ -562,7 +569,7 @@ def get_reviewer_manual_request(request):
                         'manual_review_id': manual_review.id,
                         'manual_review_time': manual_review.review_time.strftime('%Y-%m-%d %H:%M:%S'),
                         'publisher_username': publisher.username,
-                        'publisher_avatar': publisher.avatar.url if publisher.avatar else None,
+                        'publisher_avatar': _safe_avatar_url(publisher),
                         'image_count': image_count,
                         'status': manual_review.status
                     })
@@ -571,7 +578,7 @@ def get_reviewer_manual_request(request):
                     'manual_review_id': manual_review.id,
                     'manual_review_time': manual_review.review_time.strftime('%Y-%m-%d %H:%M:%S'),
                     'publisher_username': publisher.username,
-                    'publisher_avatar': publisher.avatar.url if publisher.avatar else None,
+                    'publisher_avatar': _safe_avatar_url(publisher),
                     'image_count': image_count,
                     'status': manual_review.status
                 })
@@ -700,7 +707,7 @@ def get_manualReview_from_reviewRequestId(request, review_request_id):
             'reviewer': {
                 'id': manual_review.reviewer.id,
                 'username': manual_review.reviewer.username,
-                'avatar': manual_review.reviewer.avatar.url if manual_review.reviewer.avatar else None,
+                'avatar': _safe_avatar_url(manual_review.reviewer),
             },
             'status': manual_review.status,
             'review_time': manual_review.review_time.strftime(

@@ -11,6 +11,7 @@ from django.core.paginator import Paginator
 from ..models import ReviewRequest
 from ..utils.serializers_safe import serialize_value
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from datetime import datetime
 from core.models import Log, User
 from rest_framework.decorators import api_view, permission_classes
@@ -26,7 +27,192 @@ from core.util import send_notification
 from core.models import Notification
 
 
+def _safe_avatar_url(user):
+    avatar = getattr(user, 'avatar', None)
+    if avatar and avatar.name and avatar.storage.exists(avatar.name):
+        return avatar.url
+    return None
+
+
+def _infer_resource_type(file_obj):
+    role = file_obj.resource_role or ''
+    file_ext = (file_obj.file_ext or '').lower()
+    if role.startswith('paper_'):
+        return 'paper'
+    if role.startswith('review_'):
+        return 'review'
+    if file_ext in {'png', 'jpg', 'jpeg', 'bmp', 'gif', 'webp'}:
+        return 'image'
+    return 'comprehensive'
+
+
+def _map_detection_status(parse_status):
+    if parse_status in ('uploaded', 'validating'):
+        return 'pending'
+    if parse_status == 'parsing':
+        return 'detecting'
+    if parse_status == 'parsed':
+        return 'completed'
+    return 'failed'
+
+
+def _serialize_resource(file_obj):
+    latest_result = DetectionResult.objects.filter(
+        image_upload__file_management=file_obj
+    ).order_by('-id').first()
+
+    detection_result = None
+    detection_time = None
+    if latest_result is not None:
+        if latest_result.is_fake is True:
+            detection_result = 'fake'
+        elif latest_result.is_fake is False:
+            detection_result = 'real'
+        if latest_result.detection_time:
+            detection_time = timezone.localtime(latest_result.detection_time).isoformat()
+
+    metadata = file_obj.extra_metadata or {}
+
+    return {
+        'id': file_obj.id,
+        'type': _infer_resource_type(file_obj),
+        'file_name': file_obj.file_name,
+        'file_format': (file_obj.file_ext or '').lower() or file_obj.file_type,
+        'upload_time': timezone.localtime(file_obj.upload_time).isoformat(),
+        'uploader_id': file_obj.user_id,
+        'uploader_name': file_obj.user.username,
+        'uploader_email': file_obj.user.email,
+        'classification': file_obj.tag,
+        'detection_time': detection_time,
+        'detection_result': detection_result,
+        'detection_status': _map_detection_status(file_obj.parse_status),
+        'task_id': latest_result.detection_task_id if latest_result else None,
+        'title': metadata.get('title') or file_obj.file_name,
+        'author': metadata.get('author'),
+        'organization': file_obj.organization.name if file_obj.organization else None,
+        'editor': metadata.get('editor'),
+        'subject': metadata.get('subject'),
+        'status': metadata.get('status'),
+        'review_count': metadata.get('review_count', 0),
+    }
+
+
+@api_view(['GET'])
+@permission_classes([IsAdminUser])
+def admin_resources(request):
+    page = int(request.query_params.get('page', 1))
+    page_size = int(request.query_params.get('page_size', 10))
+    if page_size <= 0:
+        page_size = 10
+
+    resources = FileManagement.objects.select_related('user', 'organization').all().order_by('-upload_time')
+
+    user = request.user
+    if user.email != 'admin@mail.com':
+        resources = resources.filter(organization=user.organization)
+
+    resource_type = request.query_params.get('type')
+    query = request.query_params.get('query')
+    uploader_id = request.query_params.get('user_id')
+    classification = request.query_params.get('classification')
+    start_time = request.query_params.get('start_time')
+    end_time = request.query_params.get('end_time')
+    detection_result = request.query_params.get('detection_result')
+
+    if query:
+        query_filter = (
+            models.Q(file_name__icontains=query)
+            | models.Q(user__username__icontains=query)
+            | models.Q(user__email__icontains=query)
+        )
+        if query.isdigit():
+            query_filter = query_filter | models.Q(id=int(query))
+        resources = resources.filter(query_filter)
+
+    if uploader_id:
+        resources = resources.filter(user_id=uploader_id)
+
+    if classification:
+        resources = resources.filter(tag=classification)
+
+    try:
+        if start_time:
+            resources = resources.filter(upload_time__gte=_parse_request_datetime(start_time))
+        if end_time:
+            resources = resources.filter(upload_time__lte=_parse_request_datetime(end_time))
+    except ValueError:
+        return Response({'error': 'Invalid datetime format'}, status=400)
+
+    serialized = [_serialize_resource(file_obj) for file_obj in resources]
+
+    if resource_type:
+        serialized = [item for item in serialized if item['type'] == resource_type]
+
+    if detection_result in ('real', 'fake'):
+        serialized = [item for item in serialized if item['detection_result'] == detection_result]
+
+    total_count = len(serialized)
+    total_pages = (total_count + page_size - 1) // page_size if total_count else 0
+    start_index = (page - 1) * page_size
+    end_index = start_index + page_size
+
+    return Response({
+        'total_count': total_count,
+        'page': page,
+        'total_pages': total_pages,
+        'resources': serialized[start_index:end_index],
+    })
+
+
+@api_view(['GET', 'PUT', 'DELETE'])
+@permission_classes([IsAdminUser])
+def admin_resource_detail(request, resource_id):
+    try:
+        resource = FileManagement.objects.select_related('user', 'organization').get(id=resource_id)
+    except FileManagement.DoesNotExist:
+        return Response({'error': 'Resource not found'}, status=404)
+
+    user = request.user
+    if user.email != 'admin@mail.com' and resource.organization_id != user.organization_id:
+        return Response({'error': 'Forbidden'}, status=403)
+
+    if request.method == 'GET':
+        return Response(_serialize_resource(resource))
+
+    if request.method == 'PUT':
+        data = request.data
+        classification = data.get('classification')
+        tags = data.get('tags')
+        is_public = data.get('is_public')
+
+        if classification in [choice[0] for choice in FileManagement.TAG_CHOICES]:
+            resource.tag = classification
+
+        metadata = resource.extra_metadata or {}
+        if tags is not None:
+            metadata['tags'] = tags
+        if is_public is not None:
+            metadata['is_public'] = bool(is_public)
+        resource.extra_metadata = metadata
+        resource.save(update_fields=['tag', 'extra_metadata'])
+        return Response(_serialize_resource(resource))
+
+    resource.delete()
+    return Response(status=204)
+
+
+def _parse_request_datetime(value):
+    """将请求中的时间字符串解析为当前时区的 aware datetime。"""
+    dt = parse_datetime(value)
+    if dt is None:
+        dt = datetime.fromisoformat(value)
+    if timezone.is_naive(dt):
+        dt = timezone.make_aware(dt, timezone.get_current_timezone())
+    return dt
+
+
 class AdminDetailSerializer(serializers.ModelSerializer):
+    avatar = serializers.SerializerMethodField()
     admin_type = serializers.SerializerMethodField()  # 新增字段：区分管理员类型
     organization_name = serializers.SerializerMethodField(read_only=True)  # 动态获取组织名称
 
@@ -45,6 +231,9 @@ class AdminDetailSerializer(serializers.ModelSerializer):
 
     def get_organization_name(self, obj):
         return obj.organization.name if obj.organization else None
+
+    def get_avatar(self, obj):
+        return _safe_avatar_url(obj)
 
 
 @permission_classes([IsAdminUser])
@@ -124,12 +313,12 @@ def dashboard_img_tag(request):
 
     try:
         if start_time:
-            start_time = timezone.datetime.fromisoformat(start_time)
+            start_time = _parse_request_datetime(start_time)
         else:
             start_time = default_start
 
         if end_time:
-            end_time = timezone.datetime.fromisoformat(end_time)
+            end_time = _parse_request_datetime(end_time)
         else:
             end_time = default_end
     except ValueError:
@@ -1012,7 +1201,7 @@ def get_users(request):
             'permission': user.permission,
             'admin_type': get_admin_type(user),
             'date_joined': user.date_joined.strftime('%Y-%m-%d %H:%M:%S'),
-            'avatar': user.avatar.url if user.avatar else None,
+            'avatar': _safe_avatar_url(user),
             'organization': user.organization.name if user.organization else None,  # 新增字段
         } for user in page.object_list
     ]
@@ -1119,7 +1308,7 @@ class AdminLoginView(views.APIView):
                 'refresh': str(refresh),
                 'role': user.role,
                 'profile': user.profile,  # 返回用户的简介信息
-                'avatar': user.avatar.url if user.avatar else None
+                'avatar': _safe_avatar_url(user)
             })
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -1207,10 +1396,15 @@ def get_files(request):
         files = files.filter(user__username__startswith=query)
     if categories:
         files = files.filter(tag=categories)
-    if start_time:
-        files = files.filter(upload_time__gte=start_time)
-    if end_time:
-        files = files.filter(upload_time__lte=end_time)
+    try:
+        if start_time:
+            start_time = _parse_request_datetime(start_time)
+            files = files.filter(upload_time__gte=start_time)
+        if end_time:
+            end_time = _parse_request_datetime(end_time)
+            files = files.filter(upload_time__lte=end_time)
+    except ValueError:
+        return Response({'error': 'Invalid datetime format'}, status=400)
 
     # 分页
     paginator = Paginator(files, page_size)
@@ -1282,7 +1476,7 @@ def get_all_review_requests(request):
         request_data.append({
             "id": req.id,
             "username": req.user.username,
-            "avatar": req.user.avatar.url if req.user.avatar else None,
+            "avatar": _safe_avatar_url(req.user),
             "state": req.status2,
             "time": timezone.localtime(req.request_time).strftime('%Y-%m-%d %H:%M:%S'),
             "organization": req.organization.name if req.organization else None,
@@ -1335,7 +1529,7 @@ def get_review_request_detail_admin(request, reviewRequest_id):
             persons.append({
                 "id": reviewer.id,
                 "username": reviewer.username,
-                "avatar": reviewer.avatar.url if reviewer.avatar else None,
+                "avatar": _safe_avatar_url(reviewer),
             })
 
         return Response({
@@ -1384,7 +1578,7 @@ def get_review_request_detail(request, manual_review_id):
         persons.append({
             "id": reviewer.id,
             "username": reviewer.username,
-            "avatar": reviewer.avatar.url if reviewer.avatar else None,
+            "avatar": _safe_avatar_url(reviewer),
         })
 
     # 构建返回数据

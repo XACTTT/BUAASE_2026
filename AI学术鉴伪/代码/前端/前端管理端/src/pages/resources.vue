@@ -814,21 +814,21 @@ const selectType = (type: string | null) => {
 }
 
 // 获取学科名称
-const getSubjectName = (subject: string | null) => {
+const getSubjectName = (subject?: string | null) => {
   if (!subject) return '全部学科'
   const option = subjectOptions.find(opt => opt.value === subject)
   return option ? option.title : subject
 }
 
 // 获取状态名称
-const getStatusName = (status: string | null) => {
+const getStatusName = (status?: string | null) => {
   if (!status) return '全部状态'
   const option = statusOptions.find(opt => opt.value === status)
   return option ? option.title : status
 }
 
 // 获取状态颜色
-const getStatusColor = (status: string | null) => {
+const getStatusColor = (status?: string | null) => {
   const colors: { [key: string]: string } = {
     draft: 'grey',
     submitted: 'info',
@@ -901,11 +901,11 @@ const formatTime = (time: string | null) => {
 const loadResources = async () => {
   loading.value = true
   try {
-    const response = await resourceApi.getResources()
-    resources.value = response.data || []
+    const response = await resourceApi.getResources({ page: 1, page_size: 200 })
+    resources.value = response.data.resources || []
   } catch (error) {
     console.error('加载资源失败:', error)
-    snackbar.show('加载资源失败', 'error')
+    snackbar.showMessage('加载资源失败', 'error')
     // 使用模拟数据
     resources.value = [
       {
@@ -1016,12 +1016,12 @@ const deleteResource = async () => {
   
   try {
     await resourceApi.deleteResource(selectedResource.value.id)
-    snackbar.show('删除成功', 'success')
+    snackbar.showMessage('删除成功', 'success')
     showDeleteDialog.value = false
     loadResources()
   } catch (error) {
     console.error('删除资源失败:', error)
-    snackbar.show('删除失败', 'error')
+    snackbar.showMessage('删除失败', 'error')
   }
 }
 

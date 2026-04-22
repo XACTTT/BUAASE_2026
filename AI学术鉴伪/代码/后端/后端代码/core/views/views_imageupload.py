@@ -1,5 +1,6 @@
 import io
 import uuid
+import logging
 from PIL import Image
 import zipfile
 from django.core.files.storage import FileSystemStorage
@@ -10,6 +11,9 @@ from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework.response import Response
 from ..models import ImageUpload
 from core.services.file_ingest_service import FileIngestService
+
+
+logger = logging.getLogger(__name__)
 
 
 @api_view(['POST'])
@@ -46,7 +50,10 @@ def upload_file(request):
             {'error_code': 'CONTAINER_UPLOAD_FORBIDDEN', 'message': 'no permission to upload to this container'},
             status=403,
         )
+    except (ValueError, zipfile.BadZipFile) as exc:
+        return Response({'error_code': 'INVALID_FILE_FORMAT', 'message': str(exc)}, status=400)
     except Exception as exc:
+        logger.exception('Upload failed', exc_info=exc)
         return Response({'error_code': 'UPLOAD_FAILED', 'message': str(exc)}, status=500)
 
     return Response({
@@ -61,6 +68,7 @@ def upload_file(request):
 import os
 import threading
 from django.conf import settings
+import fitz
 
 # 全局锁（可选，根据并发需求）
 # fitz_lock = threading.Lock()
@@ -253,6 +261,9 @@ def get_extracted_images(request, file_id):
         # 构建图片列表
         image_list = []
         for image in paginated_images:
+            if not image.image or not image.image.name or not image.image.storage.exists(image.image.name):
+                continue
+
             image_data = {
                 "image_id": image.id,
                 "image_url": image.image.url,
@@ -275,6 +286,58 @@ def get_extracted_images(request, file_id):
 
     except FileManagement.DoesNotExist:
         return Response({"message": "File not found"}, status=404)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_extracted_contents(request, file_id):
+    try:
+        file_management = FileManagement.objects.get(id=file_id, user=request.user)
+    except FileManagement.DoesNotExist:
+        return Response({"message": "File not found"}, status=404)
+
+    storage_path = file_management.storage_path
+    if not storage_path:
+        return Response({"file_id": file_id, "contents": [], "page": 1, "page_size": 0, "total": 0})
+
+    full_path = os.path.join(settings.MEDIA_ROOT, storage_path)
+    if not os.path.exists(full_path):
+        return Response({"message": "Stored file not found"}, status=404)
+
+    file_ext = (file_management.file_ext or '').lower()
+    if file_ext != 'pdf':
+        return Response({
+            "file_id": file_id,
+            "contents": [],
+            "page": 1,
+            "page_size": 0,
+            "total": 0,
+            "message": "content extraction currently supports pdf only"
+        })
+
+    contents = []
+    with fitz.open(full_path) as pdf_document:
+        for page_idx in range(pdf_document.page_count):
+            text = pdf_document.load_page(page_idx).get_text("text").strip()
+            if not text:
+                continue
+            contents.append({
+                "content_id": len(contents) + 1,
+                "title": f"第{page_idx + 1}页",
+                "text": text,
+                "source": "pdf_extracted",
+            })
+
+    paginator = CustomPagination()
+    paginated_contents = paginator.paginate_queryset(contents, request)
+
+    return Response({
+        "file_id": file_id,
+        "page": paginator.page.number,
+        "page_size": paginator.get_page_size(request),
+        "total": paginator.page.paginator.count,
+        "contents": paginated_contents,
+    })
 
 
 @api_view(['POST'])

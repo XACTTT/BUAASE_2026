@@ -57,6 +57,7 @@ urlpatterns = [
     path('upload/', upload_file, name='upload_file'),
     path('upload/<int:file_id>/', get_file_details, name='get_file_details'),
     path('upload/<int:file_id>/extract_images/', get_extracted_images, name='get_extracted_images'),
+    path('upload/<int:file_id>/extract_contents/', get_extracted_contents, name='get_extracted_contents'),
     path('upload/<int:file_id>/addTag/', add_file_tag, name='add_file_tag'),
     path('upload/<int:file_id>/delete/', delete_upload, name='delete_upload'),
     path('upload/get_all_file_images/<int:file_management_id>/', get_all_file_images, name='get_all_file_images'),
@@ -110,6 +111,8 @@ urlpatterns = [
     path('admin/models/<int:source_id>/configs/add/', views_model_management.add_organization_model_config, name='add_organization_model_config'),
     path('admin/models/configs/<int:config_id>/update/', views_model_management.update_organization_model_config, name='update_organization_model_config'),
     path('admin/models/configs/<int:config_id>/delete/', views_model_management.delete_organization_model_config, name='delete_organization_model_config'),
+    path('admin/resources/', views_admin.admin_resources, name='admin_resources'),
+    path('admin/resources/<int:resource_id>/', views_admin.admin_resource_detail, name='admin_resource_detail'),
     path('manage-associations/', views_admin.add_reviewer_to_publisher),
 
     # 仪表盘视图 dashboard部分
