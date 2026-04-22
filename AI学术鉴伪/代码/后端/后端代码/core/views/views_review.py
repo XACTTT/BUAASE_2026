@@ -8,6 +8,7 @@ from ..models import ReviewRequest, ManualReview, DetectionResult, User, Detecti
 from django.utils import timezone
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
+from ..utils.log_utils import action_log
 from rest_framework.permissions import IsAuthenticated
 from ..models import ReviewRequest, DetectionTask, ImageUpload, User, Log
 from core.util import send_notification
@@ -89,6 +90,7 @@ def get_reviewers_for_publisher(request, publisher_id):
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
+@action_log('audit_submit', target_type='ReviewRequest', target_id_field='review_request_id')
 def create_review_task_with_admin_check(request):
     user_id = request.user.id
     user = User.objects.get(id=user_id)
@@ -151,14 +153,6 @@ def create_review_task_with_admin_check(request):
             fail_silently=False,
         )
 
-        # 创建日志
-        # 在Log表中记录上传操作
-        Log.objects.create(
-            user=request.user,
-            operation_type='review_request',
-            related_model='ReviewRequest',
-            related_id=review_request.id,
-        )
         return Response(
             {'message': 'Review task created and sent to admin for approval', 'review_request_id': review_request.id},
             status=201
@@ -721,6 +715,7 @@ def get_manualReview_from_reviewRequestId(request, review_request_id):
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
+@action_log('audit_op', target_type='ManualReview', target_id_field='manual_review_id')
 def post_review(request, manual_review_id):
     """
     reviewer提交审核结果

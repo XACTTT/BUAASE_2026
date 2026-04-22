@@ -11,12 +11,13 @@ from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework.response import Response
 from ..models import ImageUpload
 from core.services.file_ingest_service import FileIngestService
+from ..utils.log_utils import action_log
 
 
 logger = logging.getLogger(__name__)
 
-
 @api_view(['POST'])
+@action_log('upload', target_type='FileManagement', target_id_field='file_id')
 @permission_classes([IsAuthenticated])
 def upload_file(request):
     user = request.user

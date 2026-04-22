@@ -29,6 +29,7 @@ from core.models import (
     SubDetectionResult,   # 子检测方法结果表
     DetectionTask,        # 整体任务表
 )
+from core.utils.log_utils import log_action
 from .utils.report_generator import generate_detection_task_report
 from .utils.image_saver import save_ndarray_as_image
 from .utils.fanyi import fanyi_text
@@ -113,6 +114,15 @@ def fetch_batch(
         results = get_result(zip_path, data_path)
 
     if results is None:
+        log_action(
+            user=task.user,
+            operation_type='ai_detect',
+            target_type='DetectionTask',
+            target_id=task.id,
+            result='failure',
+            error_msg='GPU server connection failed, retrying...',
+            detail={'retry': True}
+        )
         raise self.retry(exc=RuntimeError("AI 服务器不可达"))
 
     # 3️⃣  将每张图片拆成独立 payload，fan‑out 给 CPU worker
@@ -237,6 +247,15 @@ def finalize_task(_chord_results: list | None, task_pk: int, image_num: int, _=N
         task.completion_time = timezone.now()
         task.save(update_fields=["status", "completion_time"])
         generate_detection_task_report(task)
+
+    log_action(
+        user=task.user,
+        operation_type='ai_detect',
+        target_type='DetectionTask',
+        target_id=task.id,
+        result='success',
+        detail={'message': 'Task finalized successfully'}
+    )
 
     send_task_completion_notification(task.user, task_pk)
 

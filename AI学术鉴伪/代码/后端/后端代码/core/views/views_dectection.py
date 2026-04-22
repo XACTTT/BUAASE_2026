@@ -5,7 +5,8 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from django.utils import timezone
-from ..models import DetectionResult, ImageUpload, Log, User
+from ..models import DetectionResult, ImageUpload, Log, User, DetectionTask
+from ..utils.log_utils import action_log
 from django.db.models import Q
 from datetime import datetime
 from django.core.paginator import Paginator
@@ -115,6 +116,7 @@ from pathlib import Path
 import time
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
+@action_log('ai_detect', target_type='DetectionTask', target_id_field='task_id')
 def submit_detection2(request):
     submit_time = time.time()
     user_id = request.user.id
@@ -173,14 +175,6 @@ def submit_detection2(request):
         cmd_block_size=cmd_block_size,
         urn_k=urn_k,
         if_use_llm=if_use_llm
-    )
-
-    # 在Log表中记录检测任务的创建
-    Log.objects.create(
-        user=request.user,
-        operation_type='detection',
-        related_model='DetectionTask',
-        related_id=detection_task.id
     )
 
     # ----① 建 DetectionResult，与原逻辑相同-------------

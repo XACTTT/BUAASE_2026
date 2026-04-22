@@ -628,7 +628,21 @@ class Feedback(models.Model):
 
 class Log(models.Model):
     OPERATION_TYPES = [
+        ('login', 'Login'),
+        ('logout', 'Logout'),
         ('upload', 'Upload'),
+        ('ai_detect', 'AI Detection'),
+        ('audit_submit', 'Audit Submit'),
+        ('audit_op', 'Audit Operation'),
+        ('comment', 'Comment'),
+        ('like', 'Like'),
+        ('report', 'Report'),
+        ('entity_create', 'Entity Create'),
+        ('entity_delete', 'Entity Delete'),
+        ('entity_update', 'Entity Update'),
+        ('model_config_change', 'Model Config Change'),
+        ('report_handle', 'Report Handle'),
+        # 旧有兼容
         ('detection', 'Detection'),
         ('review_request', 'Review Request'),
         ('manual_review', 'Manual Review'),
@@ -638,11 +652,33 @@ class Log(models.Model):
         ('material_validation', 'Material Validation'),
     ]
 
-    operation_time = models.DateTimeField(default=timezone.localtime)  # 记录操作时间
+    log_id = models.AutoField(primary_key=True)
+    operation_time = models.DateTimeField(default=timezone.localtime, db_index=True)  # 记录操作时间
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='logs')
-    operation_type = models.CharField(max_length=50, choices=OPERATION_TYPES)  # 操作类型
-    related_model = models.CharField(max_length=50)  # 操作关联的模型名称
-    related_id = models.IntegerField()  # 操作相关的模型ID，表的ID值
+    user_role = models.CharField(max_length=50, blank=True, null=True)  # 用户角色 (普通/管理员/超级管理员)
+    operation_type = models.CharField(max_length=50, choices=OPERATION_TYPES, db_index=True)  # 操作类型
+    target_type = models.CharField(max_length=50, blank=True, null=True)  # 目标对象类型 (image, paper, review, user, model)
+    target_id = models.IntegerField(blank=True, null=True)  # 目标对象ID
+    operation_detail = models.JSONField(blank=True, null=True)  # 操作详情 (JSON)
+    ip_address = models.GenericIPAddressField(blank=True, null=True)  # 客户端IP
+    result = models.CharField(max_length=20, default='success')  # 操作结果 (success/failure)
+    error_msg = models.TextField(blank=True, null=True)  # 失败时的错误信息
+    is_anomaly = models.BooleanField(default=False, db_index=True)  # 是否为异常事件
+
+    # 保持向后兼容的旧字段名
+    @property
+    def related_model(self):
+        return self.target_type
+
+    @property
+    def related_id(self):
+        return self.target_id
+
+    class Meta:
+        ordering = ['-operation_time']
+        indexes = [
+            models.Index(fields=['user', 'operation_type', 'operation_time']),
+        ]
 
     def __str__(self):
         return f"{self.user.username} {self.operation_type} at {self.operation_time}"

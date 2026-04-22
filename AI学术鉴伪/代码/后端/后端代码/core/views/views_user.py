@@ -4,6 +4,7 @@ from django.contrib.auth.backends import BaseBackend
 from rest_framework import views, status
 from ..models import ReviewRequest, ManualReview, DetectionTask, User, InvitationCode
 from ..utils.report_generator import generate_manual_review_report
+from ..utils.log_utils import log_action, action_log, get_client_ip
 
 
 class EmailBackend(BaseBackend):
@@ -83,9 +84,11 @@ class UserLoginView(views.APIView):
             user = authenticate(email=email, password=password)
             if user is not None:
                 if user.role != role:
+                    log_action(user, 'login', result='failure', error_msg=f'Invalid role. User is not a {role}.', ip=get_client_ip(request))
                     return Response({"message": f"Invalid role. User is not a {role}."},
                                     status=status.HTTP_400_BAD_REQUEST)
                 refresh = RefreshToken.for_user(user)
+                log_action(user, 'login', result='success', ip=get_client_ip(request))
                 return Response({
                     'access': str(refresh.access_token),
                     'refresh': str(refresh),
@@ -94,7 +97,9 @@ class UserLoginView(views.APIView):
                     'profile': user.profile,
                     'avatar': _safe_avatar_url(user)
                 })
+            log_action(None, 'login', result='failure', error_msg=f'Invalid credentials for email: {email}', ip=get_client_ip(request))
             return Response({"message": "Invalid credentials"}, status=status.HTTP_401_UNAUTHORIZED)
+        log_action(None, 'login', result='failure', error_msg=str(serializer.errors), ip=get_client_ip(request))
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -104,6 +109,7 @@ from rest_framework_simplejwt.exceptions import TokenError
 
 
 class UserLogoutView(views.APIView):
+    @action_log('logout')
     def post(self, request):
         try:
             refresh_token = request.data['refresh']

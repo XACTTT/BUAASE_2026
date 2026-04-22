@@ -19,6 +19,12 @@
 
     <v-row class="mt-4">
       <v-col cols="12">
+        <LogStats />
+      </v-col>
+    </v-row>
+
+    <v-row class="mt-4">
+      <v-col cols="12">
         <ActiveUserTrend v-if="isOrganizationAdmin" />
         <ActiveOrgTrend v-else />
       </v-col>
@@ -37,6 +43,7 @@ import ImageTagStats from '@/components/analytics/ImageTagStats.vue'
 import PublisherRanking from '@/components/analytics/PublisherRanking.vue'
 import OrgRanking from '@/components/analytics/OrgRanking.vue'
 import TaskTrend from '@/components/analytics/TaskTrend.vue'
+import LogStats from '@/components/analytics/LogStats.vue'
 import ActiveUserTrend from '@/components/analytics/ActiveUserTrend.vue'
 import ActiveOrgTrend from '@/components/analytics/ActiveOrgTrend.vue'
 import MethodStats from '@/components/analytics/MethodStats.vue'

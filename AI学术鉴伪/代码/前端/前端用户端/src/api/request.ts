@@ -2,15 +2,18 @@
 import axios from 'axios'
 import router from '@/router'
 
+// 根据环境变量或代理，设置baseURL
+const baseApiUrl = import.meta.env.VITE_API_URL ? import.meta.env.VITE_API_URL + '/api' : '/api'
+
 // 创建axios实例
 const instance = axios.create({
   //配置
-  baseURL: import.meta.env.VITE_API_URL + "/api", //接口请求的域名地址
+  baseURL: baseApiUrl, //接口请求的域名地址
   timeout: 5000,//请求超时时间
   headers: {}, //设置请求头信息
 })
 
-//请求拦截处理 
+//请求拦截处理
 instance.interceptors.request.use(config => {
   let token = localStorage.getItem('2-token')
   if (token) {
@@ -57,7 +60,7 @@ const refreshToken = async () => {
 
   try {
     const response = await axios.post(
-      import.meta.env.VITE_API_URL + '/api/token/refresh/',
+      `${baseApiUrl}/token/refresh/`,
       { refresh: refresh }
     )
 

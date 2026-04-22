@@ -10,6 +10,7 @@ from django.contrib.auth import authenticate
 from django.core.paginator import Paginator
 from ..models import ReviewRequest
 from ..utils.serializers_safe import serialize_value
+from ..utils.log_utils import action_log, log_action, get_client_ip
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from datetime import datetime
@@ -818,14 +819,14 @@ class UserPermissionView(APIView):
             return JsonResponse({'error': 'User not found'}, status=404)
 
 
-class PostReportView(APIView):
+@api_view(['POST'])
+@permission_classes([IsAdminUser])
+@action_log('report', target_type='DetectionTask', target_id_field='post_id')
+def PostReportView(request, post_id):
     """
     帖子举报处理视图
     """
-
-    @permission_classes([IsAdminUser])
-    def post(self, request, post_id):
-        try:
+    try:
             # 获取被举报的检测任务
             task = DetectionTask.objects.get(id=post_id)
 
@@ -842,8 +843,8 @@ class PostReportView(APIView):
             )
 
             return JsonResponse({'message': f'Post {post_id} reported successfully', 'report_id': report.id})
-        except DetectionTask.DoesNotExist:
-            return JsonResponse({'error': 'Task not found'}, status=404)
+    except DetectionTask.DoesNotExist:
+        return JsonResponse({'error': 'Task not found'}, status=404)
 
 
 class UserActionLogGetView(APIView):
@@ -862,9 +863,12 @@ class UserActionLogGetView(APIView):
         query = request.GET.get('query', '')
         role = request.GET.get('role', '')
         operation_type = request.GET.get('operation_type', '')
+        target_type = request.GET.get('target_type', '')
         start_time = request.GET.get('startTime', None)
         end_time = request.GET.get('endTime', None)
-        organization_name = request.GET.get('organization', None)  # 新增组织筛选参数
+        organization_name = request.GET.get('organization', None)
+        is_anomaly = request.GET.get('is_anomaly', None)
+        result = request.GET.get('result', '')
 
         # 获取所有日志记录并应用筛选条件
         logs = Log.objects.all().order_by('-operation_time')
@@ -880,17 +884,23 @@ class UserActionLogGetView(APIView):
         if query:
             logs = logs.filter(user__username__startswith=query)
         if role:
-            logs = logs.filter(user__role=role)
+            logs = logs.filter(user_role=role)
         if operation_type:
             logs = logs.filter(operation_type=operation_type)
+        if target_type:
+            logs = logs.filter(target_type=target_type)
         if start_time:
             logs = logs.filter(operation_time__gte=start_time)
         if end_time:
             logs = logs.filter(operation_time__lte=end_time)
         if organization_name:
-            logs = logs.filter(user__organization__name__icontains=organization_name)  # 按组织名称模糊匹配
+            logs = logs.filter(user__organization__name__icontains=organization_name)
+        if is_anomaly is not None:
+            logs = logs.filter(is_anomaly=(is_anomaly.lower() == 'true'))
+        if result:
+            logs = logs.filter(result=result)
 
-        paginator = Paginator(logs, page_size)  # 每页显示指定数量的日志
+        paginator = Paginator(logs, page_size)
 
         try:
             page_obj = paginator.page(page)
@@ -899,13 +909,20 @@ class UserActionLogGetView(APIView):
 
         log_data = [
             {
-                'id': log.id,
+                'id': log.log_id,
+                'user_id': log.user.id,
                 'user': log.user.username,
+                'user_role': log.user_role,
                 'operation_type': log.operation_type,
-                'related_model': log.related_model,
-                'related_id': log.related_id,
+                'target_type': log.target_type,
+                'target_id': log.target_id,
+                'operation_detail': log.operation_detail,
+                'ip_address': log.ip_address,
+                'result': log.result,
+                'error_msg': log.error_msg,
+                'is_anomaly': log.is_anomaly,
                 'operation_time': log.operation_time.strftime('%Y-%m-%d %H:%M:%S'),
-                'organization': log.user.organization.name if log.user.organization else None  # 新增字段
+                'organization': log.user.organization.name if log.user.organization else None
             } for log in page_obj.object_list
         ]
 
@@ -941,21 +958,13 @@ class UserActionLogDownloadView(APIView):
         user = User.objects.get(id=user_id)
 
         # 获取查询参数
-        query = request.query_params.get('query', None)  # query 应该是一个逗号分隔的字符串
-        status = request.query_params.get('status', '')
+        query = request.query_params.get('query', None)
         operation_type = request.query_params.get('operation_type', '')
+        target_type = request.query_params.get('target_type', '')
         start_time = request.query_params.get('startTime', None)
         end_time = request.query_params.get('endTime', None)
-        organization_name = request.query_params.get('organization', None)  # 新增组织筛选参数
-
-        # 将 query 转换为 int list
-        if query:
-            try:
-                query_list = [int(q.strip()) for q in query.split(',') if q.strip()]
-            except ValueError:
-                return Response({'error': 'Query parameter must be a comma-separated list of integers'}, status=400)
-        else:
-            query_list = []
+        organization_name = request.query_params.get('organization', None)
+        is_anomaly = request.query_params.get('is_anomaly', None)
 
         # 获取所有日志记录并应用筛选条件
         logs = Log.objects.all().order_by('-operation_time')
@@ -968,18 +977,20 @@ class UserActionLogDownloadView(APIView):
             if organization_id:
                 logs = logs.filter(user__organization_id=organization_id)
 
-        if query_list:
-            logs = logs.filter(user__id__in=query_list)  # 筛选所有匹配的 publisher ID
-        if status:
-            logs = logs.filter(operation_type=status)  # 这里假设status对应的是operation_type
+        if query:
+            logs = logs.filter(user__username__icontains=query)
         if operation_type:
             logs = logs.filter(operation_type=operation_type)
+        if target_type:
+            logs = logs.filter(target_type=target_type)
         if start_time:
             logs = logs.filter(operation_time__gte=start_time)
         if end_time:
             logs = logs.filter(operation_time__lte=end_time)
         if organization_name:
-            logs = logs.filter(user__organization__name__icontains=organization_name)  # 按组织名筛选
+            logs = logs.filter(user__organization__name__icontains=organization_name)
+        if is_anomaly is not None:
+            logs = logs.filter(is_anomaly=(is_anomaly.lower() == 'true'))
 
         # 创建CSV文件内容
         response = HttpResponse(content_type='text/csv')
@@ -987,27 +998,89 @@ class UserActionLogDownloadView(APIView):
 
         writer = csv.writer(response)
         writer.writerow([
-            'ID',
-            'User',
-            'Operation Type',
-            'Related Model',
-            'Related ID',
-            'Operation Time',
-            'Organization'  # 新增字段
+            'Log ID', 'User', 'User Role', 'Operation Type', 'Target Type', 
+            'Target ID', 'Operation Time', 'IP Address', 'Result', 
+            'Is Anomaly', 'Organization'
         ])
 
         for log in logs:
             writer.writerow([
-                log.id,
+                log.log_id,
                 log.user.username,
+                log.user_role,
                 log.operation_type,
-                log.related_model,
-                log.related_id,
+                log.target_type,
+                log.target_id,
                 log.operation_time.strftime('%Y-%m-%d %H:%M:%S'),
-                log.user.organization.name if log.user.organization else ''  # 新增字段
+                log.ip_address,
+                log.result,
+                'Yes' if log.is_anomaly else 'No',
+                log.user.organization.name if log.user.organization else ''
             ])
 
         return response
+
+
+class UserActionLogMarkAnomalyView(APIView):
+    """
+    标记日志为异常事件
+    """
+    @permission_classes([IsAdminUser])
+    def put(self, request, log_id):
+        try:
+            log = Log.objects.get(log_id=log_id)
+            # 权限检查：非全局管理员只能操作自己组织的日志
+            if request.user.email != 'admin@mail.com':
+                if log.user.organization != request.user.organization:
+                    return JsonResponse({'error': 'Permission denied'}, status=403)
+            
+            is_anomaly = request.data.get('is_anomaly', True)
+            log.is_anomaly = is_anomaly
+            log.save()
+            return JsonResponse({'message': f'Log {log_id} marked as anomaly: {is_anomaly}'})
+        except Log.DoesNotExist:
+            return JsonResponse({'error': 'Log not found'}, status=404)
+
+
+class LogStatisticsView(APIView):
+    """
+    操作记录统计 (FR-LOG-003)
+    """
+    @permission_classes([IsAdminUser])
+    def get(self, request):
+        from django.db.models import Count
+        from django.db.models.functions import TruncDate
+        
+        # 默认统计最近 30 天
+        days = int(request.GET.get('days', 30))
+        start_date = timezone.now() - timedelta(days=days)
+        
+        logs = Log.objects.filter(operation_time__gte=start_date)
+        
+        # 权限控制
+        if request.user.email != 'admin@mail.com':
+            logs = logs.filter(user__organization=request.user.organization)
+        
+        # 1. 每日操作次数统计
+        daily_stats = logs.annotate(date=TruncDate('operation_time')) \
+                          .values('date') \
+                          .annotate(count=Count('log_id')) \
+                          .order_by('date')
+        
+        # 2. 操作类型占比
+        type_stats = logs.values('operation_type') \
+                         .annotate(count=Count('log_id')) \
+                         .order_by('-count')
+        
+        # 3. 异常操作统计
+        anomaly_count = logs.filter(is_anomaly=True).count()
+        
+        return JsonResponse({
+            'daily_stats': list(daily_stats),
+            'type_stats': list(type_stats),
+            'total_count': logs.count(),
+            'anomaly_count': anomaly_count
+        })
 
 
 @api_view(['GET'])
@@ -1218,6 +1291,7 @@ def get_users(request):
 
 @api_view(['POST'])
 @permission_classes([IsAdminUser])
+@action_log('entity_create', target_type='User', target_id_field='user_id')
 def create_user(request):
     """
     创建新用户
@@ -1239,6 +1313,7 @@ def create_user(request):
 
 @api_view(['PUT'])
 @permission_classes([IsAdminUser])
+@action_log('entity_update', target_type='User', target_id_field='user_id')
 def update_user(request, user_id):
     """
     更新用户信息
@@ -1262,6 +1337,7 @@ def update_user(request, user_id):
 
 @api_view(['DELETE'])
 @permission_classes([IsAdminUser])
+@action_log('entity_delete', target_type='User', target_id_field='user_id')
 def delete_user(request, user_id):
     """
     删除用户
@@ -1303,6 +1379,7 @@ class AdminLoginView(views.APIView):
         if serializer.is_valid():
             user = serializer.validated_data['user']
             refresh = RefreshToken.for_user(user)
+            log_action(user, 'login', result='success', ip=get_client_ip(request))
             return Response({
                 'access': str(refresh.access_token),
                 'refresh': str(refresh),
@@ -1310,6 +1387,7 @@ class AdminLoginView(views.APIView):
                 'profile': user.profile,  # 返回用户的简介信息
                 'avatar': _safe_avatar_url(user)
             })
+        log_action(None, 'login', result='failure', error_msg=f'Admin login failed: {str(serializer.errors)}', ip=get_client_ip(request))
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -1345,6 +1423,7 @@ def create_admin(request):
 
 @api_view(['DELETE'])
 @permission_classes([IsAdminUser])
+@action_log('entity_delete', target_type='FileManagement', target_id_field='file_id')
 def delete_upload(request, file_id):
     try:
         file_management = FileManagement.objects.get(id=file_id)
@@ -1593,6 +1672,7 @@ def get_review_request_detail(request, manual_review_id):
 
 @api_view(['POST'])
 @permission_classes([IsAdminUser])
+@action_log('audit_op', target_type='ReviewRequest', target_id_field='reviewRequest_id')
 def handle_review_request(request, reviewRequest_id):
     """
     管理员处理ReviewRequest，相当于管理员先决定是否通过，然后再给各个reviewer创建ManualReview（和ImageReview）
@@ -1670,6 +1750,7 @@ def handle_review_request(request, reviewRequest_id):
 
 @api_view(['DELETE'])
 @permission_classes([IsAuthenticated, IsAdminUser])
+@action_log('entity_delete', target_type='ImageUpload', target_id_field='image_id')
 def delete_image_upload(request, image_id):
     try:
         image_upload = ImageUpload.objects.get(id=image_id)
@@ -1681,6 +1762,7 @@ def delete_image_upload(request, image_id):
 
 @api_view(['DELETE'])
 @permission_classes([IsAdminUser])
+@action_log('entity_delete', target_type='ReviewRequest', target_id_field='review_request_id')
 def delete_review_request(request, review_request_id):
     """
     删除指定的 ReviewRequest 记录
