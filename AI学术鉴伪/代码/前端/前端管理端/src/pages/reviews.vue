@@ -516,7 +516,11 @@ const fetchRequests = async (page: number, pageSize: number) => {
     totalRequests.value = total_requests
   } catch (error) {
     console.error('获取审核请求失败:', error)
-    snackbar.showMessage('获取审核请求失败', 'error')
+    snackbar.showMessage('获取审核请求失败 - API可能未实现', 'error')
+    // 设置默认值以避免页面卡住
+    requests.value = []
+    totalRequests.value = 0
+    totalPages.value = 0
   } finally {
     loading.value = false
   }
