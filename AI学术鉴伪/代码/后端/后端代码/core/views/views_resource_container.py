@@ -128,7 +128,7 @@ def resource_container_review_text(request, container_id):
     except ValueError as exc:
         code = str(exc)
         if code == 'INVALID_CONTAINER_TYPE':
-            return _error(code, 'container_type must be review')
+            return _error(code, 'container_type must be review or multi_material')
         if code == 'EMPTY_REVIEW_TEXT':
             return _error(code, 'raw_text must not be empty')
         if code == 'REVIEW_TEXT_TOO_LARGE':

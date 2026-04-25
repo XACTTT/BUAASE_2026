@@ -11,7 +11,7 @@ class ReviewTextService:
 
     @staticmethod
     def create_review_text(user, container, payload):
-        if container.container_type != 'review':
+        if container.container_type not in {'review', 'multi_material'}:
             raise ValueError('INVALID_CONTAINER_TYPE')
 
         raw_text = (payload.get('raw_text') or '').strip()

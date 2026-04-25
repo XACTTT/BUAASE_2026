@@ -11,6 +11,7 @@ from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework.response import Response
 from ..models import ImageUpload
 from core.services.file_ingest_service import FileIngestService
+from core.services.content_extraction_service import ContentExtractionService
 from ..utils.log_utils import action_log
 
 
@@ -297,37 +298,17 @@ def get_extracted_contents(request, file_id):
     except FileManagement.DoesNotExist:
         return Response({"message": "File not found"}, status=404)
 
-    storage_path = file_management.storage_path
-    if not storage_path:
-        return Response({"file_id": file_id, "contents": [], "page": 1, "page_size": 0, "total": 0})
-
-    full_path = os.path.join(settings.MEDIA_ROOT, storage_path)
-    if not os.path.exists(full_path):
-        return Response({"message": "Stored file not found"}, status=404)
-
-    file_ext = (file_management.file_ext or '').lower()
-    if file_ext != 'pdf':
-        return Response({
-            "file_id": file_id,
-            "contents": [],
-            "page": 1,
-            "page_size": 0,
-            "total": 0,
-            "message": "content extraction currently supports pdf only"
-        })
-
-    contents = []
-    with fitz.open(full_path) as pdf_document:
-        for page_idx in range(pdf_document.page_count):
-            text = pdf_document.load_page(page_idx).get_text("text").strip()
-            if not text:
-                continue
-            contents.append({
-                "content_id": len(contents) + 1,
-                "title": f"第{page_idx + 1}页",
-                "text": text,
-                "source": "pdf_extracted",
-            })
+    sections = ContentExtractionService.extract_text_sections_from_file(file_management)
+    contents = [
+        {
+            "content_id": index + 1,
+            "title": item.get("title") or f"内容{index + 1}",
+            "text": item.get("text") or "",
+            "source": item.get("source") or "normalized_text",
+            "page_number": item.get("page_number"),
+        }
+        for index, item in enumerate(sections)
+    ]
 
     paginator = CustomPagination()
     paginated_contents = paginator.paginate_queryset(contents, request)

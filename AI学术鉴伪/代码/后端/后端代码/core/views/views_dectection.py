@@ -1,15 +1,36 @@
 import json
+import os
+import time
 import zipfile
+from datetime import datetime
+from pathlib import Path
 
+from django.conf import settings
+from django.core.paginator import Paginator
+from django.http import FileResponse
+from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
-from django.utils import timezone
-from ..models import DetectionResult, ImageUpload, Log, User, DetectionTask
+from rest_framework import serializers
+
+from core.models import (
+    DetectionResult,
+    DetectionTask,
+    FileManagement,
+    ImageUpload,
+    ResourceContainer,
+    StructuredDetectionResult,
+    SubDetectionResult,
+    User,
+)
+from core.services.material_validation_service import MaterialValidationService
+from core.services.structured_detection_service import StructuredDetectionService
 from ..utils.log_utils import action_log
 from django.db.models import Q
-from datetime import datetime
-from django.core.paginator import Paginator
+from ..utils.report_generator import generate_detection_task_report
+from ..utils.serializers_safe import serialize_value
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
@@ -40,8 +61,146 @@ def get_detection_result(request, image_id):
         return Response({"message": "Detection result not found"}, status=404)
 
 
-from ..tasks import run_ai_detection, run_ai_detection_batch
-from ..tasks_new import fetch_batch
+from ..tasks_new import fetch_batch, run_structured_detection_task
+
+
+def _check_organization_quota(organization, use_llm: bool, usage_count: int):
+    if use_llm:
+        if not organization.can_use_llm(usage_count):
+            return Response(
+                {
+                    "message": (
+                        "You have exceeded your LLM method usage limit for this week. "
+                        f"Your organization can only submit {organization.remaining_llm_uses} more images."
+                    )
+                },
+                status=400,
+            )
+        organization.decrement_llm_uses(usage_count)
+        return None
+
+    if not organization.can_use_non_llm(usage_count):
+        return Response(
+            {
+                "message": (
+                    "You have exceeded your non-LLM method usage limit for this week. "
+                    f"Your organization can only submit {organization.remaining_non_llm_uses} more images."
+                )
+            },
+            status=400,
+        )
+    organization.decrement_non_llm_uses(usage_count)
+    return None
+
+
+def _normalize_structured_submit_payload(request):
+    detect_type = (request.data.get('detect_type') or 'image').strip().lower()
+    container_id = request.data.get('container_id')
+    raw_file_ids = request.data.get('file_ids')
+    fallback_file_ids = request.data.get('image_ids')
+
+    if raw_file_ids in (None, ''):
+        raw_file_ids = fallback_file_ids
+
+    if raw_file_ids in (None, ''):
+        raw_file_ids = []
+
+    if isinstance(raw_file_ids, (int, str)):
+        raw_file_ids = [raw_file_ids]
+
+    file_ids = []
+    for item in raw_file_ids:
+        try:
+            file_ids.append(int(item))
+        except (TypeError, ValueError):
+            continue
+
+    raw_review_text_ids = request.data.get('review_text_ids') or []
+    if isinstance(raw_review_text_ids, (int, str)):
+        raw_review_text_ids = [raw_review_text_ids]
+
+    review_text_ids = []
+    for item in raw_review_text_ids:
+        try:
+            review_text_ids.append(int(item))
+        except (TypeError, ValueError):
+            continue
+
+    return detect_type, container_id, file_ids, review_text_ids
+
+
+def _submit_structured_detection(request, user, mode, task_name, cmd_block_size, urn_k, if_use_llm):
+    detect_type, container_id, file_ids, review_text_ids = _normalize_structured_submit_payload(request)
+
+    if detect_type not in {'paper', 'review', 'multi'}:
+        return Response({"message": "Unsupported detect_type"}, status=400)
+
+    container = None
+    if container_id not in (None, ''):
+        container = ResourceContainer.objects.filter(
+            id=container_id,
+            owner=user,
+        ).first()
+        if container is None:
+            return Response({"message": "Container not found"}, status=404)
+
+    file_queryset = FileManagement.objects.filter(id__in=file_ids, user=user).order_by('id')
+    if file_ids and file_queryset.count() != len(set(file_ids)):
+        return Response({"message": "Some files are invalid"}, status=404)
+
+    if container is None and file_queryset.exists():
+        container = file_queryset.first().container
+
+    if detect_type == 'paper':
+        if not file_queryset.exists() and container is None:
+            return Response({"message": "No valid paper files found"}, status=400)
+
+    if detect_type == 'review':
+        has_review_files = file_queryset.exists()
+        has_review_texts = bool(review_text_ids)
+        if not has_review_files and not has_review_texts and container is None:
+            return Response({"message": "No valid review materials found"}, status=400)
+
+    if detect_type == 'multi':
+        if container is None:
+            return Response({"message": "container_id is required for multi detection"}, status=400)
+        validation_result = MaterialValidationService.validate_container_materials(user, container)
+        if not validation_result['valid']:
+            return Response({"message": validation_result['message'], "details": validation_result}, status=400)
+
+    usage_count = max(len(file_ids), 1)
+    quota_error = _check_organization_quota(user.organization, if_use_llm, usage_count)
+    if quota_error:
+        return quota_error
+
+    detection_task = DetectionTask.objects.create(
+        organization=user.organization,
+        user=user,
+        container=container,
+        task_name=task_name,
+        status='pending',
+        detect_type=detect_type,
+        cmd_block_size=cmd_block_size,
+        urn_k=urn_k,
+        if_use_llm=if_use_llm,
+        extra_payload={
+            'mode': mode,
+            'file_ids': file_ids,
+            'review_text_ids': review_text_ids,
+            'container_id': container.id if container else None,
+        },
+    )
+
+    run_structured_detection_task.apply_async(args=[detection_task.pk], queue='cpu')
+
+    return Response(
+        {
+            "message": "Detection request submitted successfully",
+            "task_id": detection_task.id,
+            "task_name": detection_task.task_name,
+            "detect_type": detection_task.detect_type,
+        }
+    )
 
 
 # @api_view(['POST'])
@@ -110,10 +269,6 @@ from ..tasks_new import fetch_batch
 #         "task_id": detection_task.id,
 #         "task_name": detection_task.task_name,  # 返回任务名称
 #     })
-
-
-from pathlib import Path
-import time
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 @action_log('ai_detect', target_type='DetectionTask', target_id_field='task_id')
@@ -127,9 +282,10 @@ def submit_detection2(request):
     if not user.has_permission('submit'):
         return Response({"错误": "该用户没有提交检测的权限"}, status=403)
 
+    detect_type = (request.data.get('detect_type') or 'image').strip().lower()
+
     # 获取用户提交的图像ID列表
     image_ids = request.data.get('image_ids', [])
-    image_ids.sort()
     task_name = request.data.get('task_name', 'New Detection Task')  # 从请求中获取任务名称，默认为 "New Detection Task"
 
     # 获取额外的参数
@@ -139,8 +295,21 @@ def submit_detection2(request):
     if mode == 3:
         if_use_llm = True
 
+    if detect_type != 'image':
+        return _submit_structured_detection(
+            request=request,
+            user=user,
+            mode=mode,
+            task_name=task_name,
+            cmd_block_size=cmd_block_size,
+            urn_k=urn_k,
+            if_use_llm=if_use_llm,
+        )
+
     if not image_ids:
         return Response({"message": "No image IDs provided"}, status=400)
+
+    image_ids.sort()
 
     # 查找用户上传的所有图像
     image_uploads = ImageUpload.objects.filter(id__in=image_ids, file_management__user=request.user)
@@ -150,21 +319,9 @@ def submit_detection2(request):
         return Response({"message": "No valid images found"}, status=404)
 
     num_images = len(image_uploads)
-    # 检查剩余次数是否足够
-    if if_use_llm:
-        if not organization.can_use_llm(num_images):
-            return Response({
-                                "message": f"You have exceeded your LLM method usage limit for this week. Your organization can only submit {organization.remaining_llm_uses} more images."},
-                            status=400)
-        # 使用 LLM 方法时，减少组织的 LLM 方法剩余次数
-        organization.decrement_llm_uses(num_images)
-    else:
-        if not organization.can_use_non_llm(num_images):
-            return Response({
-                                "message": f"You have exceeded your non-LLM method usage limit for this week. Your organization can only submit {organization.remaining_non_llm_uses} more images."},
-                            status=400)
-        # 使用非 LLM 方法时，减少组织的非 LLM 方法剩余次数
-        organization.decrement_non_llm_uses(num_images)
+    quota_error = _check_organization_quota(organization, if_use_llm, num_images)
+    if quota_error:
+        return quota_error
 
     # 创建一个新的检测任务
     detection_task = DetectionTask.objects.create(
@@ -172,9 +329,11 @@ def submit_detection2(request):
         user=request.user,
         task_name=task_name,  # 使用用户提交的任务名称
         status='pending',  # 初始状态为"排队中"
+        detect_type='image',
         cmd_block_size=cmd_block_size,
         urn_k=urn_k,
-        if_use_llm=if_use_llm
+        if_use_llm=if_use_llm,
+        extra_payload={'mode': mode, 'image_ids': image_ids},
     )
 
     # ----① 建 DetectionResult，与原逻辑相同-------------
@@ -455,15 +614,6 @@ class SubDetectionResultSerializer(serializers.ModelSerializer):
         if self.context.get("include_matrix"):
             return obj.mask_matrix          # 已经是 list[list[float]]
         return None
-
-
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.response import Response
-from django.shortcuts import get_object_or_404
-from ..models import DetectionResult
-from ..utils.serializers_safe import serialize_value
-
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def detection_result_detail(request, result_id):
@@ -566,6 +716,48 @@ def detection_result_by_image(request, image_id):
     return Response(data)
 
 
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def structured_task_result(request, task_id):
+    task = get_object_or_404(DetectionTask, id=task_id, user=request.user)
+
+    if task.detect_type == 'image':
+        total_results = task.detection_results.count()
+        completed_results = task.detection_results.filter(status='completed').count()
+        fake_results = task.detection_results.filter(is_fake=True).count()
+        return Response(
+            {
+                'task_id': task.id,
+                'detect_type': task.detect_type,
+                'status': task.status,
+                'task_name': task.task_name,
+                'material_summary': {
+                    'image_count': total_results,
+                    'completed_count': completed_results,
+                    'fake_count': fake_results,
+                },
+            }
+        )
+
+    structured_result = StructuredDetectionResult.objects.filter(detection_task=task).first()
+    payload = structured_result.result_payload if structured_result else {}
+    return Response(
+        {
+            'task_id': task.id,
+            'task_name': task.task_name,
+            'detect_type': task.detect_type,
+            'status': task.status,
+            'failure_reason': task.failure_reason,
+            'container_id': task.container_id,
+            'result': payload,
+            'summary': structured_result.summary if structured_result else None,
+            'confidence_score': structured_result.confidence_score if structured_result else None,
+            'overall_is_fake': structured_result.overall_is_fake if structured_result else None,
+            'ai_response': structured_result.ai_response if structured_result else {},
+        }
+    )
+
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def get_detection_task_status_normal(request, task_id):
@@ -578,11 +770,18 @@ def get_detection_task_status_normal(request, task_id):
         task_status = {
             "task_id": detection_task.id,
             "task_name": detection_task.task_name,
+            "detect_type": detection_task.detect_type,
             "status": detection_task.status,
             "upload_time": timezone.localtime(detection_task.upload_time),
-            "completion_time": timezone.localtime(detection_task.completion_time),
+            "completion_time": timezone.localtime(detection_task.completion_time) if detection_task.completion_time else None,
             "detection_results": []
         }
+
+        if detection_task.detect_type != 'image':
+            structured_result = StructuredDetectionResult.objects.filter(detection_task=detection_task).first()
+            task_status["structured_result"] = structured_result.result_payload if structured_result else {}
+            task_status["failure_reason"] = detection_task.failure_reason
+            return Response(task_status)
 
         for result in detection_results:
             task_status["detection_results"].append({
@@ -644,8 +843,11 @@ def get_user_tasks(request):
         {
             'task_id': task.id,
             'task_name': task.task_name,
+            'detect_type': task.detect_type,
+            'container_id': task.container_id,
             'upload_time': timezone.localtime(task.upload_time).strftime('%Y-%m-%d %H:%M:%S'),
             'status': task.status,
+            'failure_reason': task.failure_reason,
             'completion_time': timezone.localtime(task.completion_time).strftime('%Y-%m-%d %H:%M:%S') if task.completion_time else None
         } for task in page_obj.object_list
     ]
@@ -670,6 +872,7 @@ def get_user_tasks_depr(request):
         task_list.append({
             "task_id": task.id,
             "task_name": task.task_name,
+            "detect_type": task.detect_type,
             "status": task.status,
             "upload_time": timezone.localtime(task.upload_time),
             "completion_time": timezone.localtime(task.completion_time) if task.completion_time else None,

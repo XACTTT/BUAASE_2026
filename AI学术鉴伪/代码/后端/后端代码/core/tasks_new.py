@@ -29,6 +29,7 @@ from core.models import (
     SubDetectionResult,   # 子检测方法结果表
     DetectionTask,        # 整体任务表
 )
+from core.services.structured_detection_service import StructuredDetectionService
 from core.utils.log_utils import log_action
 from .utils.report_generator import generate_detection_task_report
 from .utils.image_saver import save_ndarray_as_image
@@ -256,6 +257,29 @@ def finalize_task(_chord_results: list | None, task_pk: int, image_num: int, _=N
         result='success',
         detail={'message': 'Task finalized successfully'}
     )
+
+    send_task_completion_notification(task.user, task_pk)
+
+
+@shared_task(queue="cpu", bind=True, acks_late=True, max_retries=2, default_retry_delay=10)
+def run_structured_detection_task(self, task_pk: int):
+    try:
+        task = DetectionTask.objects.get(pk=task_pk)
+    except DetectionTask.DoesNotExist:
+        return
+
+    if task.status == 'completed':
+        return
+
+    task.status = 'in_progress'
+    task.failure_reason = None
+    task.save(update_fields=['status', 'failure_reason'])
+
+    try:
+        StructuredDetectionService.execute_task(task)
+    except Exception as exc:
+        StructuredDetectionService.mark_failed(task, str(exc))
+        raise self.retry(exc=exc)
 
     send_task_completion_notification(task.user, task_pk)
 

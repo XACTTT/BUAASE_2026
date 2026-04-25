@@ -372,14 +372,32 @@ class DetectionTask(models.Model):
         ('pending', '待处理'),
         ('in_progress', '进行中'),
         ('completed', '已完成'),
+        ('failed', '失败'),
+    ]
+
+    DETECT_TYPE_CHOICES = [
+        ('image', 'Image'),
+        ('paper', 'Paper'),
+        ('review', 'Review'),
+        ('multi', 'Multi Material'),
     ]
 
     user = models.ForeignKey(User, on_delete=models.CASCADE)  # 任务属于哪个用户
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE, db_index=True, null=True, blank=True)
+    container = models.ForeignKey(
+        ResourceContainer,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='detection_tasks',
+    )
+    detect_type = models.CharField(max_length=20, choices=DETECT_TYPE_CHOICES, default='image', db_index=True)
     task_name = models.CharField(max_length=255)  # 任务名称，用户可以自定义
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')  # 任务状态
     upload_time = models.DateTimeField(default=timezone.localtime)  # 上传时间
     completion_time = models.DateTimeField(null=True, blank=True)  # 完成时间（如果已完成）
+    failure_reason = models.TextField(blank=True, null=True)
+    extra_payload = models.JSONField(default=dict, blank=True)
     report_file = models.FileField(upload_to='reports/', null=True, blank=True,
                                    help_text='生成的 PDF 检测报告')
     # 记录参数，包括cmd_block_size（整数） urn_k（小数） if_use_llm（True或False）
@@ -389,6 +407,29 @@ class DetectionTask(models.Model):
 
     def __str__(self):
         return f"Task {self.id} - {self.user.username}"
+
+
+class StructuredDetectionResult(models.Model):
+    detection_task = models.OneToOneField(
+        DetectionTask,
+        on_delete=models.CASCADE,
+        related_name='structured_result',
+    )
+    overall_is_fake = models.BooleanField(null=True, blank=True)
+    confidence_score = models.FloatField(null=True, blank=True)
+    summary = models.TextField(blank=True, null=True)
+    result_payload = models.JSONField(default=dict, blank=True)
+    ai_response = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(default=timezone.localtime)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['created_at']),
+        ]
+
+    def __str__(self):
+        return f"Structured result of task {self.detection_task_id}"
 
 
 class ImageUpload(models.Model):

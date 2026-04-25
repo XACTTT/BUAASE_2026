@@ -1,6 +1,7 @@
 import io
 import shutil
 import tempfile
+from unittest.mock import patch
 
 from PIL import Image
 from django.contrib.auth import get_user_model
@@ -8,7 +9,15 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
-from core.models import FileManagement, ImageUpload, Organization, ResourceContainer
+from core.models import (
+    DetectionTask,
+    FileManagement,
+    ImageUpload,
+    Organization,
+    ResourceContainer,
+    StructuredDetectionResult,
+)
+from core.tasks_new import run_structured_detection_task
 
 
 class ResourceManagementApiTests(TestCase):
@@ -37,6 +46,9 @@ class ResourceManagementApiTests(TestCase):
         image = Image.new('RGB', (8, 8), color=(255, 0, 0))
         image.save(buffer, format='PNG')
         return SimpleUploadedFile(name, buffer.getvalue(), content_type='image/png')
+
+    def _txt_upload(self, name='sample.txt', content='line 1\n\nline 2'):
+        return SimpleUploadedFile(name, content.encode('utf-8'), content_type='text/plain')
 
     def test_container_crud(self):
         create_resp = self.client.post(
@@ -155,3 +167,55 @@ class ResourceManagementApiTests(TestCase):
         pass_resp = self.client.post(f'/api/resource-containers/{container.id}/validate-materials/')
         self.assertEqual(pass_resp.status_code, 200)
         self.assertTrue(pass_resp.data['valid'])
+
+    def test_extract_contents_supports_txt(self):
+        upload_resp = self.client.post('/api/upload/', {'file': self._txt_upload('paper.txt', 'first block\n\nsecond block')})
+        self.assertEqual(upload_resp.status_code, 200)
+
+        contents_resp = self.client.get(f"/api/upload/{upload_resp.data['file_id']}/extract_contents/")
+        self.assertEqual(contents_resp.status_code, 200)
+        self.assertEqual(contents_resp.data['total'], 2)
+        self.assertEqual(contents_resp.data['contents'][0]['text'], 'first block')
+
+    @patch('core.services.structured_ai_bridge.StructuredAIDetectionBridge.submit')
+    @patch('core.views.views_dectection.run_structured_detection_task.apply_async')
+    def test_submit_paper_detection_and_fetch_structured_result(self, mocked_apply_async, mocked_submit):
+        mocked_submit.return_value = {
+            'overall': {'is_fake': True, 'confidence_score': 0.91, 'risk_level': 'high'},
+            'dimensions': [{'name': 'aigc_generation', 'score': 0.91}],
+            'summary': 'remote ai finished',
+        }
+        upload_resp = self.client.post(
+            '/api/upload/',
+            {
+                'file': self._txt_upload('paper.txt', 'abstract text\n\nmethod text'),
+                'resource_role': 'paper_main',
+            },
+        )
+        self.assertEqual(upload_resp.status_code, 200)
+
+        submit_resp = self.client.post(
+            '/api/detection/submit/',
+            {
+                'mode': 2,
+                'detect_type': 'paper',
+                'task_name': 'paper-check',
+                'file_ids': [upload_resp.data['file_id']],
+            },
+            format='json',
+        )
+        self.assertEqual(submit_resp.status_code, 200)
+        task_id = submit_resp.data['task_id']
+
+        task = DetectionTask.objects.get(id=task_id)
+        run_structured_detection_task(task.id)
+        task.refresh_from_db()
+
+        self.assertEqual(task.detect_type, 'paper')
+        self.assertEqual(task.status, 'completed')
+        self.assertTrue(StructuredDetectionResult.objects.filter(detection_task=task).exists())
+
+        result_resp = self.client.get(f'/api/tasks/{task_id}/structured-result/')
+        self.assertEqual(result_resp.status_code, 200)
+        self.assertEqual(result_resp.data['detect_type'], 'paper')
+        self.assertIn('dimensions', result_resp.data['result'])

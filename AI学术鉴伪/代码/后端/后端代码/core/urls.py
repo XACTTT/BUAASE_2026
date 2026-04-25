@@ -79,6 +79,7 @@ urlpatterns = [
     path("tasks_image/<int:image_id>/report/", download_image_report, name="download-image-report"),
     path("tasks_image/<int:image_id>/getdr/", image2dr, name="image2dr"),
     path("tasks/<int:task_id>/results/",   list_task_results,        name="task-results"),
+    path("tasks/<int:task_id>/structured-result/", structured_task_result, name="task-structured-result"),
     path("results/<int:result_id>/",       detection_result_detail,  name="result-detail"),
     path("results_image/<int:image_id>/", detection_result_by_image, name="result-image"),
     path("tasks/<int:task_id>/fake_results/", list_fake_task_results, name="fake-results"),
