@@ -119,6 +119,17 @@
           icon
           variant="text"
           size="small"
+          color="primary"
+          title="查看详情"
+          class="mr-1"
+          @click="viewDetail(item)"
+        >
+          <v-icon>mdi-eye</v-icon>
+        </v-btn>
+        <v-btn
+          icon
+          variant="text"
+          size="small"
           :color="item.is_anomaly ? 'grey' : 'error'"
           :title="item.is_anomaly ? '取消标记异常' : '标记为异常'"
           @click="toggleAnomaly(item)"
@@ -244,6 +255,107 @@
         <v-btn color="grey" variant="text" @click="resetDownloadFilters">重置</v-btn>
         <v-btn color="success" @click="downloadLogs">下载</v-btn>
       </v-card-actions>
+    </v-card>
+  </v-dialog>
+
+  <!-- 日志详情对话框 -->
+  <v-dialog v-model="showDetailDialog" max-width="800">
+    <v-card v-if="currentLogDetail" class="elevation-4">
+      <v-toolbar color="primary" density="compact">
+        <v-toolbar-title class="text-subtitle-1 white--text">
+          {{ currentLogDetail.title || '日志详情' }}
+        </v-toolbar-title>
+        <v-spacer></v-spacer>
+        <v-btn icon @click="showDetailDialog = false">
+          <v-icon>mdi-close</v-icon>
+        </v-btn>
+      </v-toolbar>
+
+      <v-card-text class="pa-4">
+        <!-- 基础信息 -->
+        <v-row dense class="mb-4">
+          <v-col cols="12" md="6">
+            <div class="text-caption text-medium-emphasis">操作用户</div>
+            <div class="text-body-1">{{ currentLogDetail.user }} ({{ currentLogDetail.user_role }})</div>
+          </v-col>
+          <v-col cols="12" md="6">
+            <div class="text-caption text-medium-emphasis">操作时间</div>
+            <div class="text-body-1">{{ currentLogDetail.operation_time }}</div>
+          </v-col>
+          <v-col cols="12" md="6">
+            <div class="text-caption text-medium-emphasis">IP 地址</div>
+            <div class="text-body-1">{{ currentLogDetail.ip_address || '-' }}</div>
+          </v-col>
+          <v-col cols="12" md="6">
+            <div class="text-caption text-medium-emphasis">执行结果</div>
+            <v-chip :color="currentLogDetail.result === 'success' ? 'success' : 'error'" size="x-small">
+              {{ currentLogDetail.result === 'success' ? '成功' : '失败' }}
+            </v-chip>
+          </v-col>
+        </v-row>
+
+        <v-divider class="my-4"></v-divider>
+
+        <!-- 动态详情区域 -->
+        <h3 class="text-h6 mb-3">{{ currentLogDetail.title }}</h3>
+        
+        <!-- 表格形式展示字段 -->
+        <v-table density="compact" class="border rounded">
+          <tbody>
+            <tr v-for="(field, index) in currentLogDetail.fields" :key="index">
+              <td class="bg-grey-lighten-4 font-weight-bold" style="width: 140px">{{ field.label }}</td>
+              <td>{{ field.value }}</td>
+            </tr>
+          </tbody>
+        </v-table>
+
+        <!-- AI 检测特有结果展示 -->
+        <div v-if="currentLogDetail.display_type === 'ai_result' && currentLogDetail.ai_extra" class="mt-6">
+          <h3 class="text-h6 mb-3">检测结果概览</h3>
+          <v-row>
+            <v-col v-for="res in currentLogDetail.ai_extra.results" :key="res.image_id" cols="12" sm="6" md="4">
+              <v-card variant="outlined" class="pa-2">
+                <v-img :src="getImageUrl(res.image_url)" height="120" cover class="rounded bg-grey-lighten-2 mb-2">
+                  <template v-slot:placeholder>
+                    <v-row class="fill-height ma-0" align="center" justify="center">
+                      <v-icon color="grey-lighten-1">mdi-image-off</v-icon>
+                    </v-row>
+                  </template>
+                </v-img>
+                <div class="d-flex justify-space-between align-center">
+                  <v-chip :color="res.is_fake ? 'error' : 'success'" size="x-small">
+                    {{ res.is_fake ? '疑似造假' : '正常' }}
+                  </v-chip>
+                  <span class="text-caption font-weight-bold">{{ res.confidence }}</span>
+                </div>
+                <div v-if="res.llm_judgment" class="text-caption text-truncate mt-1" :title="res.llm_judgment">
+                  {{ res.llm_judgment }}
+                </div>
+              </v-card>
+            </v-col>
+          </v-row>
+          <div v-if="currentLogDetail.ai_extra.more_results" class="text-center mt-4 text-caption text-medium-emphasis">
+            仅展示部分检测结果，完整信息请前往检测任务详情页查看。
+          </div>
+        </div>
+
+        <!-- 错误消息 -->
+        <v-alert v-if="currentLogDetail.error_msg" type="error" variant="tonal" class="mt-4" density="compact">
+          <div class="text-caption font-weight-bold">错误详情：</div>
+          <div class="text-caption">{{ currentLogDetail.error_msg }}</div>
+        </v-alert>
+      </v-card-text>
+      
+      <v-card-actions>
+        <v-spacer></v-spacer>
+        <v-btn color="primary" variant="text" @click="showDetailDialog = false">关闭</v-btn>
+      </v-card-actions>
+    </v-card>
+    
+    <!-- 加载状态 -->
+    <v-card v-else class="pa-10 text-center">
+      <v-progress-circular indeterminate color="primary"></v-progress-circular>
+      <div class="mt-4 text-medium-emphasis">正在获取详情...</div>
     </v-card>
   </v-dialog>
 </v-container>
@@ -632,6 +744,27 @@ const downloadFilters = ref<{
   startDate: null,
   endDate: null
 })
+
+// 日志详情相关
+const showDetailDialog = ref(false)
+const currentLogDetail = ref<any>(null)
+const loadingDetail = ref(false)
+
+const viewDetail = async (log: Log) => {
+  showDetailDialog.value = true
+  currentLogDetail.value = null
+  loadingDetail.value = true
+  try {
+    const response = await logApi.getLogDetail(log.id)
+    currentLogDetail.value = response.data
+  } catch (error) {
+    console.error('获取日志详情失败:', error)
+    snackbar.showMessage('获取日志详情失败', 'error')
+    showDetailDialog.value = false
+  } finally {
+    loadingDetail.value = false
+  }
+}
 
 const downloadTimeError = ref('')
 

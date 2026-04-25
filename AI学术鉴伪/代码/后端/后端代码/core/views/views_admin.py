@@ -107,6 +107,261 @@ class AdminDashboardView(APIView):
         return JsonResponse({'users': user_data, 'task_stats': task_stats})
 
 
+class LogDetailView(APIView):
+    """
+    获取日志详情视图
+    """
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAdminUser]
+
+    def get(self, request, log_id):
+        try:
+            log = Log.objects.get(log_id=log_id)
+            # 权限检查：非全局管理员只能查看自己组织的日志
+            if request.user.email != 'admin@mail.com' and log.user.organization != request.user.organization:
+                return Response({'error': 'Permission denied'}, status=status.HTTP_403_FOR_CONTENT)
+            
+            operation_type = log.operation_type
+            target_id = log.target_id
+            target_type = log.target_type
+            
+            detail_data = {
+                "log_id": log.log_id,
+                "operation_type": operation_type,
+                "operation_time": log.operation_time.strftime('%Y-%m-%d %H:%M:%S'),
+                "user": log.user.username,
+                "user_role": log.user_role,
+                "ip_address": log.ip_address,
+                "result": log.result,
+                "error_msg": log.error_msg,
+                "display_type": "generic",
+                "title": "操作详情",
+                "fields": []
+            }
+
+            # 1. 用户登录/登出详情
+            if operation_type in ['login', 'logout']:
+                user = log.user
+                detail_data.update({
+                    "display_type": "user_info",
+                    "title": "用户信息",
+                    "fields": [
+                        {"label": "用户名", "value": user.username},
+                        {"label": "邮箱", "value": user.email},
+                        {"label": "角色", "value": user.get_role_display()},
+                        {"label": "所属组织", "value": user.organization.name if user.organization else "无"},
+                        {"label": "注册时间", "value": user.date_joined.strftime('%Y-%m-%d %H:%M:%S')},
+                        {"label": "最后登录", "value": user.last_login.strftime('%Y-%m-%d %H:%M:%S') if user.last_login else "从未登录"},
+                        {"label": "剩余非LLM次数", "value": user.remaining_non_llm_uses},
+                        {"label": "剩余LLM次数", "value": user.remaining_llm_uses},
+                    ]
+                })
+
+            # 2. 文件上传/管理详情
+            elif target_type == 'FileManagement' and target_id:
+                try:
+                    file_obj = FileManagement.objects.get(id=target_id)
+                    detail_data.update({
+                        "display_type": "file_info",
+                        "title": "文件信息",
+                        "fields": [
+                            {"label": "文件名", "value": file_obj.file_name},
+                            {"label": "文件类型", "value": file_obj.file_type},
+                            {"label": "文件大小", "value": f"{round(file_obj.file_size / 1024 / 1024, 2)} MB"},
+                            {"label": "标签", "value": file_obj.get_tag_display()},
+                            {"label": "上传者", "value": file_obj.user.username},
+                            {"label": "上传时间", "value": file_obj.upload_time.strftime('%Y-%m-%d %H:%M:%S')},
+                        ]
+                    })
+                except FileManagement.DoesNotExist:
+                    # 如果文件已被删除，从日志记录的 detail 中获取备份信息
+                    backup_info = log.operation_detail or {}
+                    detail_data.update({
+                        "display_type": "file_info",
+                        "title": "文件信息 (实体已删除)",
+                        "fields": [
+                            {"label": "文件名", "value": backup_info.get('file_name', '未知')},
+                            {"label": "提示", "value": "原始文件实体已从数据库删除，仅保留日志记录。"}
+                        ]
+                    })
+
+            # 3. AI 检测任务详情
+            elif operation_type.startswith('ai_detect') or target_type == 'DetectionTask':
+                try:
+                    task_id = target_id
+                    task = DetectionTask.objects.get(id=task_id)
+                    results = DetectionResult.objects.filter(detection_task=task)
+                    
+                    # 汇总检测结果
+                    total_images = results.count()
+                    fake_images = results.filter(is_fake=True).count()
+                    
+                    detail_data.update({
+                        "display_type": "ai_result",
+                        "title": "AI 检测任务详情",
+                        "fields": [
+                            {"label": "任务名称", "value": task.task_name},
+                            {"label": "任务状态", "value": task.get_status_display()},
+                            {"label": "提交时间", "value": task.upload_time.strftime('%Y-%m-%d %H:%M:%S')},
+                            {"label": "完成时间", "value": task.completion_time.strftime('%Y-%m-%d %H:%M:%S') if task.completion_time else "进行中"},
+                            {"label": "检测图片总数", "value": total_images},
+                            {"label": "发现疑似造假", "value": f"{fake_images} 张"},
+                            {"label": "使用LLM", "value": "是" if task.if_use_llm else "否"},
+                        ],
+                        "ai_extra": {
+                            "results": [
+                                {
+                                    "image_id": r.image_upload.id,
+                                    "image_url": r.image_upload.image.url if r.image_upload.image else None,
+                                    "is_fake": r.is_fake,
+                                    "confidence": f"{round(r.confidence_score * 100, 2)}%" if r.confidence_score else "N/A",
+                                    "llm_judgment": r.llm_judgment
+                                } for r in results[:10] # 仅展示前10条，防止数据过大
+                            ],
+                            "more_results": total_images > 10
+                        }
+                    })
+                except DetectionTask.DoesNotExist:
+                    detail_data.update({"title": "检测任务详情 (任务已删除)", "fields": [{"label": "提示", "value": "任务实体已删除"}]})
+
+            # 4. 人工审核详情
+            elif target_type in ['ReviewRequest', 'ManualReview'] and target_id:
+                try:
+                    if target_type == 'ReviewRequest':
+                        req = ReviewRequest.objects.get(id=target_id)
+                        detail_data.update({
+                            "display_type": "review_info",
+                            "title": "人工审核申请",
+                            "fields": [
+                                {"label": "申请人", "value": req.user.username},
+                                {"label": "申请时间", "value": req.request_time.strftime('%Y-%m-%d %H:%M:%S')},
+                                {"label": "申请理由", "value": req.reason},
+                                {"label": "管理员状态", "value": req.get_status2_display() if hasattr(req, 'get_status2_display') else req.status2},
+                                {"label": "审核进度", "value": req.get_status1_display() if hasattr(req, 'get_status1_display') else req.status1},
+                            ]
+                        })
+                    else:
+                        review = ManualReview.objects.get(id=target_id)
+                        detail_data.update({
+                            "display_type": "review_info",
+                            "title": "人工审核结果",
+                            "fields": [
+                                {"label": "审核员", "value": review.reviewer.username},
+                                {"label": "审核时间", "value": review.review_time.strftime('%Y-%m-%d %H:%M:%S')},
+                                {"label": "状态", "value": review.get_status_display()},
+                            ]
+                        })
+                except (ReviewRequest.DoesNotExist, ManualReview.DoesNotExist):
+                    detail_data.update({"title": "审核详情", "fields": [{"label": "提示", "value": "审核记录已删除"}]})
+
+            # 5. 模型配置变更详情
+            elif target_type in ['AIModelSource', 'OrganizationModelConfig'] and target_id:
+                try:
+                    from core.models import AIModelSource, OrganizationModelConfig
+                    if target_type == 'AIModelSource':
+                        source = AIModelSource.objects.get(id=target_id)
+                        detail_data.update({
+                            "display_type": "model_info",
+                            "title": "模型源详情",
+                            "fields": [
+                                {"label": "名称", "value": source.name},
+                                {"label": "供应商", "value": source.vendor},
+                                {"label": "API地址", "value": source.base_url},
+                                {"label": "状态", "value": source.status},
+                                {"label": "创建者", "value": source.created_by.username if source.created_by else "系统"},
+                            ]
+                        })
+                    else:
+                        config = OrganizationModelConfig.objects.get(id=target_id)
+                        detail_data.update({
+                            "display_type": "model_info",
+                            "title": "组织模型配置",
+                            "fields": [
+                                {"label": "所属组织", "value": config.organization.name},
+                                {"label": "模型名称", "value": config.provider_model.display_name},
+                                {"label": "状态", "value": "启用" if config.enabled else "禁用"},
+                                {"label": "Temperature", "value": config.temperature},
+                                {"label": "Max Tokens", "value": config.max_tokens},
+                            ]
+                        })
+                except (AIModelSource.DoesNotExist, OrganizationModelConfig.DoesNotExist):
+                    detail_data.update({"title": "模型详情", "fields": [{"label": "提示", "value": "模型配置记录已删除"}]})
+
+            # 6. 用户/组织管理详情
+            elif target_type in ['User', 'Organization', 'OrganizationApplication'] and target_id:
+                try:
+                    if target_type == 'User':
+                        target_user = User.objects.get(id=target_id)
+                        detail_data.update({
+                            "display_type": "user_info",
+                            "title": "被操作用户信息",
+                            "fields": [
+                                {"label": "用户名", "value": target_user.username},
+                                {"label": "邮箱", "value": target_user.email},
+                                {"label": "角色", "value": target_user.get_role_display()},
+                                {"label": "组织", "value": target_user.organization.name if target_user.organization else "无"},
+                            ]
+                        })
+                    elif target_type == 'Organization':
+                        org = Organization.objects.get(id=target_id)
+                        detail_data.update({
+                            "display_type": "org_info",
+                            "title": "组织信息",
+                            "fields": [
+                                {"label": "组织名称", "value": org.name},
+                                {"label": "联系邮箱", "value": org.email},
+                                {"label": "管理员", "value": org.admin_user.username if org.admin_user else "无"},
+                                {"label": "创建时间", "value": org.created_at.strftime('%Y-%m-%d %H:%M:%S')},
+                            ]
+                        })
+                    elif target_type == 'OrganizationApplication':
+                        app = OrganizationApplication.objects.get(id=target_id)
+                        detail_data.update({
+                            "display_type": "org_info",
+                            "title": "组织申请详情",
+                            "fields": [
+                                {"label": "组织名称", "value": app.name},
+                                {"label": "申请邮箱", "value": app.email},
+                                {"label": "管理员账号", "value": app.admin_username},
+                                {"label": "申请状态", "value": app.get_status_display()},
+                                {"label": "申请时间", "value": app.submitted_at.strftime('%Y-%m-%d %H:%M:%S')},
+                            ]
+                        })
+                except (User.DoesNotExist, Organization.DoesNotExist, OrganizationApplication.DoesNotExist):
+                    detail_data.update({"title": "管理详情", "fields": [{"label": "提示", "value": "管理实体已删除"}]})
+
+            # 7. 评论/点赞详情
+            elif operation_type in ['comment', 'like'] or target_type == 'Feedback':
+                try:
+                    from core.models import Feedback
+                    feedback = Feedback.objects.get(id=target_id)
+                    detail_data.update({
+                        "display_type": "feedback_info",
+                        "title": "互动详情",
+                        "fields": [
+                            {"label": "类型", "value": "点赞" if feedback.is_like else "评论"},
+                            {"label": "用户", "value": feedback.user.username},
+                            {"label": "内容", "value": feedback.comment if feedback.comment else "N/A"},
+                            {"label": "关联审核ID", "value": feedback.manual_review.id},
+                            {"label": "时间", "value": feedback.feedback_time.strftime('%Y-%m-%d %H:%M:%S')},
+                        ]
+                    })
+                except Exception:
+                    detail_data.update({"title": "互动详情", "fields": [{"label": "提示", "value": "互动记录已删除"}]})
+
+            # 8. 常规操作 (如果没匹配到特殊模板，展示 operation_detail)
+            if detail_data["display_type"] == "generic" and log.operation_detail:
+                fields = []
+                for k, v in log.operation_detail.items():
+                    fields.append({"label": k, "value": str(v)})
+                detail_data["fields"] = fields
+
+            return Response(detail_data)
+
+        except Log.DoesNotExist:
+            return Response({'error': 'Log not found'}, status=status.HTTP_404_NOT_FOUND)
+
+
 @api_view(['GET'])
 @permission_classes([IsAdminUser])
 def dashboard_img_tag(request):
