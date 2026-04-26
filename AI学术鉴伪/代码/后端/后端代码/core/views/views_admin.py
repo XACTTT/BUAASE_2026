@@ -920,86 +920,122 @@ class UserActionLogGetView(APIView):
 
     @permission_classes([IsAdminUser])
     def get(self, request):
-        user_id = request.user.id
-        user = User.objects.get(id=user_id)
-
-        # 获取分页参数
-        page = int(request.GET.get('page', 1))
-        page_size = int(request.GET.get('page_size', 10))
-        query = request.GET.get('query', '')
-        role = request.GET.get('role', '')
-        operation_type = request.GET.get('operation_type', '')
-        target_type = request.GET.get('target_type', '')
-        start_time = request.GET.get('startTime', None)
-        end_time = request.GET.get('endTime', None)
-        organization_name = request.GET.get('organization', None)
-        is_anomaly = request.GET.get('is_anomaly', None)
-        result = request.GET.get('result', '')
-
-        # 获取所有日志记录并应用筛选条件
-        logs = Log.objects.all().order_by('-operation_time')
-        # 权限控制
-        if request.user.email != 'admin@mail.com':
-            organization = user.organization
-            logs = logs.filter(user__organization=organization)
-        else:
-            organization_id = request.query_params.get('organization')
-            if organization_id:
-                logs = logs.filter(user__organization_id=organization_id)
-
-        if query:
-            logs = logs.filter(user__username__startswith=query)
-        if role:
-            logs = logs.filter(user_role=role)
-        if operation_type:
-            logs = logs.filter(operation_type=operation_type)
-        if target_type:
-            logs = logs.filter(target_type=target_type)
-        if start_time:
-            logs = logs.filter(operation_time__gte=start_time)
-        if end_time:
-            logs = logs.filter(operation_time__lte=end_time)
-        if organization_name:
-            logs = logs.filter(user__organization__name__icontains=organization_name)
-        if is_anomaly is not None:
-            logs = logs.filter(is_anomaly=(is_anomaly.lower() == 'true'))
-        if result:
-            logs = logs.filter(result=result)
-
-        paginator = Paginator(logs, page_size)
-
         try:
-            page_obj = paginator.page(page)
-        except Exception:
-            return JsonResponse({'error': 'Invalid page number'}, status=400)
+            current_user = request.user
+            
+            # 获取分页参数
+            page = int(request.GET.get('page', 1))
+            page_size = int(request.GET.get('page_size', 10))
+            query = request.GET.get('query', '')
+            role = request.GET.get('role', '')
+            operation_type = request.GET.get('operation_type', '')
+            target_type = request.GET.get('target_type', '')
+            start_time = request.GET.get('startTime', None)
+            end_time = request.GET.get('endTime', None)
+            organization_name = request.GET.get('organization', None)
+            is_anomaly = request.GET.get('is_anomaly', None)
+            result = request.GET.get('result', '')
 
-        log_data = [
-            {
-                'id': log.log_id,
-                'user_id': log.user.id,
-                'user': log.user.username,
-                'user_role': log.user_role,
-                'operation_type': log.operation_type,
-                'target_type': log.target_type,
-                'target_id': log.target_id,
-                'operation_detail': log.operation_detail,
-                'ip_address': log.ip_address,
-                'result': log.result,
-                'error_msg': log.error_msg,
-                'is_anomaly': log.is_anomaly,
-                'operation_time': log.operation_time.strftime('%Y-%m-%d %H:%M:%S'),
-                'organization': log.user.organization.name if log.user.organization else None
-            } for log in page_obj.object_list
-        ]
+            # 获取所有日志记录并应用筛选条件
+            logs = Log.objects.select_related('user', 'user__organization').all().order_by('-operation_time')
+            
+            # 权限控制逻辑：
+            # 1. 超级管理员、根管理员 (admin@mail.com) 或 软件管理员 (staff 且无组织) 可以查看所有日志
+            is_software_admin = current_user.is_superuser or current_user.email == 'admin@mail.com' or (current_user.is_staff and current_user.organization is None)
+            
+            if is_software_admin:
+                # 软件管理员可以查看全部，或按选定的组织筛选
+                organization_id = request.query_params.get('organization')
+                if organization_id:
+                    logs = logs.filter(user__organization_id=organization_id)
+            else:
+                # 组织管理员只能查看本组织的日志
+                organization = current_user.organization
+                if organization:
+                    logs = logs.filter(user__organization=organization)
+                else:
+                    # 普通管理员（理论上不应存在）只能查看自己的日志
+                    logs = logs.filter(user=current_user)
 
-        return JsonResponse({
-            'logs': log_data,
-            'current_page': page_obj.number,
-            'total_pages': paginator.num_pages,
-            'total_logs': paginator.count,
-            'has_next': page_obj.has_next(),
-            'has_previous': page_obj.has_previous()
-        })
+            if query:
+                logs = logs.filter(user__username__startswith=query)
+            if role:
+                logs = logs.filter(user_role=role)
+            if operation_type:
+                logs = logs.filter(operation_type=operation_type)
+            if target_type:
+                logs = logs.filter(target_type=target_type)
+            if start_time:
+                logs = logs.filter(operation_time__gte=start_time)
+            if end_time:
+                logs = logs.filter(operation_time__lte=end_time)
+            if organization_name:
+                logs = logs.filter(user__organization__name__icontains=organization_name)
+            if is_anomaly is not None:
+                logs = logs.filter(is_anomaly=(is_anomaly.lower() == 'true'))
+            if result:
+                logs = logs.filter(result=result)
+
+            paginator = Paginator(logs, page_size)
+
+            try:
+                page_obj = paginator.page(page)
+            except Exception:
+                return Response({'error': 'Invalid page number'}, status=400)
+
+            log_data = []
+            for log in page_obj.object_list:
+                try:
+                    # 获取用户名和组织，增加安全判断
+                    username = "Unknown"
+                    org_name = None
+                    log_user_id = None
+                    if log.user:
+                        log_user_id = log.user.id
+                        username = log.user.username
+                        if hasattr(log.user, 'organization') and log.user.organization:
+                            org_name = log.user.organization.name
+
+                    # 安全格式化时间
+                    op_time = ""
+                    if log.operation_time:
+                        op_time = timezone.localtime(log.operation_time).strftime('%Y-%m-%d %H:%M:%S')
+
+                    # 确保 operation_detail 是 JSON 可序列化的
+                    detail = log.operation_detail
+                    if detail and not isinstance(detail, (dict, list, str, int, float, bool, type(None))):
+                        detail = str(detail)
+
+                    log_data.append({
+                        'id': log.log_id,
+                        'user_id': log_user_id,
+                        'user': username,
+                        'user_role': log.user_role,
+                        'operation_type': log.operation_type,
+                        'target_type': log.target_type,
+                        'target_id': log.target_id,
+                        'operation_detail': detail,
+                        'ip_address': log.ip_address,
+                        'result': log.result,
+                        'error_msg': log.error_msg,
+                        'is_anomaly': log.is_anomaly,
+                        'operation_time': op_time,
+                        'organization': org_name
+                    })
+                except Exception as e:
+                    print(f"Error parsing log record: {e}")
+                    continue
+
+            return Response({
+                'logs': log_data,
+                'current_page': page_obj.number,
+                'total_pages': paginator.num_pages,
+                'total_logs': paginator.count,
+                'has_next': page_obj.has_next(),
+                'has_previous': page_obj.has_previous()
+            })
+        except Exception as e:
+            return Response({'error': f"Internal server error: {str(e)}"}, status=500)
 
 
 class UserActionLogDeleteView(APIView):
@@ -1035,9 +1071,13 @@ class UserActionLogDownloadView(APIView):
         # 获取所有日志记录并应用筛选条件
         logs = Log.objects.all().order_by('-operation_time')
         # 权限控制
-        if request.user.email != 'admin@mail.com':
+        is_software_admin = request.user.is_superuser or request.user.email == 'admin@mail.com' or (request.user.is_staff and request.user.organization is None)
+        if not is_software_admin:
             organization = user.organization
-            logs = logs.filter(user__organization=organization)
+            if organization:
+                logs = logs.filter(user__organization=organization)
+            else:
+                logs = logs.filter(user=user)
         else:
             organization_id = request.query_params.get('organization')
             if organization_id:
@@ -1124,7 +1164,8 @@ class LogStatisticsView(APIView):
         logs = Log.objects.filter(operation_time__gte=start_date)
         
         # 权限控制
-        if request.user.email != 'admin@mail.com':
+        is_software_admin = request.user.is_superuser or request.user.email == 'admin@mail.com' or (request.user.is_staff and request.user.organization is None)
+        if not is_software_admin:
             logs = logs.filter(user__organization=request.user.organization)
         
         # 1. 每日操作次数统计
@@ -1156,7 +1197,8 @@ def get_task_summary(request):
     user_id = request.user.id
     user = User.objects.get(id=user_id)
     # 权限控制
-    if request.user.email != 'admin@mail.com':
+    is_software_admin = request.user.is_superuser or request.user.email == 'admin@mail.com' or (request.user.is_staff and request.user.organization is None)
+    if not is_software_admin:
         organization = user.organization
         tasks = DetectionTask.objects.filter(organization=organization)
     else:
