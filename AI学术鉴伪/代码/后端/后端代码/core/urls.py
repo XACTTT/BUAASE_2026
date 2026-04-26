@@ -137,6 +137,7 @@ urlpatterns = [
     # 用户操作日志视图
     path('user_action_log/', UserActionLogGetView.as_view(), name='user_action_log'),
     path('user_action_log/<int:log_id>/', UserActionLogDeleteView.as_view(), name='delete_user_action_log'),
+    path('user_action_log/<int:log_id>/detail/', views_admin.LogDetailView.as_view(), name='get_user_action_log_detail'),
     path('user_action_log/<int:log_id>/mark_anomaly/', UserActionLogMarkAnomalyView.as_view(), name='mark_anomaly_user_action_log'),
     path('user_action_log/statistics/', LogStatisticsView.as_view(), name='user_action_log_statistics'),
     # 获取任务概览
