@@ -29,6 +29,7 @@ from core.models import (
     SubDetectionResult,   # 子检测方法结果表
     DetectionTask,        # 整体任务表
 )
+from core.services.structured_ai_bridge import StructuredAITransientError
 from core.services.structured_detection_service import StructuredDetectionService
 from core.utils.log_utils import log_action
 from .utils.report_generator import generate_detection_task_report
@@ -277,9 +278,12 @@ def run_structured_detection_task(self, task_pk: int):
 
     try:
         StructuredDetectionService.execute_task(task)
-    except Exception as exc:
+    except StructuredAITransientError as exc:
         StructuredDetectionService.mark_failed(task, str(exc))
         raise self.retry(exc=exc)
+    except Exception as exc:
+        StructuredDetectionService.mark_failed(task, str(exc))
+        return
 
     send_task_completion_notification(task.user, task_pk)
 
