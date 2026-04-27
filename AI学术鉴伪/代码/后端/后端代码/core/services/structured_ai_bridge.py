@@ -1,11 +1,15 @@
 import base64
 import json
+import logging
 import os
 import tempfile
 import time
 
 import paramiko
 from scp import SCPClient
+
+
+logger = logging.getLogger(__name__)
 
 
 class StructuredAIError(RuntimeError):
@@ -54,6 +58,14 @@ class StructuredAIDetectionBridge:
 
     @classmethod
     def _open_remote_session(cls):
+        logger.info(
+            'structured_ai connect host=%s port=%s user=%s command=%s request_dir=%s',
+            cls.HOST,
+            cls.PORT,
+            cls.USERNAME,
+            cls.REMOTE_COMMAND,
+            cls.REMOTE_REQUEST_DIR,
+        )
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         try:
@@ -106,6 +118,11 @@ class StructuredAIDetectionBridge:
         try:
             with SCPClient(ssh.get_transport()) as scp:
                 scp.put(local_request_path, cls.REMOTE_REQUEST_DIR)
+            logger.info(
+                'structured_ai uploaded request local=%s remote=%s',
+                local_request_path,
+                os.path.join(cls.REMOTE_REQUEST_DIR, 'request.json'),
+            )
         except Exception as exc:
             raise StructuredAITransientError(f'failed to upload structured request: {exc}') from exc
 

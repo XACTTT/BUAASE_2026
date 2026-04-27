@@ -7,6 +7,6 @@ def audit_log(user, operation_type: str, related_model: str, related_id: int) ->
     Log.objects.create(
         user=user,
         operation_type=operation_type,
-        related_model=related_model,
-        related_id=related_id,
+        target_type=related_model,
+        target_id=related_id,
     )
