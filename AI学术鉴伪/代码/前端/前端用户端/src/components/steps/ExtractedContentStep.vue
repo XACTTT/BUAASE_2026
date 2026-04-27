@@ -137,6 +137,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import uploadApi from '@/api/upload'
 import { useSnackbarStore } from '@/stores/snackbar'
+import { appendPreviewToken, buildOriginalDownloadUrl } from '@/utils/preview-url'
 
 interface ExtractedContent {
   content_id: number
@@ -280,28 +281,6 @@ const normalizeItems = (raw: any): ExtractedContent[] => {
     text: String(item.text ?? item.content ?? item.summary ?? '暂无提取内容'),
     source: String(item.source ?? item.source_type ?? '提取内容')
   }))
-}
-
-const appendPreviewToken = (url: string): string => {
-  if (!url || !url.includes('/api/')) {
-    return url
-  }
-
-  const token = localStorage.getItem('2-token')
-  if (!token) {
-    return url
-  }
-
-  const sep = url.includes('?') ? '&' : '?'
-  return `${url}${sep}token=${encodeURIComponent(token)}`
-}
-
-const buildOriginalDownloadUrl = (url: string): string => {
-  if (!url) {
-    return ''
-  }
-  const sep = url.includes('?') ? '&' : '?'
-  return `${url}${sep}download=1`
 }
 
 const loadContents = async () => {

@@ -84,6 +84,7 @@
 import { ref, computed, onMounted, watch } from 'vue';
 import { useSnackbarStore } from '@/stores/snackbar';
 import upload from '@/api/upload'
+import { appendPreviewToken, resolveApiAssetUrl } from '@/utils/preview-url'
 
 const snackbar = useSnackbarStore()
 const task_name = ref('')
@@ -180,43 +181,6 @@ const loading = ref(false)
 const pageSize = ref(50)
 const loadedImageIds = ref<Set<number>>(new Set())
 
-const resolveImageUrl = (path: string): string => {
-  if (!path) {
-    return ''
-  }
-
-  // 后端已返回绝对URL时直接使用，避免重复拼接
-  if (/^https?:\/\//i.test(path)) {
-    return path
-  }
-
-  const envBase = String(import.meta.env.VITE_API_URL || '').trim()
-  if (!envBase) {
-    return path
-  }
-
-  // 兼容把 VITE_API_URL 配成 .../api 的场景，媒体资源不应走 /api/media
-  const normalizedBase = envBase.replace(/\/api\/?$/i, '')
-  if (path.startsWith('/')) {
-    return `${normalizedBase}${path}`
-  }
-  return `${normalizedBase}/${path}`
-}
-
-const withPreviewToken = (url: string): string => {
-  if (!url || !url.includes('/api/images/') || !url.includes('/preview/')) {
-    return url
-  }
-
-  const token = localStorage.getItem('2-token')
-  if (!token) {
-    return url
-  }
-
-  const separator = url.includes('?') ? '&' : '?'
-  return `${url}${separator}token=${encodeURIComponent(token)}`
-}
-
 const appendImages = (images: any[]) => {
   images.forEach(img => {
     const imageId = Number(img.image_id)
@@ -226,7 +190,7 @@ const appendImages = (images: any[]) => {
     loadedImageIds.value.add(imageId)
     localImages.value.push({
       image_id: imageId,
-      image_url: withPreviewToken(resolveImageUrl(img.image_url)),
+      image_url: appendPreviewToken(resolveApiAssetUrl(img.image_url)),
       page_number: img.page_number,
       extracted_from_pdf: img.extracted_from_pdf
     })

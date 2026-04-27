@@ -294,7 +294,7 @@ def get_extracted_images(request, file_id):
                 continue
 
             # 统一回传经 /api 鉴权的预览地址，避免前端环境下 /media 路由404。
-            image_url = request.build_absolute_uri(f"/api/images/{image.id}/preview/")
+            image_url = request.build_absolute_uri(f"/api/preview/image/{image.id}/")
 
             image_data = {
                 "image_id": image.id,
@@ -320,11 +320,8 @@ def get_extracted_images(request, file_id):
         return Response({"message": "File not found"}, status=404)
 
 
-@api_view(['GET'])
-@permission_classes([AllowAny])
-@xframe_options_exempt
-def preview_extracted_image(request, image_id):
-    """通过受鉴权接口预览提取图片，避免依赖 /media 直链。"""
+def _resolve_auth_user(request):
+    """兼容 Header 与 query token 两种鉴权来源。"""
     auth_user = request.user if getattr(request.user, 'is_authenticated', False) else None
     if not auth_user:
         raw_token = request.query_params.get('token')
@@ -335,73 +332,66 @@ def preview_extracted_image(request, image_id):
                 auth_user = jwt_auth.get_user(validated_token)
             except Exception:
                 auth_user = None
+    return auth_user
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+@xframe_options_exempt
+def preview_resource(request, resource_type, resource_id):
+    """统一预览接口：支持 image/file 两类资源。"""
+    auth_user = _resolve_auth_user(request)
 
     if not auth_user:
         return Response({"detail": "Authentication credentials were not provided."}, status=401)
 
-    try:
-        image = ImageUpload.objects.select_related('file_management').get(
-            id=image_id,
-            file_management__user=auth_user,
+    if resource_type == 'image':
+        try:
+            image = ImageUpload.objects.select_related('file_management').get(
+                id=resource_id,
+                file_management__user=auth_user,
+            )
+        except ImageUpload.DoesNotExist:
+            return Response({"message": "Image not found"}, status=404)
+
+        if not image.image or not image.image.name:
+            return Response({"message": "Image file missing"}, status=404)
+
+        try:
+            image_path = image.image.path
+        except Exception:
+            return Response({"message": "Image path unavailable"}, status=404)
+
+        if not os.path.exists(image_path):
+            return Response({"message": "Image file not found on disk"}, status=404)
+
+        return FileResponse(open(image_path, 'rb'), content_type='image/*')
+
+    if resource_type == 'file':
+        try:
+            file_management = FileManagement.objects.get(id=resource_id, user=auth_user)
+        except FileManagement.DoesNotExist:
+            return Response({"message": "File not found"}, status=404)
+
+        storage_path = file_management.storage_path
+        if not storage_path:
+            return Response({"message": "Stored file path missing"}, status=404)
+
+        full_path = os.path.join(settings.MEDIA_ROOT, storage_path)
+        if not os.path.exists(full_path):
+            return Response({"message": "Stored file not found"}, status=404)
+
+        guessed_type, _ = mimetypes.guess_type(full_path)
+        content_type = guessed_type or file_management.mime_type or 'application/octet-stream'
+        force_download = str(request.query_params.get('download', '')).lower() in ('1', 'true', 'yes')
+        return FileResponse(
+            open(full_path, 'rb'),
+            content_type=content_type,
+            as_attachment=force_download,
+            filename=file_management.file_name,
         )
-    except ImageUpload.DoesNotExist:
-        return Response({"message": "Image not found"}, status=404)
 
-    if not image.image or not image.image.name:
-        return Response({"message": "Image file missing"}, status=404)
-
-    try:
-        image_path = image.image.path
-    except Exception:
-        return Response({"message": "Image path unavailable"}, status=404)
-
-    if not os.path.exists(image_path):
-        return Response({"message": "Image file not found on disk"}, status=404)
-
-    return FileResponse(open(image_path, 'rb'), content_type='image/*')
-
-
-@api_view(['GET'])
-@permission_classes([AllowAny])
-@xframe_options_exempt
-def preview_uploaded_file(request, file_id):
-    """通过受鉴权接口预览上传原文件，供论文/Review模块直接展示。"""
-    auth_user = request.user if getattr(request.user, 'is_authenticated', False) else None
-    if not auth_user:
-        raw_token = request.query_params.get('token')
-        if raw_token:
-            try:
-                jwt_auth = JWTAuthentication()
-                validated_token = jwt_auth.get_validated_token(raw_token)
-                auth_user = jwt_auth.get_user(validated_token)
-            except Exception:
-                auth_user = None
-
-    if not auth_user:
-        return Response({"detail": "Authentication credentials were not provided."}, status=401)
-
-    try:
-        file_management = FileManagement.objects.get(id=file_id, user=auth_user)
-    except FileManagement.DoesNotExist:
-        return Response({"message": "File not found"}, status=404)
-
-    storage_path = file_management.storage_path
-    if not storage_path:
-        return Response({"message": "Stored file path missing"}, status=404)
-
-    full_path = os.path.join(settings.MEDIA_ROOT, storage_path)
-    if not os.path.exists(full_path):
-        return Response({"message": "Stored file not found"}, status=404)
-
-    guessed_type, _ = mimetypes.guess_type(full_path)
-    content_type = guessed_type or file_management.mime_type or 'application/octet-stream'
-    force_download = str(request.query_params.get('download', '')).lower() in ('1', 'true', 'yes')
-    return FileResponse(
-        open(full_path, 'rb'),
-        content_type=content_type,
-        as_attachment=force_download,
-        filename=file_management.file_name,
-    )
+    return Response({"message": "Unsupported preview resource type"}, status=400)
 
 
 @api_view(['GET'])
@@ -430,7 +420,7 @@ def get_extracted_contents(request, file_id):
 
     file_ext = (file_management.file_ext or '').lower()
     if file_ext in {'pdf', 'doc', 'docx'}:
-        preview_url = request.build_absolute_uri(f"/api/upload/{file_id}/preview/")
+        preview_url = request.build_absolute_uri(f"/api/preview/file/{file_id}/")
         return Response({
             "file_id": file_id,
             "preview_mode": "file",
