@@ -7,8 +7,9 @@ from django.core.files.storage import FileSystemStorage
 from ..models import FileManagement, ImageUpload, User, ResourceContainer
 from django.core.paginator import Paginator, EmptyPage
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated, IsAdminUser
+from rest_framework.permissions import IsAuthenticated, IsAdminUser, AllowAny
 from rest_framework.response import Response
+from rest_framework_simplejwt.authentication import JWTAuthentication
 from ..models import ImageUpload
 from core.services.file_ingest_service import FileIngestService
 from core.services.content_extraction_service import ContentExtractionService
@@ -25,8 +26,8 @@ def upload_file(request):
     if not user.has_permission('upload'):
         return Response({"错误": "该用户没有上传文件的权限"}, status=403)
 
-    uploaded_file = request.FILES.get('file')
-    if not uploaded_file:
+    uploaded_files = request.FILES.getlist('file')
+    if not uploaded_files:
         return Response({'error_code': 'MISSING_FILE', 'message': 'file is required'}, status=400)
 
     container = None
@@ -39,37 +40,65 @@ def upload_file(request):
         if not container:
             return Response({'error_code': 'CONTAINER_NOT_FOUND', 'message': 'container not found'}, status=404)
 
-    try:
-        file_management, file_url = FileIngestService.ingest_upload(
-            user=user,
-            uploaded_file=uploaded_file,
-            container=container,
-            resource_role=resource_role,
-            batch_id=batch_id,
-        )
-    except PermissionError:
-        return Response(
-            {'error_code': 'CONTAINER_UPLOAD_FORBIDDEN', 'message': 'no permission to upload to this container'},
-            status=403,
-        )
-    except (ValueError, zipfile.BadZipFile) as exc:
-        return Response({'error_code': 'INVALID_FILE_FORMAT', 'message': str(exc)}, status=400)
-    except Exception as exc:
-        logger.exception('Upload failed', exc_info=exc)
-        return Response({'error_code': 'UPLOAD_FAILED', 'message': str(exc)}, status=500)
+    upload_results = []
+    file_types = request.data.getlist('file_type')
+    file_type_to_resource_role = {
+        'image': 'material_other',
+        'paper': 'paper_main',
+        'review': 'review_main',
+    }
 
+    for index, uploaded_file in enumerate(uploaded_files):
+        mapped_resource_role = resource_role
+        if index < len(file_types):
+            mapped_resource_role = file_type_to_resource_role.get(file_types[index], resource_role)
+
+        try:
+            file_management, file_url = FileIngestService.ingest_upload(
+                user=user,
+                uploaded_file=uploaded_file,
+                container=container,
+                resource_role=mapped_resource_role,
+                batch_id=batch_id,
+            )
+            upload_results.append({
+                "file_id": file_management.id,
+                "file_url": file_url,
+                "container_id": file_management.container_id,
+                "parse_status": file_management.parse_status,
+                "file_type": file_types[index] if index < len(file_types) else None,
+                "resource_role": file_management.resource_role,
+            })
+        except PermissionError:
+            return Response(
+                {'error_code': 'CONTAINER_UPLOAD_FORBIDDEN', 'message': 'no permission to upload to this container'},
+                status=403,
+            )
+        except (ValueError, zipfile.BadZipFile) as exc:
+            return Response({'error_code': 'INVALID_FILE_FORMAT', 'message': str(exc)}, status=400)
+        except Exception as exc:
+            logger.exception('Upload failed', exc_info=exc)
+            return Response({'error_code': 'UPLOAD_FAILED', 'message': str(exc)}, status=500)
+
+    first_result = upload_results[0]
     return Response({
         "message": "File uploaded successfully",
-        "file_id": file_management.id,
-        "file_url": file_url,
-        "container_id": file_management.container_id,
-        "parse_status": file_management.parse_status,
+        "file_id": first_result["file_id"],
+        "file_url": first_result["file_url"],
+        "container_id": first_result["container_id"],
+        "parse_status": first_result["parse_status"],
+        "batch_id": batch_id,
+        "file_ids": [item["file_id"] for item in upload_results],
+        "files": upload_results,
     })
 
 
 import os
+import mimetypes
 import threading
 from django.conf import settings
+from django.http import FileResponse
+from django.views.decorators.clickjacking import xframe_options_exempt
 import fitz
 
 # 全局锁（可选，根据并发需求）
@@ -232,7 +261,7 @@ def get_file_details(request, file_id):
             "file_id": file_management.id,
             "user_id": file_management.user.id,
             "file_name": file_management.file_name,
-            "file_url": file_management.file_size,  # 可返回文件的URL
+            "file_url": file_management.storage_path,
             "upload_time": timezone.localtime(file_management.upload_time),
             "is_pdf": is_pdf,
             "extracted_images": image_urls
@@ -251,6 +280,20 @@ def get_extracted_images(request, file_id):
         # 获取文件对象并验证权限
         file_management = FileManagement.objects.get(id=file_id, user=request.user)
 
+        # 仅在传入 batch_id 时做本次上传隔离，避免混入历史文件。
+        request_batch_id = request.query_params.get('batch_id')
+        if request_batch_id:
+            metadata = file_management.extra_metadata or {}
+            file_batch_id = str(metadata.get('batch_id', '')).strip()
+            if file_batch_id != str(request_batch_id).strip():
+                return Response({
+                    "file_id": file_management.id,
+                    "page": 1,
+                    "page_size": 0,
+                    "total": 0,
+                    "images": []
+                })
+
         # 按图片ID倒序排列（可根据需要改为其他字段如上传时间）
         extracted_images = ImageUpload.objects.filter(
             file_management=file_management
@@ -260,15 +303,18 @@ def get_extracted_images(request, file_id):
         paginator = CustomPagination()
         paginated_images = paginator.paginate_queryset(extracted_images, request)
 
-        # 构建图片列表
+        # 构建图片列表（统一回传绝对URL，避免前端环境差异导致预览失败）
         image_list = []
         for image in paginated_images:
-            if not image.image or not image.image.name or not image.image.storage.exists(image.image.name):
+            if not image.image or not image.image.name:
                 continue
+
+            # 统一回传经 /api 鉴权的预览地址，避免前端环境下 /media 路由404。
+            image_url = request.build_absolute_uri(f"/api/preview/image/{image.id}/")
 
             image_data = {
                 "image_id": image.id,
-                "image_url": image.image.url,
+                "image_url": image_url,
                 "page_number": image.page_number if image.extracted_from_pdf else None,
                 "extracted_from_pdf": image.extracted_from_pdf,
                 "isDetect": image.isDetect,
@@ -290,6 +336,80 @@ def get_extracted_images(request, file_id):
         return Response({"message": "File not found"}, status=404)
 
 
+def _resolve_auth_user(request):
+    """兼容 Header 与 query token 两种鉴权来源。"""
+    auth_user = request.user if getattr(request.user, 'is_authenticated', False) else None
+    if not auth_user:
+        raw_token = request.query_params.get('token')
+        if raw_token:
+            try:
+                jwt_auth = JWTAuthentication()
+                validated_token = jwt_auth.get_validated_token(raw_token)
+                auth_user = jwt_auth.get_user(validated_token)
+            except Exception:
+                auth_user = None
+    return auth_user
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+@xframe_options_exempt
+def preview_resource(request, resource_type, resource_id):
+    """统一预览接口：支持 image/file 两类资源。"""
+    auth_user = _resolve_auth_user(request)
+
+    if not auth_user:
+        return Response({"detail": "Authentication credentials were not provided."}, status=401)
+
+    if resource_type == 'image':
+        try:
+            image = ImageUpload.objects.select_related('file_management').get(
+                id=resource_id,
+                file_management__user=auth_user,
+            )
+        except ImageUpload.DoesNotExist:
+            return Response({"message": "Image not found"}, status=404)
+
+        if not image.image or not image.image.name:
+            return Response({"message": "Image file missing"}, status=404)
+
+        try:
+            image_path = image.image.path
+        except Exception:
+            return Response({"message": "Image path unavailable"}, status=404)
+
+        if not os.path.exists(image_path):
+            return Response({"message": "Image file not found on disk"}, status=404)
+
+        return FileResponse(open(image_path, 'rb'), content_type='image/*')
+
+    if resource_type == 'file':
+        try:
+            file_management = FileManagement.objects.get(id=resource_id, user=auth_user)
+        except FileManagement.DoesNotExist:
+            return Response({"message": "File not found"}, status=404)
+
+        storage_path = file_management.storage_path
+        if not storage_path:
+            return Response({"message": "Stored file path missing"}, status=404)
+
+        full_path = os.path.join(settings.MEDIA_ROOT, storage_path)
+        if not os.path.exists(full_path):
+            return Response({"message": "Stored file not found"}, status=404)
+
+        guessed_type, _ = mimetypes.guess_type(full_path)
+        content_type = guessed_type or file_management.mime_type or 'application/octet-stream'
+        force_download = str(request.query_params.get('download', '')).lower() in ('1', 'true', 'yes')
+        return FileResponse(
+            open(full_path, 'rb'),
+            content_type=content_type,
+            as_attachment=force_download,
+            filename=file_management.file_name,
+        )
+
+    return Response({"message": "Unsupported preview resource type"}, status=400)
+
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def get_extracted_contents(request, file_id):
@@ -297,6 +417,24 @@ def get_extracted_contents(request, file_id):
         file_management = FileManagement.objects.get(id=file_id, user=request.user)
     except FileManagement.DoesNotExist:
         return Response({"message": "File not found"}, status=404)
+
+    file_ext = (file_management.file_ext or '').lower()
+    storage_path = file_management.storage_path
+
+    if not storage_path:
+        return Response({
+            "file_id": file_id,
+            "preview_mode": "none",
+            "file_ext": file_ext,
+            "contents": [],
+            "page": 1,
+            "page_size": 0,
+            "total": 0
+        })
+
+    full_path = os.path.join(settings.MEDIA_ROOT, storage_path)
+    if not os.path.exists(full_path):
+        return Response({"message": "Stored file not found"}, status=404)
 
     sections = ContentExtractionService.extract_text_sections_from_file(file_management)
     contents = [
@@ -313,13 +451,29 @@ def get_extracted_contents(request, file_id):
     paginator = CustomPagination()
     paginated_contents = paginator.paginate_queryset(contents, request)
 
-    return Response({
+    preview_mode = "text"
+    preview_url = None
+    can_inline = False
+    if file_ext in {'pdf', 'doc', 'docx'}:
+        preview_mode = "file"
+        preview_url = request.build_absolute_uri(f"/api/preview/file/{file_id}/")
+        can_inline = file_ext == 'pdf'
+
+    response_payload = {
         "file_id": file_id,
+        "preview_mode": preview_mode,
+        "file_ext": file_ext,
         "page": paginator.page.number,
         "page_size": paginator.get_page_size(request),
         "total": paginator.page.paginator.count,
         "contents": paginated_contents,
-    })
+    }
+    if preview_url:
+        response_payload["file_name"] = file_management.file_name
+        response_payload["preview_url"] = preview_url
+        response_payload["can_inline"] = can_inline
+
+    return Response(response_payload)
 
 
 @api_view(['POST'])

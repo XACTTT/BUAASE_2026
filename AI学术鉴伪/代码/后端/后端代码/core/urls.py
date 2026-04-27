@@ -58,6 +58,7 @@ urlpatterns = [
     # 图片上传相关的URL
     path('upload/', upload_file, name='upload_file'),
     path('upload/<int:file_id>/', get_file_details, name='get_file_details'),
+    path('preview/<str:resource_type>/<int:resource_id>/', preview_resource, name='preview_resource'),
     path('upload/<int:file_id>/extract_images/', get_extracted_images, name='get_extracted_images'),
     path('upload/<int:file_id>/extract_contents/', get_extracted_contents, name='get_extracted_contents'),
     path('upload/<int:file_id>/addTag/', add_file_tag, name='add_file_tag'),
@@ -138,6 +139,7 @@ urlpatterns = [
     # 用户操作日志视图
     path('user_action_log/', UserActionLogGetView.as_view(), name='user_action_log'),
     path('user_action_log/<int:log_id>/', UserActionLogDeleteView.as_view(), name='delete_user_action_log'),
+    path('user_action_log/<int:log_id>/detail/', views_admin.LogDetailView.as_view(), name='get_user_action_log_detail'),
     path('user_action_log/<int:log_id>/mark_anomaly/', UserActionLogMarkAnomalyView.as_view(), name='mark_anomaly_user_action_log'),
     path('user_action_log/statistics/', LogStatisticsView.as_view(), name='user_action_log_statistics'),
     # 获取任务概览

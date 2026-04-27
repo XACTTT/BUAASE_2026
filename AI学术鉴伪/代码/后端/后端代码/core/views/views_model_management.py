@@ -8,6 +8,7 @@ from rest_framework.permissions import IsAdminUser
 from rest_framework.response import Response
 
 from core.models import AIModelSource, OrganizationModelConfig, ProviderModel, User
+from ..utils.log_utils import action_log
 
 
 def _is_software_admin(user: User) -> bool:
@@ -209,6 +210,7 @@ def verify_ai_model_config(request):
 
 @api_view(['POST'])
 @permission_classes([IsAdminUser])
+@action_log('entity_create', target_type='AIModelSource')
 def add_ai_model(request):
     user = request.user
     if not _is_software_admin(user):
@@ -250,6 +252,7 @@ def add_ai_model(request):
 
 @api_view(['PUT'])
 @permission_classes([IsAdminUser])
+@action_log('entity_update', target_type='AIModelSource', target_id_field='source_id')
 def update_ai_model(request, source_id: int):
     user = request.user
     if not _is_software_admin(user):
@@ -287,6 +290,7 @@ def update_ai_model(request, source_id: int):
 
 @api_view(['DELETE'])
 @permission_classes([IsAdminUser])
+@action_log('entity_delete', target_type='AIModelSource', target_id_field='source_id')
 def delete_ai_model(request, source_id: int):
     user = request.user
     if not _is_software_admin(user):
@@ -301,6 +305,7 @@ def delete_ai_model(request, source_id: int):
 
 @api_view(['POST'])
 @permission_classes([IsAdminUser])
+@action_log('model_config_change', target_type='AIModelSource', target_id_field='source_id')
 def fetch_source_models(request, source_id: int):
     user = request.user
     if not _is_software_admin(user):
@@ -363,6 +368,7 @@ def fetch_source_models(request, source_id: int):
 
 @api_view(['POST'])
 @permission_classes([IsAdminUser])
+@action_log('model_config_change', target_type='OrganizationModelConfig')
 def add_organization_model_config(request, source_id: int):
     user = request.user
     if not _is_organization_admin(user):
@@ -403,6 +409,7 @@ def add_organization_model_config(request, source_id: int):
 
 @api_view(['PUT'])
 @permission_classes([IsAdminUser])
+@action_log('model_config_change', target_type='OrganizationModelConfig', target_id_field='config_id')
 def update_organization_model_config(request, config_id: int):
     user = request.user
     if not _is_organization_admin(user):
@@ -436,6 +443,7 @@ def update_organization_model_config(request, config_id: int):
 
 @api_view(['DELETE'])
 @permission_classes([IsAdminUser])
+@action_log('model_config_change', target_type='OrganizationModelConfig', target_id_field='config_id')
 def delete_organization_model_config(request, config_id: int):
     user = request.user
     if not _is_organization_admin(user):

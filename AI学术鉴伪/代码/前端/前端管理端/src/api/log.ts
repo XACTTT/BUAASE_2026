@@ -9,6 +9,10 @@ export default {
     return http.delete(`/user_action_log/${logId}/`);
   },
 
+  getLogDetail(logId: number) {
+    return http.get(`/user_action_log/${logId}/detail/`);
+  },
+
   downloadLogs(params: {
     query?: number[];
     status?: string;
