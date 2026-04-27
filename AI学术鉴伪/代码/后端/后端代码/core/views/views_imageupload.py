@@ -24,8 +24,8 @@ def upload_file(request):
     if not user.has_permission('upload'):
         return Response({"错误": "该用户没有上传文件的权限"}, status=403)
 
-    uploaded_file = request.FILES.get('file')
-    if not uploaded_file:
+    uploaded_files = request.FILES.getlist('file')
+    if not uploaded_files:
         return Response({'error_code': 'MISSING_FILE', 'message': 'file is required'}, status=400)
 
     container = None
@@ -38,31 +38,55 @@ def upload_file(request):
         if not container:
             return Response({'error_code': 'CONTAINER_NOT_FOUND', 'message': 'container not found'}, status=404)
 
-    try:
-        file_management, file_url = FileIngestService.ingest_upload(
-            user=user,
-            uploaded_file=uploaded_file,
-            container=container,
-            resource_role=resource_role,
-            batch_id=batch_id,
-        )
-    except PermissionError:
-        return Response(
-            {'error_code': 'CONTAINER_UPLOAD_FORBIDDEN', 'message': 'no permission to upload to this container'},
-            status=403,
-        )
-    except (ValueError, zipfile.BadZipFile) as exc:
-        return Response({'error_code': 'INVALID_FILE_FORMAT', 'message': str(exc)}, status=400)
-    except Exception as exc:
-        logger.exception('Upload failed', exc_info=exc)
-        return Response({'error_code': 'UPLOAD_FAILED', 'message': str(exc)}, status=500)
+    upload_results = []
+    file_types = request.data.getlist('file_type')
+    file_type_to_resource_role = {
+        'image': 'material_other',
+        'paper': 'paper_main',
+        'review': 'review_main',
+    }
 
+    for index, uploaded_file in enumerate(uploaded_files):
+        mapped_resource_role = resource_role
+        if index < len(file_types):
+            mapped_resource_role = file_type_to_resource_role.get(file_types[index], resource_role)
+
+        try:
+            file_management, file_url = FileIngestService.ingest_upload(
+                user=user,
+                uploaded_file=uploaded_file,
+                container=container,
+                resource_role=mapped_resource_role,
+                batch_id=batch_id,
+            )
+            upload_results.append({
+                "file_id": file_management.id,
+                "file_url": file_url,
+                "container_id": file_management.container_id,
+                "parse_status": file_management.parse_status,
+                "file_type": file_types[index] if index < len(file_types) else None,
+                "resource_role": file_management.resource_role,
+            })
+        except PermissionError:
+            return Response(
+                {'error_code': 'CONTAINER_UPLOAD_FORBIDDEN', 'message': 'no permission to upload to this container'},
+                status=403,
+            )
+        except (ValueError, zipfile.BadZipFile) as exc:
+            return Response({'error_code': 'INVALID_FILE_FORMAT', 'message': str(exc)}, status=400)
+        except Exception as exc:
+            logger.exception('Upload failed', exc_info=exc)
+            return Response({'error_code': 'UPLOAD_FAILED', 'message': str(exc)}, status=500)
+
+    first_result = upload_results[0]
     return Response({
         "message": "File uploaded successfully",
-        "file_id": file_management.id,
-        "file_url": file_url,
-        "container_id": file_management.container_id,
-        "parse_status": file_management.parse_status,
+        "file_id": first_result["file_id"],
+        "file_url": first_result["file_url"],
+        "container_id": first_result["container_id"],
+        "parse_status": first_result["parse_status"],
+        "file_ids": [item["file_id"] for item in upload_results],
+        "files": upload_results,
     })
 
 

@@ -98,10 +98,12 @@ interface Image {
 const props = withDefaults(defineProps<{
   images?: Image[]
   fileId?: number
+  fileIds?: number[]
   showMetaControls?: boolean
 }>(), {
   images: () => [],
   fileId: 0,
+  fileIds: () => [],
   showMetaControls: true
 })
 
@@ -174,51 +176,75 @@ const previewCardStyle = computed(() => {
   }
 })
 
-// 添加滚动加载相关变量
 const loading = ref(false)
-const page = ref(1)
-const hasMore = ref(true)
 const pageSize = ref(50)
+const loadedImageIds = ref<Set<number>>(new Set())
 
-// 分页拉取后端提取图片
-const loadMoreImages = async () => {
-  if (loading.value || !hasMore.value) return
+const resolveImageUrl = (path: string): string => {
+  const apiBase = import.meta.env.VITE_API_URL || ''
+  return apiBase ? `${apiBase}${path}` : path
+}
 
-  loading.value = true
-  try {
-    console.log(page.value)
-    console.log(pageSize.value)
-    const response = (await upload.getExtractedImages({ file_id: props.fileId, page_number: page.value, page_size: pageSize.value })).data
-    const newImages = response.images.map((img: any) => ({
-      image_id: img.image_id,
-      image_url: import.meta.env.VITE_API_URL + img.image_url,
+const appendImages = (images: any[]) => {
+  images.forEach(img => {
+    const imageId = Number(img.image_id)
+    if (!Number.isFinite(imageId) || loadedImageIds.value.has(imageId)) {
+      return
+    }
+    loadedImageIds.value.add(imageId)
+    localImages.value.push({
+      image_id: imageId,
+      image_url: resolveImageUrl(img.image_url),
       page_number: img.page_number,
       extracted_from_pdf: img.extracted_from_pdf
-    }))
-    localImages.value.push(...newImages)
-    page.value++
-    hasMore.value = localImages.value.length < response.total
-  } catch (error) {
-    hasMore.value = false
-    snackbar.showMessage('图片加载失败', 'error')
-  } finally {
-    loading.value = false
-  }
+    })
+  })
+}
+
+const loadImagesForFile = async (targetFileId: number) => {
+  let pageNumber = 1
+  let loadedCount = 0
+  let total = 0
+
+  do {
+    const response = (await upload.getExtractedImages({
+      file_id: targetFileId,
+      page_number: pageNumber,
+      page_size: pageSize.value
+    })).data
+
+    const fetchedImages = Array.isArray(response.images) ? response.images : []
+    appendImages(fetchedImages)
+    loadedCount += fetchedImages.length
+    total = Number(response.total || 0)
+    pageNumber += 1
+
+    if (!fetchedImages.length) {
+      break
+    }
+  } while (loadedCount < total)
 }
 
 const loadAllImages = async () => {
-  if (!props.fileId) {
+  const targets = props.fileIds.length
+    ? props.fileIds
+    : (props.fileId ? [props.fileId] : [])
+
+  if (!targets.length) {
     return
   }
 
-  // 首次进入时尽量拉齐所有图片，方便前端统一分页展示
-  let safeGuard = 0
-  while (hasMore.value) {
-    safeGuard++
-    if (safeGuard > 200) {
-      break
+  loading.value = true
+  try {
+    localImages.value = []
+    loadedImageIds.value = new Set<number>()
+    for (const targetFileId of targets) {
+      await loadImagesForFile(targetFileId)
     }
-    await loadMoreImages()
+  } catch (error) {
+    snackbar.showMessage('图片加载失败', 'error')
+  } finally {
+    loading.value = false
   }
 }
 
@@ -255,7 +281,7 @@ const handleName = () => {
 
 // 获取提取的图片
 onMounted(async () => {
-  if (props.fileId) {
+  if (props.fileId || props.fileIds.length) {
     await loadAllImages()
   }
 })

@@ -479,12 +479,12 @@ class SingleUserActionLogView(views.APIView):
 
         # 应用筛选条件
         if publisher:
-            logs = logs.filter(related_model='DetectionTask',
-                               related_id__in=DetectionTask.objects.filter(publisher=publisher).values_list('id',
-                                                                                                            flat=True))
+            logs = logs.filter(target_type='DetectionTask',
+                               target_id__in=DetectionTask.objects.filter(publisher=publisher).values_list('id',
+                                                                                                           flat=True))
         if status:
-            logs = logs.filter(related_model='DetectionTask',
-                               related_id__in=DetectionTask.objects.filter(status=status).values_list('id', flat=True))
+            logs = logs.filter(target_type='DetectionTask',
+                               target_id__in=DetectionTask.objects.filter(status=status).values_list('id', flat=True))
         if start_time:
             logs = logs.filter(operation_time__gte=start_time)
         if end_time:

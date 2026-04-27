@@ -7,6 +7,7 @@ import zipfile
 from PIL import Image
 from django.conf import settings
 from django.core.files.storage import FileSystemStorage
+from django.db import connection
 
 from core.models import FileManagement, ImageUpload
 from core.services.audit_service import audit_log
@@ -16,6 +17,266 @@ import fitz
 
 class FileIngestService:
     IMAGE_EXTENSIONS = {'png', 'jpg', 'jpeg', 'bmp', 'gif', 'webp'}
+    _schema_checked = False
+    _table_columns_cache = {}
+    _column_type_cache = {}
+
+    @staticmethod
+    def _table_exists(table_name: str) -> bool:
+        return table_name in connection.introspection.table_names()
+
+    @staticmethod
+    def _column_exists(table_name: str, column_name: str) -> bool:
+        vendor = connection.vendor
+        with connection.cursor() as cursor:
+            if vendor == 'mysql':
+                cursor.execute(f"SHOW COLUMNS FROM `{table_name}` LIKE %s", [column_name])
+                return cursor.fetchone() is not None
+
+            if vendor == 'sqlite':
+                cursor.execute(f"PRAGMA table_info('{table_name}')")
+                columns = cursor.fetchall()
+                return any(col[1] == column_name for col in columns)
+
+            cursor.execute(
+                """
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_name = %s AND column_name = %s
+                """,
+                [table_name, column_name],
+            )
+            return cursor.fetchone() is not None
+
+    @staticmethod
+    def _get_table_columns(table_name: str) -> set:
+        cached = FileIngestService._table_columns_cache.get(table_name)
+        if cached is not None:
+            return cached
+
+        if not FileIngestService._table_exists(table_name):
+            FileIngestService._table_columns_cache[table_name] = set()
+            return set()
+
+        with connection.cursor() as cursor:
+            description = connection.introspection.get_table_description(cursor, table_name)
+            columns = {col.name for col in description}
+
+        FileIngestService._table_columns_cache[table_name] = columns
+        return columns
+
+    @staticmethod
+    def _get_column_type(table_name: str, column_name: str) -> str:
+        cache_key = (table_name, column_name)
+        if cache_key in FileIngestService._column_type_cache:
+            return FileIngestService._column_type_cache[cache_key]
+
+        if not FileIngestService._table_exists(table_name):
+            FileIngestService._column_type_cache[cache_key] = ''
+            return ''
+
+        vendor = connection.vendor
+        column_type = ''
+        with connection.cursor() as cursor:
+            if vendor == 'mysql':
+                cursor.execute(
+                    """
+                    SELECT DATA_TYPE
+                    FROM information_schema.columns
+                    WHERE table_schema = DATABASE() AND table_name = %s AND column_name = %s
+                    """,
+                    [table_name, column_name],
+                )
+                row = cursor.fetchone()
+                column_type = (row[0] if row and row[0] else '')
+            elif vendor == 'sqlite':
+                cursor.execute(f"PRAGMA table_info('{table_name}')")
+                for row in cursor.fetchall():
+                    # row: cid, name, type, notnull, dflt_value, pk
+                    if len(row) >= 3 and row[1] == column_name:
+                        column_type = (row[2] or '')
+                        break
+            else:
+                cursor.execute(
+                    """
+                    SELECT data_type
+                    FROM information_schema.columns
+                    WHERE table_name = %s AND column_name = %s
+                    """,
+                    [table_name, column_name],
+                )
+                row = cursor.fetchone()
+                column_type = (row[0] if row and row[0] else '')
+
+        normalized = str(column_type).lower()
+        FileIngestService._column_type_cache[cache_key] = normalized
+        return normalized
+
+    @staticmethod
+    def _normalize_resource_role_for_column(table_name: str, column_name: str, value):
+        if value is None:
+            return value
+
+        column_type = FileIngestService._get_column_type(table_name, column_name)
+        is_integer_column = any(token in column_type for token in ('int', 'integer', 'bigint', 'smallint', 'tinyint'))
+        if not is_integer_column:
+            return value
+
+        if isinstance(value, int):
+            return value
+
+        role_to_code = {
+            'material_other': 0,
+            'paper_main': 1,
+            'paper_supplementary': 2,
+            'paper_revision': 3,
+            'review_main': 4,
+            'review_attachment': 5,
+        }
+        return role_to_code.get(str(value), 0)
+
+    @staticmethod
+    def _pick_existing_columns(model_cls, table_name: str, payload: dict) -> dict:
+        columns = FileIngestService._get_table_columns(table_name)
+        if not columns:
+            return payload
+
+        picked = {}
+        for key, value in payload.items():
+            try:
+                field = model_cls._meta.get_field(key)
+            except Exception:
+                continue
+
+            # Django ORM create 需要字段名（如 user），但是否可写入取决于底层列是否存在（如 user_id）。
+            column_name = getattr(field, 'column', None)
+            if column_name and column_name in columns:
+                normalized_value = value
+                if table_name == 'core_filemanagement' and key == 'resource_role':
+                    normalized_value = FileIngestService._normalize_resource_role_for_column(
+                        table_name,
+                        column_name,
+                        value,
+                    )
+                picked[key] = normalized_value
+
+        return picked
+
+    @staticmethod
+    def _add_nullable_bigint_column(table_name: str, column_name: str) -> None:
+        vendor = connection.vendor
+        with connection.cursor() as cursor:
+            if vendor == 'mysql':
+                cursor.execute(f"ALTER TABLE `{table_name}` ADD COLUMN `{column_name}` bigint NULL")
+            elif vendor == 'sqlite':
+                cursor.execute(f'ALTER TABLE "{table_name}" ADD COLUMN "{column_name}" integer NULL')
+            else:
+                cursor.execute(f'ALTER TABLE "{table_name}" ADD COLUMN "{column_name}" bigint NULL')
+
+    @staticmethod
+    def _add_nullable_varchar_column(table_name: str, column_name: str, length: int) -> None:
+        vendor = connection.vendor
+        with connection.cursor() as cursor:
+            if vendor == 'mysql':
+                cursor.execute(f"ALTER TABLE `{table_name}` ADD COLUMN `{column_name}` varchar({length}) NULL")
+            else:
+                cursor.execute(f'ALTER TABLE "{table_name}" ADD COLUMN "{column_name}" varchar({length}) NULL')
+
+    @staticmethod
+    def _add_nullable_text_column(table_name: str, column_name: str) -> None:
+        vendor = connection.vendor
+        with connection.cursor() as cursor:
+            if vendor == 'mysql':
+                cursor.execute(f"ALTER TABLE `{table_name}` ADD COLUMN `{column_name}` longtext NULL")
+            else:
+                cursor.execute(f'ALTER TABLE "{table_name}" ADD COLUMN "{column_name}" text NULL')
+
+    @staticmethod
+    def _add_nullable_boolean_column(table_name: str, column_name: str) -> None:
+        vendor = connection.vendor
+        with connection.cursor() as cursor:
+            if vendor == 'mysql':
+                cursor.execute(f"ALTER TABLE `{table_name}` ADD COLUMN `{column_name}` tinyint(1) NULL")
+            else:
+                cursor.execute(f'ALTER TABLE "{table_name}" ADD COLUMN "{column_name}" boolean NULL')
+
+    @staticmethod
+    def _add_nullable_integer_column(table_name: str, column_name: str) -> None:
+        vendor = connection.vendor
+        with connection.cursor() as cursor:
+            if vendor == 'mysql':
+                cursor.execute(f"ALTER TABLE `{table_name}` ADD COLUMN `{column_name}` int NULL")
+            else:
+                cursor.execute(f'ALTER TABLE "{table_name}" ADD COLUMN "{column_name}" integer NULL')
+
+    @staticmethod
+    def _add_nullable_datetime_column(table_name: str, column_name: str) -> None:
+        vendor = connection.vendor
+        with connection.cursor() as cursor:
+            if vendor == 'mysql':
+                cursor.execute(f"ALTER TABLE `{table_name}` ADD COLUMN `{column_name}` datetime NULL")
+            else:
+                cursor.execute(f'ALTER TABLE "{table_name}" ADD COLUMN "{column_name}" timestamp NULL')
+
+    @staticmethod
+    def _add_missing_column(table_name: str, column_name: str, column_kind: str, length: int = 0) -> None:
+        if column_kind == 'bigint':
+            FileIngestService._add_nullable_bigint_column(table_name, column_name)
+        elif column_kind == 'varchar':
+            FileIngestService._add_nullable_varchar_column(table_name, column_name, length)
+        elif column_kind == 'text':
+            FileIngestService._add_nullable_text_column(table_name, column_name)
+        elif column_kind == 'boolean':
+            FileIngestService._add_nullable_boolean_column(table_name, column_name)
+        elif column_kind == 'int':
+            FileIngestService._add_nullable_integer_column(table_name, column_name)
+        elif column_kind == 'datetime':
+            FileIngestService._add_nullable_datetime_column(table_name, column_name)
+
+    @staticmethod
+    def _ensure_backward_compatible_schema() -> None:
+        if FileIngestService._schema_checked:
+            return
+
+        compatibility_columns = [
+            ('core_filemanagement', 'container_id', 'bigint', 0),
+            ('core_filemanagement', 'organization_id', 'bigint', 0),
+            ('core_filemanagement', 'resource_role', 'varchar', 40),
+            ('core_filemanagement', 'origin_type', 'varchar', 30),
+            ('core_filemanagement', 'storage_path', 'varchar', 512),
+            ('core_filemanagement', 'file_ext', 'varchar', 30),
+            ('core_filemanagement', 'mime_type', 'varchar', 128),
+            ('core_filemanagement', 'checksum', 'varchar', 128),
+            ('core_filemanagement', 'parse_status', 'varchar', 20),
+            ('core_filemanagement', 'parse_error', 'text', 0),
+            ('core_filemanagement', 'extra_metadata', 'text', 0),
+            ('core_imageupload', 'container_id', 'bigint', 0),
+            ('core_imageupload', 'image_role', 'varchar', 40),
+            ('core_imageupload', 'source_kind', 'varchar', 40),
+            ('core_imageupload', 'file_name', 'varchar', 255),
+            ('core_imageupload', 'image_index', 'int', 0),
+            ('core_imageupload', 'width', 'int', 0),
+            ('core_imageupload', 'height', 'int', 0),
+            ('core_imageupload', 'hash_value', 'varchar', 128),
+        ]
+
+        for table_name, column_name, column_kind, column_length in compatibility_columns:
+            if not FileIngestService._table_exists(table_name):
+                continue
+
+            if FileIngestService._column_exists(table_name, column_name):
+                continue
+
+            try:
+                FileIngestService._add_missing_column(table_name, column_name, column_kind, column_length)
+            except Exception:
+                # 这里不抛出异常，保留原始错误路径，方便定位其它缺失列
+                pass
+
+            # 强制失效列缓存，避免本次启动期间仍读取旧结构
+            FileIngestService._table_columns_cache = {}
+            FileIngestService._column_type_cache = {}
+        FileIngestService._schema_checked = True
 
     @staticmethod
     def _checksum_for_upload(uploaded_file):
@@ -59,22 +320,25 @@ class FileIngestService:
         with Image.open(io.BytesIO(image_data)) as image_obj:
             width, height = image_obj.size
 
+        image_payload = {
+            'file_management': file_management,
+            'container': container,
+            'image': relative_path,
+            'extracted_from_pdf': extracted_from_pdf,
+            'page_number': page_number,
+            'image_role': image_role,
+            'source_kind': source_kind,
+            'file_name': os.path.basename(relative_path),
+            'image_index': image_index,
+            'width': width,
+            'height': height,
+            'hash_value': FileIngestService._image_hash(image_data),
+            'isDetect': False,
+            'isReview': False,
+            'isFake': False,
+        }
         ImageUpload.objects.create(
-            file_management=file_management,
-            container=container,
-            image=relative_path,
-            extracted_from_pdf=extracted_from_pdf,
-            page_number=page_number,
-            image_role=image_role,
-            source_kind=source_kind,
-            file_name=os.path.basename(relative_path),
-            image_index=image_index,
-            width=width,
-            height=height,
-            hash_value=FileIngestService._image_hash(image_data),
-            isDetect=False,
-            isReview=False,
-            isFake=False,
+            **FileIngestService._pick_existing_columns(ImageUpload, 'core_imageupload', image_payload)
         )
 
     @staticmethod
@@ -187,6 +451,9 @@ class FileIngestService:
 
     @staticmethod
     def ingest_upload(user, uploaded_file, container=None, resource_role='material_other', batch_id=None):
+        # 历史库可能缺少 container_id 列，先做一次兼容补齐，避免上传流程直接失败。
+        FileIngestService._ensure_backward_compatible_schema()
+
         if container and not can_upload_to_container(user, container):
             raise PermissionError('CONTAINER_UPLOAD_FORBIDDEN')
 
@@ -201,26 +468,32 @@ class FileIngestService:
         fs = FileSystemStorage()
         storage_path = fs.save(f'uploads/{unique_filename}', uploaded_file)
 
+        file_payload = {
+            'organization': container.organization if container else user.organization,
+            'user': user,
+            'container': container,
+            'file_name': file_name,
+            'file_size': file_size,
+            'file_type': content_type,
+            'resource_role': resource_role or 'material_other',
+            'origin_type': 'upload',
+            'storage_path': storage_path,
+            'file_ext': file_ext,
+            'mime_type': content_type,
+            'checksum': checksum,
+            'parse_status': 'validating',
+            'extra_metadata': {'batch_id': batch_id} if batch_id else {},
+        }
         file_management = FileManagement.objects.create(
-            organization=container.organization if container else user.organization,
-            user=user,
-            container=container,
-            file_name=file_name,
-            file_size=file_size,
-            file_type=content_type,
-            resource_role=resource_role or 'material_other',
-            origin_type='upload',
-            storage_path=storage_path,
-            file_ext=file_ext,
-            mime_type=content_type,
-            checksum=checksum,
-            parse_status='validating',
-            extra_metadata={'batch_id': batch_id} if batch_id else {},
+            **FileIngestService._pick_existing_columns(FileManagement, 'core_filemanagement', file_payload)
         )
 
         try:
-            file_management.parse_status = 'parsing'
-            file_management.save(update_fields=['parse_status'])
+            file_columns = FileIngestService._get_table_columns('core_filemanagement')
+
+            if 'parse_status' in file_columns:
+                file_management.parse_status = 'parsing'
+                file_management.save(update_fields=['parse_status'])
 
             if content_type == 'application/pdf' or file_ext == 'pdf':
                 FileIngestService._extract_images_from_pdf(file_management, container, storage_path)
@@ -231,13 +504,23 @@ class FileIngestService:
                 uploaded_file.seek(0)
                 FileIngestService._store_single_image(file_management, container, uploaded_file, image_role='figure')
 
-            file_management.parse_status = 'parsed'
-            file_management.parse_error = None
-            file_management.save(update_fields=['parse_status', 'parse_error'])
+            if 'parse_status' in file_columns:
+                file_management.parse_status = 'parsed'
+            if 'parse_error' in file_columns:
+                file_management.parse_error = None
+
+            success_fields = [field for field in ('parse_status', 'parse_error') if field in file_columns]
+            if success_fields:
+                file_management.save(update_fields=success_fields)
         except Exception as exc:
-            file_management.parse_status = 'failed'
-            file_management.parse_error = str(exc)
-            file_management.save(update_fields=['parse_status', 'parse_error'])
+            if 'parse_status' in file_columns:
+                file_management.parse_status = 'failed'
+            if 'parse_error' in file_columns:
+                file_management.parse_error = str(exc)
+
+            failed_fields = [field for field in ('parse_status', 'parse_error') if field in file_columns]
+            if failed_fields:
+                file_management.save(update_fields=failed_fields)
             raise
 
         if container and container.progress_status in ('pending_upload', 'validating', 'parsing'):

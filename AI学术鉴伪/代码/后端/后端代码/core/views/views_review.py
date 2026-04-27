@@ -816,8 +816,8 @@ def post_review(request, manual_review_id):
     Log.objects.create(
         user=request.user,
         operation_type='manual_review',
-        related_model='ManualReview',
-        related_id=manual_review_id
+        target_type='ManualReview',
+        target_id=manual_review_id
     )
 
     # wyt shit here
