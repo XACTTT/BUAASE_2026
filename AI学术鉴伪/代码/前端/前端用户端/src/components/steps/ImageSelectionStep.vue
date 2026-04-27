@@ -181,8 +181,40 @@ const pageSize = ref(50)
 const loadedImageIds = ref<Set<number>>(new Set())
 
 const resolveImageUrl = (path: string): string => {
-  const apiBase = import.meta.env.VITE_API_URL || ''
-  return apiBase ? `${apiBase}${path}` : path
+  if (!path) {
+    return ''
+  }
+
+  // 后端已返回绝对URL时直接使用，避免重复拼接
+  if (/^https?:\/\//i.test(path)) {
+    return path
+  }
+
+  const envBase = String(import.meta.env.VITE_API_URL || '').trim()
+  if (!envBase) {
+    return path
+  }
+
+  // 兼容把 VITE_API_URL 配成 .../api 的场景，媒体资源不应走 /api/media
+  const normalizedBase = envBase.replace(/\/api\/?$/i, '')
+  if (path.startsWith('/')) {
+    return `${normalizedBase}${path}`
+  }
+  return `${normalizedBase}/${path}`
+}
+
+const withPreviewToken = (url: string): string => {
+  if (!url || !url.includes('/api/images/') || !url.includes('/preview/')) {
+    return url
+  }
+
+  const token = localStorage.getItem('2-token')
+  if (!token) {
+    return url
+  }
+
+  const separator = url.includes('?') ? '&' : '?'
+  return `${url}${separator}token=${encodeURIComponent(token)}`
 }
 
 const appendImages = (images: any[]) => {
@@ -194,7 +226,7 @@ const appendImages = (images: any[]) => {
     loadedImageIds.value.add(imageId)
     localImages.value.push({
       image_id: imageId,
-      image_url: resolveImageUrl(img.image_url),
+      image_url: withPreviewToken(resolveImageUrl(img.image_url)),
       page_number: img.page_number,
       extracted_from_pdf: img.extracted_from_pdf
     })
@@ -238,6 +270,9 @@ const loadAllImages = async () => {
   try {
     localImages.value = []
     loadedImageIds.value = new Set<number>()
+    selectedImage.value = null
+    currentIndex.value = -1
+    listPage.value = 1
     for (const targetFileId of targets) {
       await loadImagesForFile(targetFileId)
     }
@@ -285,6 +320,15 @@ onMounted(async () => {
     await loadAllImages()
   }
 })
+
+watch(
+  () => [props.fileId, props.fileIds.join(',')],
+  async () => {
+    if (props.fileId || props.fileIds.length) {
+      await loadAllImages()
+    }
+  }
+)
 
 const mappedTag = [
   { title: '医学', value: 'Medicine' },

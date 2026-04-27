@@ -60,6 +60,7 @@ urlpatterns = [
     path('upload/<int:file_id>/', get_file_details, name='get_file_details'),
     path('upload/<int:file_id>/extract_images/', get_extracted_images, name='get_extracted_images'),
     path('upload/<int:file_id>/extract_contents/', get_extracted_contents, name='get_extracted_contents'),
+    path('images/<int:image_id>/preview/', preview_extracted_image, name='preview_extracted_image'),
     path('upload/<int:file_id>/addTag/', add_file_tag, name='add_file_tag'),
     path('upload/<int:file_id>/delete/', delete_upload, name='delete_upload'),
     path('upload/get_all_file_images/<int:file_management_id>/', get_all_file_images, name='get_all_file_images'),

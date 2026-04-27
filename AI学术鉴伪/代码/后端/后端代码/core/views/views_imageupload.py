@@ -7,8 +7,9 @@ from django.core.files.storage import FileSystemStorage
 from ..models import FileManagement, ImageUpload, User, ResourceContainer
 from django.core.paginator import Paginator, EmptyPage
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated, IsAdminUser
+from rest_framework.permissions import IsAuthenticated, IsAdminUser, AllowAny
 from rest_framework.response import Response
+from rest_framework_simplejwt.authentication import JWTAuthentication
 from ..models import ImageUpload
 from core.services.file_ingest_service import FileIngestService
 from ..utils.log_utils import action_log
@@ -93,6 +94,7 @@ def upload_file(request):
 import os
 import threading
 from django.conf import settings
+from django.http import FileResponse
 import fitz
 
 # 全局锁（可选，根据并发需求）
@@ -283,15 +285,18 @@ def get_extracted_images(request, file_id):
         paginator = CustomPagination()
         paginated_images = paginator.paginate_queryset(extracted_images, request)
 
-        # 构建图片列表
+        # 构建图片列表（统一回传绝对URL，避免前端环境差异导致预览失败）
         image_list = []
         for image in paginated_images:
-            if not image.image or not image.image.name or not image.image.storage.exists(image.image.name):
+            if not image.image or not image.image.name:
                 continue
+
+            # 统一回传经 /api 鉴权的预览地址，避免前端环境下 /media 路由404。
+            image_url = request.build_absolute_uri(f"/api/images/{image.id}/preview/")
 
             image_data = {
                 "image_id": image.id,
-                "image_url": image.image.url,
+                "image_url": image_url,
                 "page_number": image.page_number if image.extracted_from_pdf else None,
                 "extracted_from_pdf": image.extracted_from_pdf,
                 "isDetect": image.isDetect,
@@ -311,6 +316,46 @@ def get_extracted_images(request, file_id):
 
     except FileManagement.DoesNotExist:
         return Response({"message": "File not found"}, status=404)
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def preview_extracted_image(request, image_id):
+    """通过受鉴权接口预览提取图片，避免依赖 /media 直链。"""
+    auth_user = request.user if getattr(request.user, 'is_authenticated', False) else None
+    if not auth_user:
+        raw_token = request.query_params.get('token')
+        if raw_token:
+            try:
+                jwt_auth = JWTAuthentication()
+                validated_token = jwt_auth.get_validated_token(raw_token)
+                auth_user = jwt_auth.get_user(validated_token)
+            except Exception:
+                auth_user = None
+
+    if not auth_user:
+        return Response({"detail": "Authentication credentials were not provided."}, status=401)
+
+    try:
+        image = ImageUpload.objects.select_related('file_management').get(
+            id=image_id,
+            file_management__user=auth_user,
+        )
+    except ImageUpload.DoesNotExist:
+        return Response({"message": "Image not found"}, status=404)
+
+    if not image.image or not image.image.name:
+        return Response({"message": "Image file missing"}, status=404)
+
+    try:
+        image_path = image.image.path
+    except Exception:
+        return Response({"message": "Image path unavailable"}, status=404)
+
+    if not os.path.exists(image_path):
+        return Response({"message": "Image file not found on disk"}, status=404)
+
+    return FileResponse(open(image_path, 'rb'), content_type='image/*')
 
 
 @api_view(['GET'])
