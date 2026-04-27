@@ -429,8 +429,8 @@ class FileIngestService:
                     )
 
     @staticmethod
-    def _extract_images_from_zip(file_management, container, uploaded_file):
-        with zipfile.ZipFile(uploaded_file) as zip_file:
+    def _extract_images_from_zip(file_management, container, zip_file_path):
+        with zipfile.ZipFile(zip_file_path) as zip_file:
             image_counter = 0
             for member_name in zip_file.namelist():
                 info = zip_file.getinfo(member_name)
@@ -480,17 +480,17 @@ class FileIngestService:
                             os.remove(temp_pdf_path)
 
     @staticmethod
-    def _store_single_image(file_management, container, uploaded_file, image_role):
-        image_data = uploaded_file.read()
-        uploaded_file.seek(0)
+    def _store_single_image(file_management, container, source_file_path, image_role, original_ext=None):
+        with open(source_file_path, 'rb') as image_file:
+            image_data = image_file.read()
 
-        file_ext = os.path.splitext(uploaded_file.name)[1].lstrip('.').lower()
+        file_ext = (original_ext or os.path.splitext(source_file_path)[1].lstrip('.').lower())
         if not file_ext or not file_ext.isalnum():
             file_ext = 'png'
         unique_filename = f"{uuid.uuid4().hex}.{file_ext}"
-        relative_path = os.path.join('extracted_images', f"{file_management.id}_{unique_filename}").replace('\\', '/')
-        fs = FileSystemStorage()
-        saved_relative_path = fs.save(relative_path, uploaded_file)
+        saved_relative_path = os.path.join('extracted_images', f"{file_management.id}_{unique_filename}").replace('\\', '/')
+        with Image.open(io.BytesIO(image_data)) as pil_image:
+            FileIngestService._save_pil_image(pil_image, saved_relative_path)
 
         FileIngestService._create_image_record(
             file_management=file_management,
@@ -520,6 +520,7 @@ class FileIngestService:
         unique_filename = f"{uuid.uuid4().hex}_{file_name}"
         fs = FileSystemStorage()
         storage_path = fs.save(f'uploads/{unique_filename}', uploaded_file)
+        full_saved_path = os.path.join(settings.MEDIA_ROOT, storage_path)
 
         file_payload = {
             'organization': container.organization if container else user.organization,
@@ -551,11 +552,15 @@ class FileIngestService:
             if content_type == 'application/pdf' or file_ext == 'pdf':
                 FileIngestService._extract_images_from_pdf(file_management, container, storage_path)
             elif FileIngestService._is_zip_upload(uploaded_file, content_type, file_ext):
-                uploaded_file.seek(0)
-                FileIngestService._extract_images_from_zip(file_management, container, uploaded_file)
+                FileIngestService._extract_images_from_zip(file_management, container, full_saved_path)
             elif content_type.startswith('image/') or file_ext in FileIngestService.IMAGE_EXTENSIONS:
-                uploaded_file.seek(0)
-                FileIngestService._store_single_image(file_management, container, uploaded_file, image_role='figure')
+                FileIngestService._store_single_image(
+                    file_management,
+                    container,
+                    full_saved_path,
+                    image_role='figure',
+                    original_ext=file_ext,
+                )
 
             if 'parse_status' in file_columns:
                 file_management.parse_status = 'parsed'

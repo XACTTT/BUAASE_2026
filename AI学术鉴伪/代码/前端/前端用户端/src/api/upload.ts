@@ -10,7 +10,8 @@ export default {
   },
 
   getExtractedImages(data: any) {
-    return http.get(`/upload/${data.file_id}/extract_images/?page=${data.page_number}&page_size=${data.page_size}`)
+    const batchQuery = data.batch_id ? `&batch_id=${encodeURIComponent(data.batch_id)}` : ''
+    return http.get(`/upload/${data.file_id}/extract_images/?page=${data.page_number}&page_size=${data.page_size}${batchQuery}`)
   },
 
   getExtractedContents(data: any) {

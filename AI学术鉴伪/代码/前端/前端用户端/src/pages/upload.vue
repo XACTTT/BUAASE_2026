@@ -354,6 +354,7 @@
           v-if="fileId && selectedModule === 'image'"
           :fileId="fileId"
           :fileIds="fileIds"
+          :batchId="currentBatchId"
           @tagChanged="handleSelectedTag"
           @add-name="handleName"
         />
@@ -407,6 +408,7 @@
               <ImageSelectionStep
                 :fileId="fileId"
                 :fileIds="fileIds"
+                :batchId="currentBatchId"
                 :showMetaControls="false"
               />
             </v-card-text>
@@ -572,6 +574,7 @@ const categoryFileInputs = ref<Record<UploadCategoryKey, HTMLInputElement | null
 })
 const fileId = ref()
 const fileIds = ref<number[]>([])
+const currentBatchId = ref('')
 const loading = ref<boolean>(false)
 const snackbar = useSnackbarStore()
 
@@ -602,6 +605,7 @@ const resetCurrentUploadState = () => {
   selectedVersion.value = null
   fileId.value = ''
   fileIds.value = []
+  currentBatchId.value = ''
   currentTag.value = ''
   currentTaskName.value = ''
 }
@@ -797,6 +801,11 @@ const handleSubmit = async () => {
 
   loading.value = true
   try {
+    const generatedBatchId =
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : `batch_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`
+
     const formData = new FormData()
     if (selectedModule.value === 'multi') {
       ;(['image', 'paper', 'review'] as UploadCategoryKey[]).forEach(category => {
@@ -812,6 +821,7 @@ const handleSubmit = async () => {
       })
     }
     formData.append('detect_type', selectedModule.value)
+    formData.append('batch_id', generatedBatchId)
     const { data } = await uploadApi.uploadFile(formData)
     const normalizedFileIds = Array.isArray(data.file_ids)
       ? data.file_ids.map((id: any) => Number(id)).filter((id: number) => Number.isFinite(id) && id > 0)
@@ -822,6 +832,7 @@ const handleSubmit = async () => {
 
     fileIds.value = normalizedFileIds
     fileId.value = normalizedFileIds[0] ?? ''
+    currentBatchId.value = String(data.batch_id || generatedBatchId)
 
     if (!fileIds.value.length) {
       snackbar.showMessage('上传成功但未返回有效文件ID，请稍后重试', 'error')
