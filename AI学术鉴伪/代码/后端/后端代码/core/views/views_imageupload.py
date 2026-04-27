@@ -92,9 +92,11 @@ def upload_file(request):
 
 
 import os
+import mimetypes
 import threading
 from django.conf import settings
 from django.http import FileResponse
+from django.views.decorators.clickjacking import xframe_options_exempt
 import fitz
 
 # 全局锁（可选，根据并发需求）
@@ -257,7 +259,7 @@ def get_file_details(request, file_id):
             "file_id": file_management.id,
             "user_id": file_management.user.id,
             "file_name": file_management.file_name,
-            "file_url": file_management.file_size,  # 可返回文件的URL
+            "file_url": file_management.storage_path,
             "upload_time": timezone.localtime(file_management.upload_time),
             "is_pdf": is_pdf,
             "extracted_images": image_urls
@@ -320,6 +322,7 @@ def get_extracted_images(request, file_id):
 
 @api_view(['GET'])
 @permission_classes([AllowAny])
+@xframe_options_exempt
 def preview_extracted_image(request, image_id):
     """通过受鉴权接口预览提取图片，避免依赖 /media 直链。"""
     auth_user = request.user if getattr(request.user, 'is_authenticated', False) else None
@@ -359,6 +362,49 @@ def preview_extracted_image(request, image_id):
 
 
 @api_view(['GET'])
+@permission_classes([AllowAny])
+@xframe_options_exempt
+def preview_uploaded_file(request, file_id):
+    """通过受鉴权接口预览上传原文件，供论文/Review模块直接展示。"""
+    auth_user = request.user if getattr(request.user, 'is_authenticated', False) else None
+    if not auth_user:
+        raw_token = request.query_params.get('token')
+        if raw_token:
+            try:
+                jwt_auth = JWTAuthentication()
+                validated_token = jwt_auth.get_validated_token(raw_token)
+                auth_user = jwt_auth.get_user(validated_token)
+            except Exception:
+                auth_user = None
+
+    if not auth_user:
+        return Response({"detail": "Authentication credentials were not provided."}, status=401)
+
+    try:
+        file_management = FileManagement.objects.get(id=file_id, user=auth_user)
+    except FileManagement.DoesNotExist:
+        return Response({"message": "File not found"}, status=404)
+
+    storage_path = file_management.storage_path
+    if not storage_path:
+        return Response({"message": "Stored file path missing"}, status=404)
+
+    full_path = os.path.join(settings.MEDIA_ROOT, storage_path)
+    if not os.path.exists(full_path):
+        return Response({"message": "Stored file not found"}, status=404)
+
+    guessed_type, _ = mimetypes.guess_type(full_path)
+    content_type = guessed_type or file_management.mime_type or 'application/octet-stream'
+    force_download = str(request.query_params.get('download', '')).lower() in ('1', 'true', 'yes')
+    return FileResponse(
+        open(full_path, 'rb'),
+        content_type=content_type,
+        as_attachment=force_download,
+        filename=file_management.file_name,
+    )
+
+
+@api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def get_extracted_contents(request, file_id):
     try:
@@ -368,21 +414,47 @@ def get_extracted_contents(request, file_id):
 
     storage_path = file_management.storage_path
     if not storage_path:
-        return Response({"file_id": file_id, "contents": [], "page": 1, "page_size": 0, "total": 0})
+        return Response({
+            "file_id": file_id,
+            "preview_mode": "none",
+            "file_ext": (file_management.file_ext or '').lower(),
+            "contents": [],
+            "page": 1,
+            "page_size": 0,
+            "total": 0
+        })
 
     full_path = os.path.join(settings.MEDIA_ROOT, storage_path)
     if not os.path.exists(full_path):
         return Response({"message": "Stored file not found"}, status=404)
 
     file_ext = (file_management.file_ext or '').lower()
-    if file_ext != 'pdf':
+    if file_ext in {'pdf', 'doc', 'docx'}:
+        preview_url = request.build_absolute_uri(f"/api/upload/{file_id}/preview/")
         return Response({
             "file_id": file_id,
+            "preview_mode": "file",
+            "file_ext": file_ext,
+            "file_name": file_management.file_name,
+            "preview_url": preview_url,
+            "can_inline": file_ext == 'pdf',
             "contents": [],
             "page": 1,
             "page_size": 0,
             "total": 0,
-            "message": "content extraction currently supports pdf only"
+            "message": "file preview mode"
+        })
+
+    if file_ext != 'pdf':
+        return Response({
+            "file_id": file_id,
+            "preview_mode": "none",
+            "file_ext": file_ext,
+            "contents": [],
+            "page": 1,
+            "page_size": 0,
+            "total": 0,
+            "message": "content extraction currently supports pdf/doc/docx preview only"
         })
 
     contents = []
@@ -403,6 +475,8 @@ def get_extracted_contents(request, file_id):
 
     return Response({
         "file_id": file_id,
+        "preview_mode": "text",
+        "file_ext": file_ext,
         "page": paginator.page.number,
         "page_size": paginator.get_page_size(request),
         "total": paginator.page.paginator.count,

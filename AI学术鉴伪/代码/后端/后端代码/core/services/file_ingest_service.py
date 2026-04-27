@@ -20,6 +20,7 @@ class FileIngestService:
     _schema_checked = False
     _table_columns_cache = {}
     _column_type_cache = {}
+    _column_length_cache = {}
 
     @staticmethod
     def _table_exists(table_name: str) -> bool:
@@ -113,6 +114,50 @@ class FileIngestService:
         return normalized
 
     @staticmethod
+    def _get_column_max_length(table_name: str, column_name: str):
+        cache_key = (table_name, column_name)
+        if cache_key in FileIngestService._column_length_cache:
+            return FileIngestService._column_length_cache[cache_key]
+
+        if not FileIngestService._table_exists(table_name):
+            FileIngestService._column_length_cache[cache_key] = None
+            return None
+
+        vendor = connection.vendor
+        max_length = None
+        with connection.cursor() as cursor:
+            if vendor == 'mysql':
+                cursor.execute(
+                    """
+                    SELECT CHARACTER_MAXIMUM_LENGTH
+                    FROM information_schema.columns
+                    WHERE table_schema = DATABASE() AND table_name = %s AND column_name = %s
+                    """,
+                    [table_name, column_name],
+                )
+                row = cursor.fetchone()
+                if row and row[0]:
+                    max_length = int(row[0])
+            elif vendor == 'sqlite':
+                # SQLite 对 varchar(n) 长度通常不强约束，这里不做截断限制
+                max_length = None
+            else:
+                cursor.execute(
+                    """
+                    SELECT character_maximum_length
+                    FROM information_schema.columns
+                    WHERE table_name = %s AND column_name = %s
+                    """,
+                    [table_name, column_name],
+                )
+                row = cursor.fetchone()
+                if row and row[0]:
+                    max_length = int(row[0])
+
+        FileIngestService._column_length_cache[cache_key] = max_length
+        return max_length
+
+    @staticmethod
     def _normalize_resource_role_for_column(table_name: str, column_name: str, value):
         if value is None:
             return value
@@ -158,6 +203,13 @@ class FileIngestService:
                         column_name,
                         value,
                     )
+
+                # 对实际存在长度限制的字符串列做截断，避免 Data too long 错误。
+                if isinstance(normalized_value, str):
+                    max_length = FileIngestService._get_column_max_length(table_name, column_name)
+                    if max_length and len(normalized_value) > max_length:
+                        normalized_value = normalized_value[:max_length]
+
                 picked[key] = normalized_value
 
         return picked
@@ -276,6 +328,7 @@ class FileIngestService:
             # 强制失效列缓存，避免本次启动期间仍读取旧结构
             FileIngestService._table_columns_cache = {}
             FileIngestService._column_type_cache = {}
+            FileIngestService._column_length_cache = {}
         FileIngestService._schema_checked = True
 
     @staticmethod

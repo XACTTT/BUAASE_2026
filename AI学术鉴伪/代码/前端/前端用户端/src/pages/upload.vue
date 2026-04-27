@@ -170,13 +170,19 @@
             <v-card>
               <v-card-text class="text-center">
                 <div v-if="selectedModule !== 'multi'">
+                  <input
+                    type="file"
+                    ref="fileInput"
+                    style="display: none"
+                    @change="handleFileSelect"
+                    :accept="currentModule.acceptAttr"
+                    multiple
+                  >
                   <div v-if="!selectedFiles.length" class="upload-area pa-8" @dragover.prevent @drop.prevent="handleDrop"
                     @click="triggerFileInput()">
                     <v-icon size="64" color="grey">mdi-cloud-upload</v-icon>
                     <div class="text-h6 mt-4">点击或拖拽{{ currentModule.label }}文件到此处上传</div>
                     <div class="text-caption text-grey">支持格式：{{ currentModule.acceptText }}，单个文件不超过{{ currentModule.maxSizeMB }}MB</div>
-                    <input type="file" ref="fileInput" style="display: none" @change="handleFileSelect"
-                      :accept="currentModule.acceptAttr" multiple>
                   </div>
                   <div v-else class="file-preview pa-4">
                     <div class="text-subtitle-1 mb-3">已选择 {{ selectedFiles.length }} 个文件</div>
@@ -207,7 +213,8 @@
                         </v-card>
                       </v-col>
                     </v-row>
-                    <div class="d-flex justify-end mt-2">
+                    <div class="d-flex justify-end ga-2 mt-2">
+                      <v-btn variant="tonal" color="primary" @click="triggerFileInput()">继续上传</v-btn>
                       <v-btn variant="text" color="error" @click="selectedFiles = []">清空全部</v-btn>
                     </div>
                   </div>
@@ -223,6 +230,14 @@
                     >
                       <v-card variant="outlined" class="h-100 pa-2">
                         <div class="text-subtitle-1 font-weight-medium mb-2">{{ uploadCategory.label }}上传区</div>
+                        <input
+                          :ref="el => setCategoryInputRef(uploadCategory.key, el as HTMLInputElement | null)"
+                          type="file"
+                          style="display: none"
+                          :accept="uploadCategory.acceptAttr"
+                          multiple
+                          @change="handleCategoryFileSelect(uploadCategory.key, $event)"
+                        >
                         <div
                           v-if="!multiSelectedFiles[uploadCategory.key].length"
                           class="upload-area pa-6"
@@ -235,14 +250,6 @@
                           <div class="text-caption text-grey">
                             {{ uploadCategory.acceptText }}，≤{{ uploadCategory.maxSizeMB }}MB
                           </div>
-                          <input
-                            :ref="el => setCategoryInputRef(uploadCategory.key, el as HTMLInputElement | null)"
-                            type="file"
-                            style="display: none"
-                            :accept="uploadCategory.acceptAttr"
-                            multiple
-                            @change="handleCategoryFileSelect(uploadCategory.key, $event)"
-                          >
                         </div>
 
                         <div v-else class="file-preview pa-3">
@@ -270,7 +277,8 @@
                               </v-card>
                             </v-col>
                           </v-row>
-                          <div class="d-flex justify-end mt-1">
+                          <div class="d-flex justify-end ga-2 mt-1">
+                            <v-btn variant="tonal" color="primary" size="small" @click="triggerFileInput(uploadCategory.key)">继续上传</v-btn>
                             <v-btn variant="text" color="error" size="small" @click="clearCategoryFiles(uploadCategory.key)">清空</v-btn>
                           </div>
                         </div>
@@ -353,6 +361,7 @@
         <ExtractedContentStep
           v-if="fileId && selectedModule === 'paper'"
           :fileId="fileId"
+          :fileIds="fileIds"
           contentType="paper"
           moduleLabel="论文"
           @tagChanged="handleSelectedTag"
@@ -362,6 +371,7 @@
         <ExtractedContentStep
           v-if="fileId && selectedModule === 'review'"
           :fileId="fileId"
+          :fileIds="fileIds"
           contentType="review"
           moduleLabel="Review"
           @tagChanged="handleSelectedTag"
@@ -407,6 +417,7 @@
             <v-card-text>
               <ExtractedContentStep
                 :fileId="fileId"
+                :fileIds="fileIds"
                 contentType="paper"
                 moduleLabel="论文"
                 :showMetaControls="false"
@@ -419,6 +430,7 @@
             <v-card-text>
               <ExtractedContentStep
                 :fileId="fileId"
+                :fileIds="fileIds"
                 contentType="review"
                 moduleLabel="Review"
                 :showMetaControls="false"
@@ -623,7 +635,16 @@ const processIncomingFiles = (files: File[]) => {
   })
 
   if (validFiles.length > 0) {
-    selectedFiles.value = validFiles
+    const existing = new Set(selectedFiles.value.map(file => `${file.name}_${file.lastModified}_${file.size}`))
+    const toAppend = validFiles.filter(file => {
+      const key = `${file.name}_${file.lastModified}_${file.size}`
+      if (existing.has(key)) {
+        return false
+      }
+      existing.add(key)
+      return true
+    })
+    selectedFiles.value = [...selectedFiles.value, ...toAppend]
   }
 
   if (invalidFiles.length > 0) {
@@ -655,7 +676,18 @@ const processCategoryIncomingFiles = (category: UploadCategoryKey, files: File[]
   })
 
   if (validFiles.length > 0) {
-    multiSelectedFiles.value[category] = validFiles
+    const existing = new Set(
+      multiSelectedFiles.value[category].map(file => `${file.name}_${file.lastModified}_${file.size}`)
+    )
+    const toAppend = validFiles.filter(file => {
+      const key = `${file.name}_${file.lastModified}_${file.size}`
+      if (existing.has(key)) {
+        return false
+      }
+      existing.add(key)
+      return true
+    })
+    multiSelectedFiles.value[category] = [...multiSelectedFiles.value[category], ...toAppend]
   }
 
   if (invalidFiles.length > 0) {
