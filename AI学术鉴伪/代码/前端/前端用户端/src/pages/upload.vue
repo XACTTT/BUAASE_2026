@@ -169,36 +169,122 @@
           <v-col cols="12">
             <v-card>
               <v-card-text class="text-center">
-                <div v-if="!selectedFiles.length" class="upload-area pa-8" @dragover.prevent @drop.prevent="handleDrop"
-                  @click="triggerFileInput">
-                  <v-icon size="64" color="grey">mdi-cloud-upload</v-icon>
-                  <div class="text-h6 mt-4">点击或拖拽{{ currentModule.label }}文件到此处上传</div>
-                  <div class="text-caption text-grey">支持格式：{{ currentModule.acceptText }}，单个文件不超过{{ currentModule.maxSizeMB }}MB</div>
-                  <input type="file" ref="fileInput" style="display: none" @change="handleFileSelect"
-                    :accept="currentModule.acceptAttr" multiple>
-                </div>
-                <div v-else class="file-preview pa-4">
-                  <div class="text-subtitle-1 mb-3">已选择 {{ selectedFiles.length }} 个文件</div>
-                  <v-row>
-                    <v-col v-for="(file, index) in selectedFiles" :key="`${file.name}-${file.lastModified}`" cols="12" md="6">
-                      <v-card class="h-100">
-                        <v-card-text class="d-flex align-center">
-                          <v-icon size="48" color="primary" class="mr-4">mdi-file</v-icon>
-                          <div>
-                            <div class="text-h6">{{ file.name }}</div>
-                            <div class="text-caption text-grey">
+                <div v-if="selectedModule !== 'multi'">
+                  <input
+                    type="file"
+                    ref="fileInput"
+                    style="display: none"
+                    @change="handleFileSelect"
+                    :accept="currentModule.acceptAttr"
+                    multiple
+                  >
+                  <div v-if="!selectedFiles.length" class="upload-area pa-8" @dragover.prevent @drop.prevent="handleDrop"
+                    @click="triggerFileInput()">
+                    <v-icon size="64" color="grey">mdi-cloud-upload</v-icon>
+                    <div class="text-h6 mt-4">点击或拖拽{{ currentModule.label }}文件到此处上传</div>
+                    <div class="text-caption text-grey">支持格式：{{ currentModule.acceptText }}，单个文件不超过{{ currentModule.maxSizeMB }}MB</div>
+                  </div>
+                  <div v-else class="file-preview pa-4">
+                    <div class="text-subtitle-1 mb-3">已选择 {{ selectedFiles.length }} 个文件</div>
+                    <v-row dense>
+                      <v-col
+                        v-for="(file, index) in selectedFiles"
+                        :key="`${file.name}-${file.lastModified}`"
+                        cols="12"
+                        sm="6"
+                        md="4"
+                        lg="3"
+                      >
+                        <v-card class="h-100 file-item-card">
+                          <v-btn
+                            class="file-remove-btn"
+                            icon="mdi-close"
+                            variant="text"
+                            size="small"
+                            @click="removeSelectedFile(index)"
+                          ></v-btn>
+                          <v-card-text class="file-item-content">
+                            <v-icon size="40" color="primary" class="mb-2">mdi-file</v-icon>
+                            <div class="file-name text-body-2 font-weight-medium">{{ file.name }}</div>
+                            <div class="text-caption text-grey mt-1">
                               {{ formatFileSize(file.size) }}
                             </div>
+                          </v-card-text>
+                        </v-card>
+                      </v-col>
+                    </v-row>
+                    <div class="d-flex justify-end ga-2 mt-2">
+                      <v-btn variant="tonal" color="primary" @click="triggerFileInput()">继续上传</v-btn>
+                      <v-btn variant="text" color="error" @click="selectedFiles = []">清空全部</v-btn>
+                    </div>
+                  </div>
+                </div>
+
+                <div v-else>
+                  <v-row dense>
+                    <v-col
+                      v-for="uploadCategory in multiUploadCategories"
+                      :key="uploadCategory.key"
+                      cols="12"
+                      md="4"
+                    >
+                      <v-card variant="outlined" class="h-100 pa-2">
+                        <div class="text-subtitle-1 font-weight-medium mb-2">{{ uploadCategory.label }}上传区</div>
+                        <input
+                          :ref="el => setCategoryInputRef(uploadCategory.key, el as HTMLInputElement | null)"
+                          type="file"
+                          style="display: none"
+                          :accept="uploadCategory.acceptAttr"
+                          multiple
+                          @change="handleCategoryFileSelect(uploadCategory.key, $event)"
+                        >
+                        <div
+                          v-if="!multiSelectedFiles[uploadCategory.key].length"
+                          class="upload-area pa-6"
+                          @dragover.prevent
+                          @drop.prevent="handleCategoryDrop(uploadCategory.key, $event)"
+                          @click="triggerFileInput(uploadCategory.key)"
+                        >
+                          <v-icon size="42" color="grey">mdi-cloud-upload</v-icon>
+                          <div class="text-body-1 mt-2">点击或拖拽{{ uploadCategory.label }}文件上传</div>
+                          <div class="text-caption text-grey">
+                            {{ uploadCategory.acceptText }}，≤{{ uploadCategory.maxSizeMB }}MB
                           </div>
-                          <v-spacer></v-spacer>
-                          <v-btn icon="mdi-close" variant="text" @click="removeSelectedFile(index)"></v-btn>
-                        </v-card-text>
+                        </div>
+
+                        <div v-else class="file-preview pa-3">
+                          <div class="text-body-2 mb-2">已选择 {{ multiSelectedFiles[uploadCategory.key].length }} 个文件</div>
+                          <v-row dense>
+                            <v-col
+                              v-for="(file, index) in multiSelectedFiles[uploadCategory.key]"
+                              :key="`${uploadCategory.key}-${file.name}-${file.lastModified}`"
+                              cols="12"
+                              sm="6"
+                            >
+                              <v-card class="h-100 file-item-card file-item-card-compact">
+                                <v-btn
+                                  class="file-remove-btn"
+                                  icon="mdi-close"
+                                  variant="text"
+                                  size="x-small"
+                                  @click="removeCategoryFile(uploadCategory.key, index)"
+                                ></v-btn>
+                                <v-card-text class="file-item-content file-item-content-compact">
+                                  <v-icon size="30" color="primary" class="mb-1">mdi-file</v-icon>
+                                  <div class="file-name text-caption font-weight-medium">{{ file.name }}</div>
+                                  <div class="text-caption text-grey mt-1">{{ formatFileSize(file.size) }}</div>
+                                </v-card-text>
+                              </v-card>
+                            </v-col>
+                          </v-row>
+                          <div class="d-flex justify-end ga-2 mt-1">
+                            <v-btn variant="tonal" color="primary" size="small" @click="triggerFileInput(uploadCategory.key)">继续上传</v-btn>
+                            <v-btn variant="text" color="error" size="small" @click="clearCategoryFiles(uploadCategory.key)">清空</v-btn>
+                          </div>
+                        </div>
                       </v-card>
                     </v-col>
                   </v-row>
-                  <div class="d-flex justify-end mt-2">
-                    <v-btn variant="text" color="error" @click="selectedFiles = []">清空全部</v-btn>
-                  </div>
                 </div>
               </v-card-text>
             </v-card>
@@ -267,6 +353,8 @@
         <ImageSelectionStep
           v-if="fileId && selectedModule === 'image'"
           :fileId="fileId"
+          :fileIds="fileIds"
+          :batchId="currentBatchId"
           @tagChanged="handleSelectedTag"
           @add-name="handleName"
         />
@@ -274,6 +362,7 @@
         <ExtractedContentStep
           v-if="fileId && selectedModule === 'paper'"
           :fileId="fileId"
+          :fileIds="fileIds"
           contentType="paper"
           moduleLabel="论文"
           @tagChanged="handleSelectedTag"
@@ -283,6 +372,7 @@
         <ExtractedContentStep
           v-if="fileId && selectedModule === 'review'"
           :fileId="fileId"
+          :fileIds="fileIds"
           contentType="review"
           moduleLabel="Review"
           @tagChanged="handleSelectedTag"
@@ -317,6 +407,8 @@
             <v-card-text>
               <ImageSelectionStep
                 :fileId="fileId"
+                :fileIds="fileIds"
+                :batchId="currentBatchId"
                 :showMetaControls="false"
               />
             </v-card-text>
@@ -327,6 +419,7 @@
             <v-card-text>
               <ExtractedContentStep
                 :fileId="fileId"
+                :fileIds="fileIds"
                 contentType="paper"
                 moduleLabel="论文"
                 :showMetaControls="false"
@@ -339,6 +432,7 @@
             <v-card-text>
               <ExtractedContentStep
                 :fileId="fileId"
+                :fileIds="fileIds"
                 contentType="review"
                 moduleLabel="Review"
                 :showMetaControls="false"
@@ -371,6 +465,7 @@ import axios from 'axios'
 const router = useRouter()
 const selectedVersion = ref<1 | 2 | 3 | null>(null)
 type ModuleKey = 'image' | 'paper' | 'review' | 'multi'
+type UploadCategoryKey = 'image' | 'paper' | 'review'
 
 interface UploadModule {
   key: ModuleKey
@@ -389,44 +484,44 @@ const uploadModules: UploadModule[] = [
     key: 'image',
     label: '图片检测',
     hint: '适用于单图或图集的AI造假识别。',
-    acceptText: 'JPG、JPEG、PNG、PDF、ZIP',
-    acceptAttr: '.jpg,.jpeg,.png,.pdf,.zip',
+    acceptText: 'JPG、PNG、PDF',
+    acceptAttr: '.jpg,.png,.pdf',
     basicFormat: 'JPG/PNG',
-    proFormat: 'JPG/PNG/PDF/ZIP',
-    allowedExtensions: ['jpg', 'jpeg', 'png', 'pdf', 'zip'],
+    proFormat: 'JPG/PNG/PDF',
+    allowedExtensions: ['jpg', 'png'],
     maxSizeMB: 100
   },
   {
     key: 'paper',
     label: '论文检测',
     hint: '适用于论文文档中的图文一致性与可疑内容分析。',
-    acceptText: 'PDF、DOC、DOCX、TXT、ZIP',
-    acceptAttr: '.pdf,.doc,.docx,.txt,.zip',
+    acceptText: 'PDF、DOC、DOCX、TXT',
+    acceptAttr: '.pdf,.doc,.docx,.txt',
     basicFormat: 'PDF/DOCX',
-    proFormat: 'PDF/DOC/DOCX/TXT/ZIP',
-    allowedExtensions: ['pdf', 'doc', 'docx', 'txt', 'zip'],
+    proFormat: 'PDF/DOC/DOCX/TXT',
+    allowedExtensions: ['pdf', 'doc', 'docx', 'txt'],
     maxSizeMB: 100
   },
   {
     key: 'review',
     label: 'Review检测',
     hint: '适用于审稿材料的Review质量与引用风险辅助评估。',
-    acceptText: 'PDF、DOC、DOCX、TXT、ZIP',
-    acceptAttr: '.pdf,.doc,.docx,.txt,.zip',
+    acceptText: 'PDF、DOC、DOCX、TXT',
+    acceptAttr: '.pdf,.doc,.docx,.txt',
     basicFormat: 'PDF/TXT',
-    proFormat: 'PDF/DOC/DOCX/TXT/ZIP',
-    allowedExtensions: ['pdf', 'doc', 'docx', 'txt', 'zip'],
+    proFormat: 'PDF/DOC/DOCX/TXT',
+    allowedExtensions: ['pdf', 'doc', 'docx', 'txt'],
     maxSizeMB: 100
   },
   {
     key: 'multi',
     label: '多材料综合检测',
     hint: '适用于图片、论文、补充材料联合分析。',
-    acceptText: 'JPG、JPEG、PNG、PDF、DOC、DOCX、TXT、ZIP',
-    acceptAttr: '.jpg,.jpeg,.png,.pdf,.doc,.docx,.txt,.zip',
+    acceptText: 'JPG、PNG、PDF、DOC、DOCX、TXT',
+    acceptAttr: '.jpg,.png,.pdf,.doc,.docx,.txt',
     basicFormat: 'JPG/PDF/DOCX',
     proFormat: '全格式',
-    allowedExtensions: ['jpg', 'jpeg', 'png', 'pdf', 'doc', 'docx', 'txt', 'zip'],
+    allowedExtensions: ['jpg', 'png', 'pdf', 'doc', 'docx', 'txt'],
     maxSizeMB: 100
   }
 ]
@@ -434,9 +529,52 @@ const uploadModules: UploadModule[] = [
 const selectedModule = ref<ModuleKey>('image')
 const currentModule = computed(() => uploadModules.find(module => module.key === selectedModule.value) ?? uploadModules[0])
 
+const getModuleConfig = (key: UploadCategoryKey) => {
+  return uploadModules.find(module => module.key === key) ?? uploadModules[0]
+}
+
+const multiUploadCategories = computed(() => ([
+  {
+    key: 'image' as UploadCategoryKey,
+    label: '图片',
+    acceptText: getModuleConfig('image').acceptText,
+    acceptAttr: getModuleConfig('image').acceptAttr,
+    maxSizeMB: getModuleConfig('image').maxSizeMB,
+    allowedExtensions: getModuleConfig('image').allowedExtensions
+  },
+  {
+    key: 'paper' as UploadCategoryKey,
+    label: '论文',
+    acceptText: getModuleConfig('paper').acceptText,
+    acceptAttr: getModuleConfig('paper').acceptAttr,
+    maxSizeMB: getModuleConfig('paper').maxSizeMB,
+    allowedExtensions: getModuleConfig('paper').allowedExtensions
+  },
+  {
+    key: 'review' as UploadCategoryKey,
+    label: 'Review',
+    acceptText: getModuleConfig('review').acceptText,
+    acceptAttr: getModuleConfig('review').acceptAttr,
+    maxSizeMB: getModuleConfig('review').maxSizeMB,
+    allowedExtensions: getModuleConfig('review').allowedExtensions
+  }
+]))
+
 const fileInput = ref<HTMLInputElement | null>(null)
 const selectedFiles = ref<File[]>([])
+const multiSelectedFiles = ref<Record<UploadCategoryKey, File[]>>({
+  image: [],
+  paper: [],
+  review: []
+})
+const categoryFileInputs = ref<Record<UploadCategoryKey, HTMLInputElement | null>>({
+  image: null,
+  paper: null,
+  review: null
+})
 const fileId = ref()
+const fileIds = ref<number[]>([])
+const currentBatchId = ref('')
 const loading = ref<boolean>(false)
 const snackbar = useSnackbarStore()
 
@@ -459,8 +597,15 @@ const actionButtonText = computed(() => {
 
 const resetCurrentUploadState = () => {
   selectedFiles.value = []
+  multiSelectedFiles.value = {
+    image: [],
+    paper: [],
+    review: []
+  }
   selectedVersion.value = null
   fileId.value = ''
+  fileIds.value = []
+  currentBatchId.value = ''
   currentTag.value = ''
   currentTaskName.value = ''
 }
@@ -494,12 +639,64 @@ const processIncomingFiles = (files: File[]) => {
   })
 
   if (validFiles.length > 0) {
-    selectedFiles.value = validFiles
+    const existing = new Set(selectedFiles.value.map(file => `${file.name}_${file.lastModified}_${file.size}`))
+    const toAppend = validFiles.filter(file => {
+      const key = `${file.name}_${file.lastModified}_${file.size}`
+      if (existing.has(key)) {
+        return false
+      }
+      existing.add(key)
+      return true
+    })
+    selectedFiles.value = [...selectedFiles.value, ...toAppend]
   }
 
   if (invalidFiles.length > 0) {
     snackbar.showMessage(
       `有 ${invalidFiles.length} 个文件格式不支持或超过 ${currentModule.value.maxSizeMB}MB，已自动忽略`,
+      'warning'
+    )
+  }
+}
+
+const processCategoryIncomingFiles = (category: UploadCategoryKey, files: File[]) => {
+  const categoryConfig = multiUploadCategories.value.find(item => item.key === category)
+  if (!categoryConfig) {
+    return
+  }
+
+  const validFiles: File[] = []
+  const invalidFiles: File[] = []
+
+  files.forEach(file => {
+    const extension = getFileExtension(file.name)
+    const maxSize = categoryConfig.maxSizeMB * 1024 * 1024
+    const isValid = categoryConfig.allowedExtensions.includes(extension) && file.size <= maxSize
+    if (isValid) {
+      validFiles.push(file)
+    } else {
+      invalidFiles.push(file)
+    }
+  })
+
+  if (validFiles.length > 0) {
+    const existing = new Set(
+      multiSelectedFiles.value[category].map(file => `${file.name}_${file.lastModified}_${file.size}`)
+    )
+    const toAppend = validFiles.filter(file => {
+      const key = `${file.name}_${file.lastModified}_${file.size}`
+      if (existing.has(key)) {
+        return false
+      }
+      existing.add(key)
+      return true
+    })
+    multiSelectedFiles.value[category] = [...multiSelectedFiles.value[category], ...toAppend]
+  }
+
+  if (invalidFiles.length > 0) {
+    snackbar.showMessage(
+      `${categoryConfig.label}上传区有 ${invalidFiles.length} 个文件格式不支持或超过 ${categoryConfig.maxSizeMB}MB，已自动忽略`,
       'warning'
     )
   }
@@ -522,8 +719,36 @@ const handleFileSelect = (event: Event) => {
   input.value = ''
 }
 
+const setCategoryInputRef = (category: UploadCategoryKey, element: HTMLInputElement | null) => {
+  categoryFileInputs.value[category] = element
+}
+
+const handleCategoryDrop = (category: UploadCategoryKey, event: DragEvent) => {
+  const files = event.dataTransfer?.files
+  if (files && files.length > 0) {
+    processCategoryIncomingFiles(category, Array.from(files))
+  }
+}
+
+const handleCategoryFileSelect = (category: UploadCategoryKey, event: Event) => {
+  const input = event.target as HTMLInputElement
+  const files = input.files
+  if (files && files.length > 0) {
+    processCategoryIncomingFiles(category, Array.from(files))
+  }
+  input.value = ''
+}
+
 const removeSelectedFile = (index: number) => {
   selectedFiles.value.splice(index, 1)
+}
+
+const removeCategoryFile = (category: UploadCategoryKey, index: number) => {
+  multiSelectedFiles.value[category].splice(index, 1)
+}
+
+const clearCategoryFiles = (category: UploadCategoryKey) => {
+  multiSelectedFiles.value[category] = []
 }
 
 const handleName = async (newName: string) => {
@@ -557,19 +782,62 @@ const handleSubmit = async () => {
   }
 
   if (!selectedFiles.value.length) {
-    snackbar.showMessage('请选择要上传的文件', 'error')
-    return
+    if (selectedModule.value !== 'multi') {
+      snackbar.showMessage('请选择要上传的文件', 'error')
+      return
+    }
+  }
+
+  if (selectedModule.value === 'multi') {
+    const totalFiles =
+      multiSelectedFiles.value.image.length +
+      multiSelectedFiles.value.paper.length +
+      multiSelectedFiles.value.review.length
+    if (totalFiles === 0) {
+      snackbar.showMessage('请在图片、论文、Review上传区至少上传一个文件', 'error')
+      return
+    }
   }
 
   loading.value = true
   try {
+    const generatedBatchId =
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : `batch_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`
+
     const formData = new FormData()
-    selectedFiles.value.forEach(file => {
-      formData.append('file', file)
-    })
+    if (selectedModule.value === 'multi') {
+      ;(['image', 'paper', 'review'] as UploadCategoryKey[]).forEach(category => {
+        multiSelectedFiles.value[category].forEach(file => {
+          formData.append('file', file)
+          formData.append('file_type', category)
+        })
+      })
+    } else {
+      selectedFiles.value.forEach(file => {
+        formData.append('file', file)
+        formData.append('file_type', selectedModule.value)
+      })
+    }
     formData.append('detect_type', selectedModule.value)
+    formData.append('batch_id', generatedBatchId)
     const { data } = await uploadApi.uploadFile(formData)
-    fileId.value = data.file_id
+    const normalizedFileIds = Array.isArray(data.file_ids)
+      ? data.file_ids.map((id: any) => Number(id)).filter((id: number) => Number.isFinite(id) && id > 0)
+      : []
+    if (!normalizedFileIds.length && Number.isFinite(Number(data.file_id)) && Number(data.file_id) > 0) {
+      normalizedFileIds.push(Number(data.file_id))
+    }
+
+    fileIds.value = normalizedFileIds
+    fileId.value = normalizedFileIds[0] ?? ''
+    currentBatchId.value = String(data.batch_id || generatedBatchId)
+
+    if (!fileIds.value.length) {
+      snackbar.showMessage('上传成功但未返回有效文件ID，请稍后重试', 'error')
+      return
+    }
     snackbar.showMessage('文件上传成功，正在处理中...', 'success')
 
     // 获取提取的图片
@@ -598,13 +866,17 @@ const handleSubmit = async () => {
   }
 }
 
-const triggerFileInput = () => {
+const triggerFileInput = (category?: UploadCategoryKey) => {
+  if (category) {
+    categoryFileInputs.value[category]?.click()
+    return
+  }
   fileInput.value?.click()
 }
 
 // 进度页面相关方法
 const canProceed = computed(() => {
-  return !!fileId.value && (!currentTaskName.value || currentTaskName.value.length <= 10)
+  return fileIds.value.length > 0 && (!currentTaskName.value || currentTaskName.value.length <= 10)
 })
 
 const handleTag = async (tag: string) => {
@@ -626,14 +898,24 @@ const handleNext = async () => {
   await handleTag(currentTag.value)
   if (canProceed.value) {
     try {
-      const normalizedFileId = Number(fileId.value)
-      if (!Number.isFinite(normalizedFileId) || normalizedFileId <= 0) {
+      const token = localStorage.getItem('2-token')
+      if (!token) {
+        snackbar.showMessage('登录状态已失效，请重新登录', 'error')
+        router.push('/login')
+        return
+      }
+
+      const normalizedFileIds = fileIds.value
+        .map(id => Number(id))
+        .filter(id => Number.isFinite(id) && id > 0)
+
+      if (!normalizedFileIds.length) {
         snackbar.showMessage('文件ID无效，请重新上传', 'error')
         return
       }
 
       const payload: Record<string, any> = {
-        image_ids: [normalizedFileId],
+        file_ids: normalizedFileIds,
         task_name: currentTaskName.value,
         mode: selectedVersion.value,
         detect_type: selectedModule.value
@@ -694,6 +976,46 @@ const returnToUpload = () => {
   border: 2px solid rgb(var(--v-theme-primary));
   border-radius: 8px;
   background-color: rgba(var(--v-theme-primary), 0.05);
+}
+
+.file-item-card {
+  position: relative;
+  min-height: 140px;
+}
+
+.file-item-content {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  min-height: 140px;
+  padding-right: 28px;
+}
+
+.file-item-card-compact {
+  min-height: 110px;
+}
+
+.file-item-content-compact {
+  min-height: 110px;
+  padding-right: 20px;
+}
+
+.file-remove-btn {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 1;
+}
+
+.file-name {
+  width: 100%;
+  display: -webkit-box;
+  line-clamp: 2;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-all;
 }
 
 .v-btn--loading {

@@ -5,7 +5,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from django.utils import timezone
-from ..models import DetectionResult, ImageUpload, Log, User, DetectionTask
+from ..models import DetectionResult, ImageUpload, Log, User, DetectionTask, FileManagement
 from ..utils.log_utils import action_log
 from django.db.models import Q
 from datetime import datetime
@@ -120,16 +120,75 @@ import time
 def submit_detection2(request):
     submit_time = time.time()
     user_id = request.user.id
-    mode = int(request.data['mode'])
+    mode = int(request.data.get('mode', 1))
     user = User.objects.get(id=user_id)
     organization = user.organization  # 获取用户所属组织
     organization.reset_usage()  # 重置组织内所有用户的共享次数
     if not user.has_permission('submit'):
         return Response({"错误": "该用户没有提交检测的权限"}, status=403)
 
-    # 获取用户提交的图像ID列表
-    image_ids = request.data.get('image_ids', [])
-    image_ids.sort()
+    # 兼容三种提交流程：image_ids（旧）/ file_id / file_ids（新）
+    def _to_int_list(raw_value):
+        if raw_value is None:
+            return []
+
+        if isinstance(raw_value, (list, tuple)):
+            values = raw_value
+        elif isinstance(raw_value, str):
+            stripped = raw_value.strip()
+            if not stripped:
+                return []
+            if stripped.startswith('[') and stripped.endswith(']'):
+                try:
+                    parsed = json.loads(stripped)
+                    values = parsed if isinstance(parsed, list) else [parsed]
+                except json.JSONDecodeError:
+                    values = [item for item in stripped.split(',') if item.strip()]
+            elif ',' in stripped:
+                values = [item for item in stripped.split(',') if item.strip()]
+            else:
+                values = [stripped]
+        else:
+            values = [raw_value]
+
+        normalized = []
+        for item in values:
+            try:
+                normalized.append(int(item))
+            except (TypeError, ValueError):
+                continue
+        return normalized
+
+    image_ids = []
+    if hasattr(request.data, 'getlist'):
+        image_ids.extend(_to_int_list(request.data.getlist('image_ids')))
+    image_ids.extend(_to_int_list(request.data.get('image_ids')))
+
+    # 去重并排序，避免重复提交同一图片
+    image_ids = sorted(set(image_ids))
+
+    image_uploads = ImageUpload.objects.none()
+    resolved_from_file_ids = False
+    if image_ids:
+        image_uploads = ImageUpload.objects.filter(id__in=image_ids, file_management__user=request.user)
+    else:
+        file_ids = []
+        if hasattr(request.data, 'getlist'):
+            file_ids.extend(_to_int_list(request.data.getlist('file_ids')))
+            file_ids.extend(_to_int_list(request.data.getlist('file_id')))
+        file_ids.extend(_to_int_list(request.data.get('file_ids')))
+        file_ids.extend(_to_int_list(request.data.get('file_id')))
+
+        file_ids = sorted(set(file_ids))
+        if file_ids:
+            files_qs = FileManagement.objects.filter(id__in=file_ids, user=request.user)
+            image_uploads = ImageUpload.objects.filter(file_management__in=files_qs, file_management__user=request.user)
+            resolved_from_file_ids = True
+
+    # 无论从哪个入口解析，统一回填最终 image_ids 给后续流程使用
+    resolved_image_ids = sorted(image_uploads.values_list('id', flat=True))
+    if resolved_image_ids:
+        image_ids = resolved_image_ids
     task_name = request.data.get('task_name', 'New Detection Task')  # 从请求中获取任务名称，默认为 "New Detection Task"
 
     # 获取额外的参数
@@ -140,10 +199,9 @@ def submit_detection2(request):
         if_use_llm = True
 
     if not image_ids:
+        if resolved_from_file_ids:
+            return Response({"message": "No valid images found for provided file IDs"}, status=400)
         return Response({"message": "No image IDs provided"}, status=400)
-
-    # 查找用户上传的所有图像
-    image_uploads = ImageUpload.objects.filter(id__in=image_ids, file_management__user=request.user)
 
     # 检验不为空
     if not image_uploads.exists():
