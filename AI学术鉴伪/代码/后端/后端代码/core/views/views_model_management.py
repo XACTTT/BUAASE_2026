@@ -4,11 +4,44 @@ from urllib import request as url_request
 
 from django.utils import timezone
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAdminUser
+from rest_framework.permissions import IsAdminUser, IsAuthenticated
 from rest_framework.response import Response
 
-from core.models import AIModelSource, OrganizationModelConfig, ProviderModel, User
+from core.models import AIModelSource, LLMAnalysisRun, OrganizationModelConfig, ProviderModel, User
+from core.services.llm_service import build_chat_completion_payload, call_openai_compatible_chat
 from ..utils.log_utils import action_log
+
+
+STAGE_PROMPT_TEMPLATES = {
+    'paper': (
+        '你是学术鉴伪分析助手。请结合论文正文与元数据，输出结构化 JSON。'
+        '字段包含：summary、risk_level、evidence、suspicious_patterns、recommendations、confidence。'
+    ),
+    'review': (
+        '你是学术鉴伪分析助手。请分析评审意见文本的可疑性与一致性，输出结构化 JSON。'
+        '字段包含：summary、risk_level、signals、consistency_issues、recommendations、confidence。'
+    ),
+    'image': (
+        '你是图像鉴伪分析助手。请基于检测结果与图像信息输出结构化 JSON。'
+        '字段包含：summary、risk_level、manipulation_signals、mask_hints、recommendations、confidence。'
+    ),
+    'multi_material': (
+        '你是学术鉴伪分析助手。请综合论文、评审与图像等多材料信息，输出结构化 JSON。'
+        '字段包含：summary、risk_level、cross_checks、mismatches、recommendations、confidence。'
+    ),
+    'merge': (
+        '你是学术鉴伪分析助手。请综合多个阶段分析结果进行汇总，输出结构化 JSON。'
+        '字段包含：summary、risk_level、key_evidence、remaining_questions、recommendations、confidence。'
+    ),
+}
+
+
+def _resolve_stage_prompt(stage: str | None, fallback: str | None) -> str | None:
+    if fallback:
+        return fallback.strip()
+    if not stage:
+        return None
+    return STAGE_PROMPT_TEMPLATES.get(stage)
 
 
 def _is_software_admin(user: User) -> bool:
@@ -459,3 +492,138 @@ def delete_organization_model_config(request, config_id: int):
 
     config.delete()
     return Response({'message': 'Organization model config deleted'})
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def chat_with_ai_model(request):
+    user = request.user
+    if user.organization is None:
+        return Response({'error': 'Organization not found for current user'}, status=400)
+
+    config_id = request.data.get('model_config_id') or request.data.get('config_id')
+    if not config_id:
+        return Response({'error': 'model_config_id is required'}, status=400)
+
+    task_id = request.data.get('task_id')
+    stage = request.data.get('stage')
+    prompt = request.data.get('prompt')
+    input_payload = request.data.get('input_payload') or {}
+
+    try:
+        config = OrganizationModelConfig.objects.select_related(
+            'organization', 'provider_model', 'provider_model__source'
+        ).get(id=config_id)
+    except OrganizationModelConfig.DoesNotExist:
+        return Response({'error': 'Model config not found'}, status=404)
+
+    if config.organization_id != user.organization_id:
+        return Response({'error': 'No permission for this model config'}, status=403)
+
+    if not config.enabled:
+        return Response({'error': 'Model config is disabled'}, status=400)
+
+    provider_model = config.provider_model
+    source = provider_model.source
+
+    if not provider_model.is_active:
+        return Response({'error': 'Provider model is inactive'}, status=400)
+    if source.status != 'active':
+        return Response({'error': 'Model source is inactive'}, status=400)
+
+    messages = request.data.get('messages')
+    if not isinstance(messages, list) or not messages:
+        return Response({'error': 'messages must be a non-empty list'}, status=400)
+
+    for message in messages:
+        if not isinstance(message, dict):
+            return Response({'error': 'Each message must be an object'}, status=400)
+        if not message.get('role') or not message.get('content'):
+            return Response({'error': 'Each message must include role and content'}, status=400)
+
+    stage_prompt = _resolve_stage_prompt(stage, prompt)
+    if stage_prompt:
+        messages = [{'role': 'system', 'content': stage_prompt}, *messages]
+
+    if input_payload:
+        try:
+            payload_text = json.dumps(input_payload, ensure_ascii=False, indent=2)
+        except (TypeError, ValueError):
+            payload_text = str(input_payload)
+        messages = [*messages, {'role': 'user', 'content': f'input_payload:\n{payload_text}'}]
+
+    response_format = request.data.get('response_format')
+    if isinstance(response_format, str):
+        response_format = {'type': response_format}
+    if response_format is not None and not isinstance(response_format, dict):
+        return Response({'error': 'response_format must be a string or object'}, status=400)
+
+    payload = build_chat_completion_payload(
+        model=provider_model.model_id,
+        messages=messages,
+        temperature=float(config.temperature),
+        top_p=float(config.top_p),
+        max_tokens=int(config.max_tokens),
+        response_format=response_format,
+    )
+
+    run_record = None
+    if task_id:
+        run_record = LLMAnalysisRun.objects.create(
+            task_id=task_id,
+            model_config=config,
+            stage=stage,
+            prompt=prompt,
+            messages=messages,
+            input_payload=input_payload if isinstance(input_payload, dict) else {'raw': input_payload},
+            status='pending',
+            created_by=user,
+        )
+
+    try:
+        result = call_openai_compatible_chat(
+            base_url=source.base_url,
+            api_key=source.api_key,
+            payload=payload,
+            timeout=int(source.timeout or 30),
+        )
+    except ConnectionError:
+        if run_record:
+            run_record.status = 'failed'
+            run_record.error_message = 'Model source connection failed'
+            run_record.save(update_fields=['status', 'error_message', 'updated_at'])
+        return Response({'error': 'Model source connection failed'}, status=502)
+    except ValueError as exc:
+        if run_record:
+            run_record.status = 'failed'
+            run_record.error_message = str(exc)
+            run_record.save(update_fields=['status', 'error_message', 'updated_at'])
+        return Response({'error': str(exc)}, status=502)
+
+    content = None
+    try:
+        content = result['choices'][0]['message']['content']
+    except (KeyError, IndexError, TypeError):
+        content = None
+
+    parsed = None
+    if isinstance(content, str):
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError:
+            parsed = None
+
+    if run_record:
+        run_record.status = 'success'
+        run_record.output_text = content
+        if isinstance(parsed, dict):
+            run_record.output_json = parsed
+        run_record.save(update_fields=['status', 'output_text', 'output_json', 'updated_at'])
+
+    return Response({
+        'message': 'ok',
+        'content': content,
+        'parsed': parsed,
+        'raw': result,
+        'run_id': run_record.id if run_record else None,
+    })

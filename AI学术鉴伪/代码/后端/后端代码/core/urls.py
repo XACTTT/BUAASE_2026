@@ -9,6 +9,7 @@ from .views import views_review, views_organization
 from .views import views_admin
 from .views import views_notify
 from .views import views_model_management
+from .views import views_chat_test
 from django.urls import path
 from .views.views_admin import (
     AdminDashboardView,
@@ -114,6 +115,8 @@ urlpatterns = [
     path('admin/models/<int:source_id>/configs/add/', views_model_management.add_organization_model_config, name='add_organization_model_config'),
     path('admin/models/configs/<int:config_id>/update/', views_model_management.update_organization_model_config, name='update_organization_model_config'),
     path('admin/models/configs/<int:config_id>/delete/', views_model_management.delete_organization_model_config, name='delete_organization_model_config'),
+    path('admin/models/chat/', views_model_management.chat_with_ai_model, name='chat_with_ai_model'),
+    path('admin/models/chat-upload/', views_chat_test.upload_chat_test_files, name='chat_test_upload_files'),
     path('admin/resources/', views_admin.admin_resources, name='admin_resources'),
     path('admin/resources/<int:resource_id>/', views_admin.admin_resource_detail, name='admin_resource_detail'),
     path('manage-associations/', views_admin.add_reviewer_to_publisher),
