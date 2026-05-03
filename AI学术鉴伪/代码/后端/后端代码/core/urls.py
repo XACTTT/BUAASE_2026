@@ -75,11 +75,14 @@ urlpatterns = [
     path('resource-containers/<int:container_id>/materials-summary/', resource_container_materials_summary, name='resource_container_materials_summary'),
     # 图片检测相关的URL
     path('detection/<int:image_id>/', get_detection_result, name='image_detection'),
+    path('detection/text/<int:resource_id>/', get_text_detection_result, name='text_detection'), # 新增：文本检测结果查询
     path('detection/submit/', submit_detection2, name='submit_detection'),
+    path('detection/submit_text/', submit_text_detection, name='submit_text_detection'), # 新增：文本检测提交接口
     path("tasks/<int:task_id>/report/", download_task_report, name="download-task-report"),
     path("tasks_image/<int:image_id>/report/", download_image_report, name="download-image-report"),
     path("tasks_image/<int:image_id>/getdr/", image2dr, name="image2dr"),
     path("tasks/<int:task_id>/results/",   list_task_results,        name="task-results"),
+    path("tasks/<int:task_id>/text_results/", get_task_text_results, name="task-text-results"), # 新增：任务维度文本检测结果列表
     path("results/<int:result_id>/",       detection_result_detail,  name="result-detail"),
     path("results_image/<int:image_id>/", detection_result_by_image, name="result-image"),
     path("tasks/<int:task_id>/fake_results/", list_fake_task_results, name="fake-results"),

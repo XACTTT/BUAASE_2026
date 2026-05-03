@@ -41,7 +41,8 @@ def get_detection_result(request, image_id):
 
 
 from ..tasks import run_ai_detection, run_ai_detection_batch
-from ..tasks_new import fetch_batch
+from ..tasks_new import fetch_batch, process_text_detection_task
+from ..models import ReviewTextResource, TextDetectionResult
 
 
 # @api_view(['POST'])
@@ -247,7 +248,7 @@ def submit_detection2(request):
         dr.save(update_fields=['status'])
         detection_results.append(dr)
 
-    # ----② 20 张一批，写 zip & 调 Celery ---------------
+    # ----② 20 张一批，调 Celery 异步处理打包和检测 ---------------
     # views.py 片段（其余保持不变）
     temp_root = Path(settings.MEDIA_ROOT) / 'temp'
     temp_root.mkdir(parents=True, exist_ok=True)
@@ -258,58 +259,221 @@ def submit_detection2(request):
 
         # ——— ① 为该批创建专属子目录 temp/task_<task_id>_batch_<n>/ ———
         batch_dir = temp_root / f"task_{detection_task.id}_batch_{idx // batch_size}"
-        batch_dir.mkdir(parents=True, exist_ok=True)
+        # 不再在此处进行同步的文件写入(zip和json)，转移到 Celery 任务 fetch_batch 中执行
 
-        zip_path = batch_dir / "img.zip"  # 固定文件名
-        json_path = batch_dir / "data.json"  # 固定文件名
-
-        # ——— ② 写 img.zip ———
-        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-            # 先排序，根据 image_upload.id 的整数值排序
-            sorted_drs = sorted(batch_drs, key=lambda dr: dr.image_upload.id)
-
-            for dr in sorted_drs:
-                src = dr.image_upload.image.path
-                arcname = f"{int(dr.image_upload.id):08d}{Path(src).suffix}"
-                zf.write(src, arcname=arcname)
-            # for dr in batch_drs:
-            #     src = dr.image_upload.image.path
-            #     arcname = f"{dr.image_upload.id}{Path(src).suffix}"
-            #     zf.write(src, arcname=arcname)
-
-        # ——— ③ 写 data.json ———
-        with open(json_path, "w", encoding="utf-8") as f:
-            json.dump(
-                {"cmd_block_size": cmd_block_size, "urn_k": urn_k, "if_use_llm": if_use_llm},
-                f, ensure_ascii=False, indent=4
-            )
-
-        # ——— ④ 调 Celery ———
+        # ——— ② 调 Celery ———
         celery_time = time.time()
         print('从提交到调用celery耗时', celery_time - submit_time)
-        # run_ai_detection_batch.delay(
-        #     [dr.id for dr in batch_drs],
-        #     str(batch_dir),  # 只传目录，任务里再拼 img.zip/data.json
-        #     len(image_ids)
-        # )
+
         if mode == 2:  # 加急
             pri = 0
         else:
             pri = 1
         fetch_batch.apply_async(
-            args=[[dr.id for dr in batch_drs], str(batch_dir), len(image_ids), detection_task.pk],
+            args=[
+                [dr.id for dr in batch_drs], 
+                str(batch_dir), 
+                len(image_ids), 
+                detection_task.pk,
+                cmd_block_size,
+                urn_k,
+                if_use_llm
+            ],
             queue='ai',
             priority=pri
         )
-        # fetch_batch(
-        #     [dr.id for dr in batch_drs], str(batch_dir), len(image_ids), detection_task.pk
-        # )
 
     return Response({
         "message": "Detection request submitted successfully",
         "task_id": detection_task.id,
         "task_name": detection_task.task_name,
     })
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+@action_log('paper_detect', target_type='DetectionTask', target_id_field='task_id')
+def submit_text_detection(request):
+    """
+    提交文本（全篇论文或 Review）进行鉴伪检测
+    支持传入 resource_ids (ReviewTextResource 的 ID 列表)
+    """
+    user_id = request.user.id
+    user = User.objects.get(id=user_id)
+    if not user.has_permission('submit'):
+        return Response({"错误": "该用户没有提交检测的权限"}, status=403)
+
+    task_name = request.data.get('task_name', 'New Text Detection Task')
+    task_type = request.data.get('task_type', 'paper_text')  # 'paper_text' 或 'review_text'
+    
+    if task_type not in ['paper_text', 'review_text']:
+        return Response({"message": "Invalid task_type. Must be 'paper_text' or 'review_text'"}, status=400)
+
+    # 解析传入的资源 ID 列表
+    def _to_int_list(raw_value):
+        if raw_value is None:
+            return []
+        if isinstance(raw_value, (list, tuple)):
+            values = raw_value
+        elif isinstance(raw_value, str):
+            stripped = raw_value.strip()
+            if not stripped:
+                return []
+            if stripped.startswith('[') and stripped.endswith(']'):
+                try:
+                    parsed = json.loads(stripped)
+                    values = parsed if isinstance(parsed, list) else [parsed]
+                except json.JSONDecodeError:
+                    values = [item for item in stripped.split(',') if item.strip()]
+            elif ',' in stripped:
+                values = [item for item in stripped.split(',') if item.strip()]
+            else:
+                values = [stripped]
+        else:
+            values = [raw_value]
+
+        normalized = []
+        for item in values:
+            try:
+                normalized.append(int(item))
+            except (TypeError, ValueError):
+                continue
+        return normalized
+
+    resource_ids = []
+    if hasattr(request.data, 'getlist'):
+        resource_ids.extend(_to_int_list(request.data.getlist('resource_ids')))
+    resource_ids.extend(_to_int_list(request.data.get('resource_ids')))
+    resource_ids = sorted(set(resource_ids))
+
+    if not resource_ids:
+        return Response({"message": "No resource_ids provided"}, status=400)
+
+    # 验证资源存在并且属于该用户（这里假定容器拥有者是当前用户）
+    text_resources = ReviewTextResource.objects.filter(
+        id__in=resource_ids,
+        container__owner=request.user
+    )
+
+    if not text_resources.exists():
+        return Response({"message": "No valid text resources found"}, status=404)
+
+    # 创建检测任务
+    detection_task = DetectionTask.objects.create(
+        organization=user.organization,
+        user=request.user,
+        task_name=task_name,
+        task_type=task_type,
+        status='pending'
+    )
+
+    # 创建文本检测结果记录
+    text_detection_results = []
+    for tr in text_resources:
+        tdr, _ = TextDetectionResult.objects.get_or_create(
+            text_resource=tr,
+            detection_task=detection_task,
+            defaults={'status': 'in_progress'}
+        )
+        tdr.status = 'in_progress'
+        tdr.save(update_fields=['status'])
+        text_detection_results.append(tdr)
+
+    # 调用 Celery 任务进行异步处理
+    is_review = (task_type == 'review_text')
+    process_text_detection_task.apply_async(
+        args=[
+            [tdr.id for tdr in text_detection_results],
+            detection_task.pk,
+            is_review
+        ],
+        queue='ai'
+    )
+
+    return Response({
+        "message": f"Text detection request ({task_type}) submitted successfully",
+        "task_id": detection_task.id,
+        "task_name": detection_task.task_name,
+        "task_type": detection_task.task_type
+    })
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_text_detection_result(request, resource_id):
+    """
+    获取单个文本资源的检测结果
+    """
+    try:
+        # 获取最新的检测结果
+        tdr = TextDetectionResult.objects.filter(
+            text_resource_id=resource_id,
+            detection_task__user=request.user
+        ).order_by('-detection_time').first()
+
+        if not tdr:
+            return Response({"message": "Detection result not found"}, status=404)
+
+        if tdr.status == 'in_progress':
+            return Response({
+                "resource_id": tdr.text_resource.id,
+                "status": "正在检测中",
+                "message": "大模型文本检测正在进行，请稍等"
+            })
+
+        # 返回检测已完成的数据
+        return Response({
+            "resource_id": tdr.text_resource.id,
+            "status": "检测已完成",
+            "is_fake": tdr.is_fake,
+            "confidence_score": tdr.confidence_score,
+            "ai_generated_paragraphs": tdr.ai_generated_paragraphs,
+            "factual_fake_reason": tdr.factual_fake_reason,
+            "template_tendency_score": tdr.template_tendency_score,
+            "template_analysis_reason": tdr.template_analysis_reason,
+            "detection_time": timezone.localtime(tdr.detection_time) if tdr.detection_time else None
+        })
+
+    except Exception as e:
+        return Response({"message": f"Error: {str(e)}"}, status=500)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_task_text_results(request, task_id):
+    """
+    获取某个检测任务下所有文本的检测结果列表
+    """
+    try:
+        task = DetectionTask.objects.get(id=task_id, user=request.user)
+        
+        if task.task_type not in ['paper_text', 'review_text', 'multi_material']:
+            return Response({"message": "Not a text-related task"}, status=400)
+            
+        results = TextDetectionResult.objects.filter(detection_task=task)
+        
+        data = []
+        for tdr in results:
+            data.append({
+                "result_id": tdr.id,
+                "resource_id": tdr.text_resource.id,
+                "text_type": tdr.text_resource.text_type,
+                "status": tdr.status,
+                "is_fake": tdr.is_fake,
+                "confidence_score": tdr.confidence_score,
+                "detection_time": timezone.localtime(tdr.detection_time) if tdr.detection_time else None
+            })
+            
+        return Response({
+            "task_id": task.id,
+            "task_name": task.task_name,
+            "task_type": task.task_type,
+            "overall_status": task.status,
+            "results": data
+        })
+
+    except DetectionTask.DoesNotExist:
+        return Response({"message": "Task not found"}, status=404)
 
 
 import os
@@ -335,7 +499,7 @@ def download_task_report(request, task_id):
     except DetectionTask.DoesNotExist:
         return Response({"detail": "Task not found."}, status=404)
 
-    if task.status != "completed":
+    if task.status not in ["completed", "partially_completed", "failed"]:
         return Response({"detail": "Task not completed yet."}, status=400)
 
     if not task.report_file:
@@ -391,7 +555,7 @@ def download_image_report(request, image_id):
     task = detection_result.detection_task
 
     # 后续逻辑与原接口一致，检查任务状态和报告文件
-    if task.status != "completed":
+    if task.status not in ["completed", "partially_completed", "failed"]:
         return Response({"detail": "Task not completed yet."}, status=400)
 
     if not task.report_file:

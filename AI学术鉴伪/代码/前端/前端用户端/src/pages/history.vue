@@ -61,10 +61,27 @@
         </template>
 
         <template v-slot:item.status="{ item }">
-          <div class="d-flex justify-center">
-            <v-chip :color="getStatusColor(item.status)" size="small" class="operation-chip">
+          <div class="d-flex flex-column align-center justify-center py-2">
+            <v-chip :color="getStatusColor(item.status)" size="small" class="operation-chip mb-1">
               {{ getStatus(item.status) }}
             </v-chip>
+            <!-- 进度条与ETA信息 -->
+            <div v-if="item.status === 'in_progress' || item.status === 'pending'" style="width: 100%; min-width: 140px;">
+              <v-progress-linear
+                :model-value="item.progress || 0"
+                :color="item.progress === 100 ? 'success' : 'primary'"
+                height="6"
+                rounded
+                striped
+                :indeterminate="item.status === 'pending'"
+              ></v-progress-linear>
+              <div class="d-flex justify-space-between text-caption mt-1" style="font-size: 10px !important;">
+                <span class="text-truncate text-grey" style="max-width: 90px;" :title="item.message || '排队等待中'">
+                  {{ item.message || '排队等待中...' }}
+                </span>
+                <span v-if="item.eta" class="text-primary font-weight-medium">{{ item.eta }}s</span>
+              </div>
+            </div>
           </div>
         </template>
 
@@ -107,7 +124,7 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSnackbarStore } from '@/stores/snackbar'
 import publisher from '@/api/publisher'
@@ -136,7 +153,58 @@ interface Task {
   task_id: string
   upload_time: string
   completion_time: string
-  status: 'pending' | 'in_progress' | 'completed'
+  status: 'pending' | 'in_progress' | 'completed' | 'failed' | 'partially_completed'
+  progress?: number
+  eta?: number
+  message?: string
+}
+
+// 存储任务对应的 WebSocket 实例
+const taskWebSockets = new Map<string, WebSocket>()
+
+// 清理所有 WebSocket 连接
+const clearAllWebSockets = () => {
+  taskWebSockets.forEach(ws => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.close()
+    }
+  })
+  taskWebSockets.clear()
+}
+
+// 建立任务状态监听
+const connectTaskWebSocket = (task: Task) => {
+  if (taskWebSockets.has(task.task_id)) return
+
+  const wsUrl = `ws://122.9.45.122:80/ws/task/${task.task_id}/`
+  const ws = new WebSocket(wsUrl)
+
+  ws.onmessage = (e) => {
+    try {
+      const data = JSON.parse(e.data)
+      // data: { task_id, status, progress, detail, eta }
+      if (data.task_id === task.task_id) {
+        task.status = data.status
+        task.progress = data.progress
+        if (data.detail) task.message = data.detail
+        if (data.eta) task.eta = data.eta
+        
+        // 任务结束，断开连接
+        if (['completed', 'failed', 'partially_completed'].includes(data.status)) {
+          ws.close()
+          taskWebSockets.delete(task.task_id)
+        }
+      }
+    } catch (err) {
+      console.error('任务状态解析失败:', err)
+    }
+  }
+
+  ws.onclose = () => {
+    taskWebSockets.delete(task.task_id)
+  }
+
+  taskWebSockets.set(task.task_id, ws)
 }
 
 // 任务数据
@@ -245,12 +313,24 @@ const fetchTasks = async (page: number, pageSize: number) => {
     const response = await publisher.getAllDetectionTask(params)
     const { tasks: taskList, current_page, total_pages, total_tasks } = response.data
 
-    tasks.value = taskList.map((task: any) => ({
-      task_id: task.task_id,
-      upload_time: task.upload_time,
-      completion_time: task.completion_time,
-      status: task.status
-    }))
+    // 每次重新获取数据前清理旧的 WS 连接
+    clearAllWebSockets()
+
+    tasks.value = taskList.map((task: any) => {
+      const t: Task = {
+        task_id: task.task_id,
+        upload_time: task.upload_time,
+        completion_time: task.completion_time,
+        status: task.status,
+        progress: task.status === 'in_progress' ? 10 : 0, // 初始默认进度
+        message: task.status === 'pending' ? '排队中' : '加载进度中...'
+      }
+      // 为正在进行的任务建立 WebSocket 监听
+      if (['pending', 'in_progress'].includes(t.status)) {
+        connectTaskWebSocket(t)
+      }
+      return t
+    })
 
     currentPage.value = current_page
     totalPages.value = total_pages
@@ -291,6 +371,10 @@ const formatDateFilter = (timestamp: number) => {
 // 初始化
 onMounted(() => {
   fetchTasks(currentPage.value, pageSize.value)
+})
+
+onUnmounted(() => {
+  clearAllWebSockets()
 })
 
 const getStatus = (status: string) => {
