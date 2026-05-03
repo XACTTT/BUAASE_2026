@@ -549,27 +549,20 @@ class FileIngestService:
                 file_management.parse_status = 'parsing'
                 file_management.save(update_fields=['parse_status'])
 
-            if content_type == 'application/pdf' or file_ext == 'pdf':
-                FileIngestService._extract_images_from_pdf(file_management, container, storage_path)
-            elif FileIngestService._is_zip_upload(uploaded_file, content_type, file_ext):
-                FileIngestService._extract_images_from_zip(file_management, container, full_saved_path)
-            elif content_type.startswith('image/') or file_ext in FileIngestService.IMAGE_EXTENSIONS:
-                FileIngestService._store_single_image(
-                    file_management,
-                    container,
-                    full_saved_path,
-                    image_role='figure',
-                    original_ext=file_ext,
-                )
+            is_zip = FileIngestService._is_zip_upload(uploaded_file, content_type, file_ext)
+            
+            # 异步调用文件解析任务
+            from core.tasks import parse_uploaded_file_task
+            parse_uploaded_file_task.delay(
+                file_management.id,
+                container.id if container else None,
+                content_type,
+                file_ext,
+                full_saved_path,
+                storage_path,
+                is_zip
+            )
 
-            if 'parse_status' in file_columns:
-                file_management.parse_status = 'parsed'
-            if 'parse_error' in file_columns:
-                file_management.parse_error = None
-
-            success_fields = [field for field in ('parse_status', 'parse_error') if field in file_columns]
-            if success_fields:
-                file_management.save(update_fields=success_fields)
         except Exception as exc:
             if 'parse_status' in file_columns:
                 file_management.parse_status = 'failed'
@@ -582,10 +575,8 @@ class FileIngestService:
             raise
 
         if container and container.progress_status in ('pending_upload', 'validating', 'parsing'):
-            container.progress_status = 'ready'
-            if container.status == 'draft':
-                container.status = 'uploaded'
-            container.save(update_fields=['progress_status', 'status', 'updated_at'])
+            # 状态更新将由异步任务 parse_uploaded_file_task 完成
+            pass
 
         audit_log(user, 'upload', 'FileManagement', file_management.id)
         audit_log(user, 'file_bind', 'ResourceContainer' if container else 'FileManagement', container.id if container else file_management.id)

@@ -941,17 +941,26 @@ const handleNext = async () => {
         return
       }
 
-      const payload: Record<string, any> = {
-        file_ids: normalizedFileIds,
-        task_name: currentTaskName.value,
-        mode: selectedVersion.value,
-        detect_type: selectedModule.value
+      if (selectedModule.value === 'paper' || selectedModule.value === 'review') {
+        const textPayload: Record<string, any> = {
+          resource_ids: normalizedFileIds,
+          task_name: currentTaskName.value || 'New Text Detection Task',
+          task_type: selectedModule.value === 'paper' ? 'paper_text' : 'review_text'
+        }
+        await publisher.submitTextDetection(textPayload)
+      } else {
+        const payload: Record<string, any> = {
+          file_ids: normalizedFileIds,
+          task_name: currentTaskName.value,
+          mode: selectedVersion.value,
+          detect_type: selectedModule.value
+        }
+        await publisher.submitDetection(payload)
       }
 
-      await publisher.submitDetection(payload)
       router.push(`/history`)
     } catch (error: any) {
-      const message = error?.response?.data?.message || '图片上传失败'
+      const message = error?.response?.data?.message || '任务提交失败'
       snackbar.showMessage(message, 'error')
     }
   }

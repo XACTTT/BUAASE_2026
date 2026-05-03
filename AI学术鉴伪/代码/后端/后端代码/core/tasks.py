@@ -60,6 +60,58 @@ from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 
 
+@shared_task(queue="cpu")
+def parse_uploaded_file_task(file_management_id, container_id, content_type, file_ext, full_saved_path, storage_path, is_zip):
+    from core.services.file_ingest_service import FileIngestService
+    from core.models import FileManagement, ResourceContainer
+    
+    try:
+        file_management = FileManagement.objects.get(id=file_management_id)
+        container = ResourceContainer.objects.get(id=container_id) if container_id else None
+        
+        file_columns = FileIngestService._get_table_columns('core_filemanagement')
+        
+        if content_type == 'application/pdf' or file_ext == 'pdf':
+            FileIngestService._extract_images_from_pdf(file_management, container, storage_path)
+        elif is_zip:
+            FileIngestService._extract_images_from_zip(file_management, container, full_saved_path)
+        elif content_type.startswith('image/') or file_ext in FileIngestService.IMAGE_EXTENSIONS:
+            FileIngestService._store_single_image(
+                file_management,
+                container,
+                full_saved_path,
+                image_role='figure',
+                original_ext=file_ext,
+            )
+
+        if 'parse_status' in file_columns:
+            file_management.parse_status = 'parsed'
+        if 'parse_error' in file_columns:
+            file_management.parse_error = None
+
+        success_fields = [field for field in ('parse_status', 'parse_error') if field in file_columns]
+        if success_fields:
+            file_management.save(update_fields=success_fields)
+            
+        if container and container.progress_status in ('pending_upload', 'validating', 'parsing'):
+            container.progress_status = 'ready'
+            if container.status == 'draft':
+                container.status = 'uploaded'
+            container.save(update_fields=['progress_status', 'status', 'updated_at'])
+            
+    except Exception as exc:
+        file_management = FileManagement.objects.get(id=file_management_id)
+        file_columns = FileIngestService._get_table_columns('core_filemanagement')
+        if 'parse_status' in file_columns:
+            file_management.parse_status = 'failed'
+        if 'parse_error' in file_columns:
+            file_management.parse_error = str(exc)
+
+        failed_fields = [field for field in ('parse_status', 'parse_error') if field in file_columns]
+        if failed_fields:
+            file_management.save(update_fields=failed_fields)
+        raise
+
 @shared_task
 def run_ai_detection(detection_result_id, cmd_block_size=64, urn_k=0.3, if_use_llm=False):
     """单张图片的检测流程"""
@@ -185,6 +237,91 @@ def run_ai_detection(detection_result_id, cmd_block_size=64, urn_k=0.3, if_use_l
     image_upload.isFake = overall_is_fake
     image_upload.isDetect = True
     image_upload.save(update_fields=['isFake', 'isDetect'])
+
+
+@shared_task(queue="cpu")
+def parse_uploaded_file_task(file_management_id, container_id, content_type, file_ext, full_saved_path, storage_path, is_zip):
+    from core.services.file_ingest_service import FileIngestService
+    from core.models import FileManagement, ResourceContainer
+    
+    try:
+        file_management = FileManagement.objects.select_related('user').get(id=file_management_id)
+        container = ResourceContainer.objects.get(id=container_id) if container_id else None
+        
+        file_columns = FileIngestService._get_table_columns('core_filemanagement')
+        
+        if content_type == 'application/pdf' or file_ext == 'pdf':
+            FileIngestService._extract_images_from_pdf(file_management, container, storage_path)
+        elif is_zip:
+            FileIngestService._extract_images_from_zip(file_management, container, full_saved_path)
+        elif content_type.startswith('image/') or file_ext in FileIngestService.IMAGE_EXTENSIONS:
+            FileIngestService._store_single_image(
+                file_management,
+                container,
+                full_saved_path,
+                image_role='figure',
+                original_ext=file_ext,
+            )
+
+        if 'parse_status' in file_columns:
+            file_management.parse_status = 'parsed'
+        if 'parse_error' in file_columns:
+            file_management.parse_error = None
+
+        success_fields = [field for field in ('parse_status', 'parse_error') if field in file_columns]
+        if success_fields:
+            file_management.save(update_fields=success_fields)
+            
+        if container and container.progress_status in ('pending_upload', 'validating', 'parsing'):
+            container.progress_status = 'ready'
+            if container.status == 'draft':
+                container.status = 'uploaded'
+            container.save(update_fields=['progress_status', 'status', 'updated_at'])
+            
+        # WebSocket 通知解析成功
+        channel_layer = get_channel_layer()
+        async_to_sync(channel_layer.group_send)(
+            f"user_{file_management.user.id}_notifications",
+            {
+                'type': 'send_notification',
+                'message': {
+                    'type': 'upload_progress',
+                    'file_id': file_management_id,
+                    'status': 'parsed',
+                    'progress': 100,
+                    'message': '文件解析提取完成'
+                }
+            }
+        )
+        
+    except Exception as exc:
+        file_management = FileManagement.objects.select_related('user').get(id=file_management_id)
+        file_columns = FileIngestService._get_table_columns('core_filemanagement')
+        if 'parse_status' in file_columns:
+            file_management.parse_status = 'failed'
+        if 'parse_error' in file_columns:
+            file_management.parse_error = str(exc)
+
+        failed_fields = [field for field in ('parse_status', 'parse_error') if field in file_columns]
+        if failed_fields:
+            file_management.save(update_fields=failed_fields)
+            
+        # WebSocket 通知解析失败
+        channel_layer = get_channel_layer()
+        async_to_sync(channel_layer.group_send)(
+            f"user_{file_management.user.id}_notifications",
+            {
+                'type': 'send_notification',
+                'message': {
+                    'type': 'upload_progress',
+                    'file_id': file_management_id,
+                    'status': 'failed',
+                    'progress': 0,
+                    'message': f'文件解析失败: {str(exc)}'
+                }
+            }
+        )
+        raise
 
     # ─── 4. 若同一 DetectionTask 全部图片都完成，则标记任务完成 ─────────
     task = dr.detection_task
