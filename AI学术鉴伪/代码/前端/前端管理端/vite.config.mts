@@ -75,7 +75,7 @@ export default defineConfig({
       '/api': {
         target: 'http://116.63.14.7',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, ''),
+        // rewrite: (path) => path.replace(/^\/api/, ''),
       },
     },
     hmr: {
