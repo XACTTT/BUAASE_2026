@@ -100,13 +100,11 @@ const props = withDefaults(defineProps<{
   images?: Image[]
   fileId?: number
   fileIds?: number[]
-  batchId?: string
   showMetaControls?: boolean
 }>(), {
   images: () => [],
   fileId: 0,
   fileIds: () => [],
-  batchId: '',
   showMetaControls: true
 })
 
@@ -142,19 +140,12 @@ const pagedImages = computed(() => {
 
 // 紧凑模式下根据当前页条目数动态调整卡片高度
 const visibleItemCount = computed(() => Math.max(1, Math.min(pagedImages.value.length, itemsPerPage)))
-const panelHeightPx = computed(() => {
-  // 条目区 + 可选分页区；保持上下限，避免过矮或过高
-  const paginationHeight = pageCount.value > 1 ? 64 : 0
-  const estimated = visibleItemCount.value * 84 + paginationHeight
-  return Math.max(320, Math.min(640, estimated))
-})
-
 const thumbnailBodyStyle = computed(() => {
   if (!compactMode.value) {
     return {}
   }
   return {
-    height: `${panelHeightPx.value}px`,
+    maxHeight: `${visibleItemCount.value * 84}px`,
     overflowY: 'auto' as const
   }
 })
@@ -164,7 +155,7 @@ const thumbnailCardStyle = computed(() => {
     return {}
   }
   return {
-    height: `${panelHeightPx.value}px`
+    minHeight: `${visibleItemCount.value * 84}px`
   }
 })
 
@@ -173,7 +164,7 @@ const previewBodyStyle = computed(() => {
     return {}
   }
   return {
-    height: `${panelHeightPx.value}px`
+    minHeight: selectedImage.value ? '320px' : `${visibleItemCount.value * 84}px`
   }
 })
 
@@ -182,7 +173,7 @@ const previewCardStyle = computed(() => {
     return {}
   }
   return {
-    height: `${panelHeightPx.value}px`
+    minHeight: selectedImage.value ? '320px' : `${visibleItemCount.value * 84}px`
   }
 })
 
@@ -215,8 +206,7 @@ const loadImagesForFile = async (targetFileId: number) => {
     const response = (await upload.getExtractedImages({
       file_id: targetFileId,
       page_number: pageNumber,
-      page_size: pageSize.value,
-      batch_id: props.batchId
+      page_size: pageSize.value
     })).data
 
     const fetchedImages = Array.isArray(response.images) ? response.images : []

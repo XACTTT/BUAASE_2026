@@ -845,3 +845,56 @@ class OrganizationModelConfig(models.Model):
 
     def __str__(self):
         return f"{self.organization.name} - {self.provider_model.model_id}"
+
+
+class LLMAnalysisRun(models.Model):
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('success', 'Success'),
+        ('failed', 'Failed'),
+    ]
+
+    task = models.ForeignKey(
+        DetectionTask,
+        on_delete=models.CASCADE,
+        related_name='llm_analysis_runs',
+    )
+    model_config = models.ForeignKey(
+        OrganizationModelConfig,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='analysis_runs',
+    )
+    stage = models.CharField(max_length=80, blank=True, null=True)
+    prompt = models.TextField(blank=True, null=True)
+    messages = models.JSONField(default=list, blank=True)
+    input_payload = models.JSONField(default=dict, blank=True)
+    output_json = models.JSONField(default=dict, blank=True)
+    output_text = models.TextField(blank=True, null=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    error_message = models.TextField(blank=True, null=True)
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='llm_analysis_runs',
+    )
+    created_at = models.DateTimeField(default=timezone.localtime)
+    updated_at = models.DateTimeField(default=timezone.localtime)
+
+    class Meta:
+        db_table = 'llm_analysis_run'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['task', 'created_at']),
+            models.Index(fields=['status', 'created_at']),
+        ]
+
+    def save(self, *args, **kwargs):
+        self.updated_at = timezone.localtime()
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"LLMAnalysisRun {self.id} (task {self.task_id})"

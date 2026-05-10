@@ -199,19 +199,12 @@ const pagedContents = computed(() => {
 
 // 紧凑模式下根据当前页条目数动态调整卡片高度
 const visibleItemCount = computed(() => Math.max(1, Math.min(pagedContents.value.length, itemsPerPage)))
-const panelHeightPx = computed(() => {
-  const previewCount = previewMode.value === 'file' ? Math.max(1, previewFiles.value.length) : visibleItemCount.value
-  const paginationHeight = previewMode.value !== 'file' && pageCount.value > 1 ? 64 : 0
-  const estimated = previewCount * 84 + paginationHeight
-  return Math.max(320, Math.min(640, estimated))
-})
-
 const listBodyStyle = computed(() => {
   if (!compactMode.value) {
     return {}
   }
   return {
-    height: `${panelHeightPx.value}px`
+    maxHeight: `${visibleItemCount.value * 84}px`
   }
 })
 
@@ -227,7 +220,7 @@ const listCardStyle = computed(() => {
     return {}
   }
   return {
-    height: `${panelHeightPx.value}px`
+    minHeight: `${visibleItemCount.value * 84}px`
   }
 })
 
@@ -236,7 +229,7 @@ const previewBodyStyle = computed(() => {
     return {}
   }
   return {
-    height: `${panelHeightPx.value}px`
+    minHeight: activeItem.value ? '320px' : `${visibleItemCount.value * 84}px`
   }
 })
 
@@ -245,7 +238,7 @@ const previewCardStyle = computed(() => {
     return {}
   }
   return {
-    height: `${panelHeightPx.value}px`
+    minHeight: activeItem.value ? '320px' : `${visibleItemCount.value * 84}px`
   }
 })
 

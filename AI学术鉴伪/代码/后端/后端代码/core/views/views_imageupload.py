@@ -87,7 +87,6 @@ def upload_file(request):
         "file_url": first_result["file_url"],
         "container_id": first_result["container_id"],
         "parse_status": first_result["parse_status"],
-        "batch_id": batch_id,
         "file_ids": [item["file_id"] for item in upload_results],
         "files": upload_results,
     })
@@ -279,20 +278,6 @@ def get_extracted_images(request, file_id):
     try:
         # 获取文件对象并验证权限
         file_management = FileManagement.objects.get(id=file_id, user=request.user)
-
-        # 仅在传入 batch_id 时做本次上传隔离，避免混入历史文件。
-        request_batch_id = request.query_params.get('batch_id')
-        if request_batch_id:
-            metadata = file_management.extra_metadata or {}
-            file_batch_id = str(metadata.get('batch_id', '')).strip()
-            if file_batch_id != str(request_batch_id).strip():
-                return Response({
-                    "file_id": file_management.id,
-                    "page": 1,
-                    "page_size": 0,
-                    "total": 0,
-                    "images": []
-                })
 
         # 按图片ID倒序排列（可根据需要改为其他字段如上传时间）
         extracted_images = ImageUpload.objects.filter(
