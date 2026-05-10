@@ -508,6 +508,10 @@ def _run_detection(request_data: Dict[str, Any]) -> Dict[str, Any]:
     raise ValueError(f"unsupported detect_type: {detect_type}")
 
 
+def run_detection(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    return _run_detection(request_data)
+
+
 def main() -> int:
     request_path = _resolve_request_path()
     _print_ready()

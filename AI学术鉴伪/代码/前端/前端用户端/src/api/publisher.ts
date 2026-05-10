@@ -46,6 +46,10 @@ export default {
     return http.get(`/tasks/${data}/results/`)
   },
 
+  getStructuredTaskResult(data: any) {
+    return http.get(`/tasks/${data}/structured-result/`)
+  },
+
   getFakeImage(data: any) {
     return http.get(`/tasks/${data.task_id}/fake_results/?include_image=${data.include_image}`)
   },

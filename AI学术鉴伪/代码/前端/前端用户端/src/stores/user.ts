@@ -14,7 +14,7 @@ interface UserState {
   organization: number
 }
 
-const API_BASE_URL = 'http://122.9.45.122';
+const API_BASE_URL = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000').replace(/\/$/, '');
 
 export const useUserStore = defineStore('user', {
   state: (): UserState => ({
@@ -40,7 +40,7 @@ export const useUserStore = defineStore('user', {
         this.avatar = response.data.avatar ? `${API_BASE_URL}${response.data.avatar}` : './192.png';
         this.isLoaded = true;
         this.id = response.data.id;
-        this.organization = response.data.organizatio
+        this.organization = response.data.organization
         this.organization_name = response.data.organization_name
         return true;
       } catch (error) {
