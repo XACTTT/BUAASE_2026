@@ -105,6 +105,16 @@ export interface UpdateOrganizationModelConfigPayload {
   description?: string
 }
 
+export interface ChatModelPayload {
+  model_config_id: number
+  task_id?: number
+  stage?: string
+  prompt?: string
+  messages: Array<{ role: string; content: string }>
+  input_payload?: Record<string, unknown>
+  response_format?: string | { type: string }
+}
+
 export default {
   listAIModels() {
     return http.get<ListAIModelsResponse>('/admin/models/')
@@ -140,5 +150,10 @@ export default {
 
   deleteOrganizationModelConfig(configId: number) {
     return http.delete(`/admin/models/configs/${configId}/delete/`)
+  },
+
+  chatWithModel(data: ChatModelPayload, timeoutMs?: number) {
+    const config = timeoutMs ? { timeout: timeoutMs } : undefined
+    return http.post('/admin/models/chat/', data, config)
   }
 }

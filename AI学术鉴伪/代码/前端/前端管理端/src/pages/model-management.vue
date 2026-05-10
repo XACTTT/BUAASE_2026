@@ -1,3 +1,4 @@
+<!-- eslint-disable -->
 <template>
   <v-container fluid class="model-management-page">
     <v-row class="mb-6 align-center">
@@ -32,7 +33,6 @@
 
     <v-alert class="mb-6" type="info" variant="tonal" border="start">
       软件管理员可新增、删除和维护模型源；组织管理员可在已配置模型中启用模型并调整参数。
-      两种管理员都可执行模型校验；获取模型列表仅软件管理员可用。
     </v-alert>
 
     <v-row align="stretch">
@@ -205,6 +205,15 @@
                 <div class="text-h6 font-weight-bold">已配置模型</div>
                 <div class="text-body-2 text-medium-emphasis">组织管理员可在此启用/禁用模型并配置参数，不同组织可以有不同配置。</div>
               </div>
+              <v-btn
+                v-if="canConfigureOrganizationModels && selectedSource?.models.length"
+                color="primary"
+                variant="tonal"
+                prepend-icon="mdi-message-text"
+                to="/model-chat-test"
+              >
+                对话测试
+              </v-btn>
             </div>
 
             <v-row>
@@ -361,8 +370,8 @@
         <v-card-text>
           <v-row dense>
             <v-col cols="12">
-              <v-alert type="info" variant="tonal" border="start" density="compact">
-                可先选择供应商模板自动填入参数，再按需微调。
+              <v-alert type="info" variant="tonal" border="start">
+                请选择一个供应商模板，系统会自动填充基础信息。
               </v-alert>
             </v-col>
             <v-col cols="12" md="6">
@@ -381,30 +390,27 @@
               <v-text-field
                 v-model="newSourceForm.name"
                 label="源名称"
-                hint="系统内显示名称，例如 openai、deepseek"
-                persistent-hint
                 variant="outlined"
                 density="compact"
+                readonly
               />
             </v-col>
             <v-col cols="12" md="6">
               <v-text-field
                 v-model="newSourceForm.vendor"
                 label="供应商标识"
-                hint="用于后端识别，例如 openai、dashscope、deepseek"
-                persistent-hint
                 variant="outlined"
                 density="compact"
+                readonly
               />
             </v-col>
             <v-col cols="12" md="6">
               <v-text-field
                 v-model="newSourceForm.baseUrl"
                 label="API Base URL"
-                hint="通常形如 https://xxx/v1"
-                persistent-hint
                 variant="outlined"
                 density="compact"
+                readonly
               />
             </v-col>
             <v-col cols="12" md="6">
@@ -500,7 +506,6 @@ const canVerifyModels = computed(() => ['software_admin', 'organization_admin'].
 
 const moduleOptions = ['图像真伪检测', 'LLM解释', '元数据辅助', '人工审核辅助']
 const providerTemplateOptions = [
-  { title: '自定义', value: 'custom' },
   { title: 'OpenAI Compatible（阿里云 DashScope）', value: 'dashscope' },
   { title: 'OpenAI 官方', value: 'openai' },
   { title: 'DeepSeek 官方', value: 'deepseek' },
@@ -549,7 +554,7 @@ const showModelDialog = ref(false)
 const showDeleteConfirm = ref(false)
 const deletingSourceId = ref<number | null>(null)
 const editingModel = ref<ManagedModel | null>(null)
-const selectedProviderTemplate = ref('custom')
+const selectedProviderTemplate = ref(providerTemplateOptions[0].value)
 const verifyingModelKeys = ref<string[]>([])
 
 const newSourceForm = ref({
@@ -562,6 +567,7 @@ const newSourceForm = ref({
 
 const selectedSource = computed(() => sources.value.find((source) => source.id === selectedSourceId.value) ?? null)
 const MODEL_LIBRARY_PAGE_SIZE = 10
+
 
 const sortedModelLibraryCandidates = computed(() => {
   const source = selectedSource.value
@@ -614,6 +620,18 @@ watch(modelLibraryTotalPages, (totalPages) => {
   if (modelLibraryPage.value < 1) {
     modelLibraryPage.value = 1
   }
+})
+
+watch(showAddSourceDialog, (isOpen) => {
+  if (!isOpen) return
+  newSourceForm.value = {
+    name: '',
+    vendor: '',
+    baseUrl: '',
+    apiKey: '',
+    description: ''
+  }
+  applyProviderTemplate(selectedProviderTemplate.value)
 })
 
 onMounted(async () => {
@@ -672,16 +690,14 @@ async function fetchSourceModels() {
 }
 
 function applyProviderTemplate(templateKey: string | null) {
-  if (!templateKey || templateKey === 'custom') return
+  if (!templateKey) return
 
   const template = providerTemplates[templateKey]
   if (!template) return
 
   newSourceForm.value.vendor = template.vendor
   newSourceForm.value.baseUrl = template.baseUrl
-  if (!newSourceForm.value.name.trim()) {
-    newSourceForm.value.name = template.name
-  }
+  newSourceForm.value.name = template.name
 }
 
 function isConfigured(modelId: string) {
@@ -868,7 +884,7 @@ async function addSource() {
     }
 
     showAddSourceDialog.value = false
-    selectedProviderTemplate.value = 'custom'
+    selectedProviderTemplate.value = providerTemplateOptions[0].value
     newSourceForm.value = {
       name: '',
       vendor: '',
@@ -876,6 +892,7 @@ async function addSource() {
       apiKey: '',
       description: ''
     }
+    applyProviderTemplate(selectedProviderTemplate.value)
     snackbar.showMessage('模型源新增成功', 'success')
   } catch (error) {
     snackbar.showMessage('模型源新增失败', 'error')
@@ -944,6 +961,7 @@ async function saveModelConfig() {
     snackbar.showMessage('更新模型配置失败', 'error')
   }
 }
+
 </script>
 
 <style scoped>

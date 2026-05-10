@@ -354,7 +354,6 @@
           v-if="fileId && selectedModule === 'image'"
           :fileId="fileId"
           :fileIds="fileIds"
-          :batchId="currentBatchId"
           @tagChanged="handleSelectedTag"
           @add-name="handleName"
         />
@@ -407,8 +406,7 @@
             <v-card-text>
               <ImageSelectionStep
                 :fileId="fileId"
-                :fileIds="fileIds"
-                :batchId="currentBatchId"
+                :fileIds="fileIdsByCategory.image"
                 :showMetaControls="false"
               />
             </v-card-text>
@@ -419,7 +417,7 @@
             <v-card-text>
               <ExtractedContentStep
                 :fileId="fileId"
-                :fileIds="fileIds"
+                :fileIds="fileIdsByCategory.paper"
                 contentType="paper"
                 moduleLabel="论文"
                 :showMetaControls="false"
@@ -432,7 +430,7 @@
             <v-card-text>
               <ExtractedContentStep
                 :fileId="fileId"
-                :fileIds="fileIds"
+                :fileIds="fileIdsByCategory.review"
                 contentType="review"
                 moduleLabel="Review"
                 :showMetaControls="false"
@@ -441,7 +439,7 @@
           </v-card>
         </div>
       </v-card-text>
-      <v-card-actions>
+      <v-card-actions class="upload-actions">
         <v-spacer></v-spacer>
         <v-btn color="primary" variant="elevated" @click="handleNext" :disabled="!canProceed"
           append-icon="mdi-arrow-right">
@@ -574,7 +572,11 @@ const categoryFileInputs = ref<Record<UploadCategoryKey, HTMLInputElement | null
 })
 const fileId = ref()
 const fileIds = ref<number[]>([])
-const currentBatchId = ref('')
+const fileIdsByCategory = ref<Record<UploadCategoryKey, number[]>>({
+  image: [],
+  paper: [],
+  review: []
+})
 const loading = ref<boolean>(false)
 const snackbar = useSnackbarStore()
 
@@ -605,7 +607,11 @@ const resetCurrentUploadState = () => {
   selectedVersion.value = null
   fileId.value = ''
   fileIds.value = []
-  currentBatchId.value = ''
+  fileIdsByCategory.value = {
+    image: [],
+    paper: [],
+    review: []
+  }
   currentTag.value = ''
   currentTaskName.value = ''
 }
@@ -801,11 +807,6 @@ const handleSubmit = async () => {
 
   loading.value = true
   try {
-    const generatedBatchId =
-      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-        ? crypto.randomUUID()
-        : `batch_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`
-
     const formData = new FormData()
     if (selectedModule.value === 'multi') {
       ;(['image', 'paper', 'review'] as UploadCategoryKey[]).forEach(category => {
@@ -821,7 +822,6 @@ const handleSubmit = async () => {
       })
     }
     formData.append('detect_type', selectedModule.value)
-    formData.append('batch_id', generatedBatchId)
     const { data } = await uploadApi.uploadFile(formData)
     const normalizedFileIds = Array.isArray(data.file_ids)
       ? data.file_ids.map((id: any) => Number(id)).filter((id: number) => Number.isFinite(id) && id > 0)
@@ -832,7 +832,34 @@ const handleSubmit = async () => {
 
     fileIds.value = normalizedFileIds
     fileId.value = normalizedFileIds[0] ?? ''
-    currentBatchId.value = String(data.batch_id || generatedBatchId)
+
+    const nextCategoryIds: Record<UploadCategoryKey, number[]> = {
+      image: [],
+      paper: [],
+      review: []
+    }
+
+    if (Array.isArray(data.files)) {
+      data.files.forEach((item: any) => {
+        const fileType = String(item.file_type || '').toLowerCase() as UploadCategoryKey
+        const fileIdValue = Number(item.file_id)
+        if (!Number.isFinite(fileIdValue) || fileIdValue <= 0) {
+          return
+        }
+        if (fileType === 'image' || fileType === 'paper' || fileType === 'review') {
+          nextCategoryIds[fileType].push(fileIdValue)
+        }
+      })
+    }
+
+    if (selectedModule.value !== 'multi') {
+      const key = selectedModule.value as UploadCategoryKey
+      if (key in nextCategoryIds) {
+        nextCategoryIds[key] = normalizedFileIds
+      }
+    }
+
+    fileIdsByCategory.value = nextCategoryIds
 
     if (!fileIds.value.length) {
       snackbar.showMessage('上传成功但未返回有效文件ID，请稍后重试', 'error')
@@ -1028,6 +1055,16 @@ const returnToUpload = () => {
   max-height: 300vh;
   background-color: rgb(var(--v-theme-surface));
   overflow: hidden;
+}
+
+.upload-actions {
+  position: sticky;
+  bottom: 0;
+  background-color: rgb(var(--v-theme-surface));
+  padding-top: 12px;
+  padding-bottom: 12px;
+  border-top: 1px solid rgba(var(--v-theme-primary), 0.12);
+  z-index: 2;
 }
 
 .v-stepper {
