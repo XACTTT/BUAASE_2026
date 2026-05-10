@@ -93,7 +93,6 @@
                 </v-card-text>
               </v-card>
             </v-col>
-
             <v-col cols="12" v-if="dimensions.length">
               <v-card class="mb-6" elevation="2" rounded="lg">
                 <v-card-title class="text-h6">检测维度</v-card-title>
@@ -221,7 +220,7 @@ const formatStatus = (value?: string) => {
       return '失败'
     default:
       return value || '未知'
-    }
+  }
 }
 
 const formatMaybeNumber = (value: unknown) => {
@@ -239,7 +238,6 @@ onMounted(async () => {
     loading.value = false
     return
   }
-
   try {
     const accessResp = (await publisher.ifHasPermission({task_id: taskId.value})).data.access
     if (accessResp !== true) {

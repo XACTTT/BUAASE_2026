@@ -15,9 +15,11 @@ from core.models import (
     ImageUpload,
     Organization,
     ResourceContainer,
+    ReviewTextResource,
     StructuredDetectionResult,
+    TextDetectionResult,
 )
-from core.tasks_new import run_structured_detection_task
+from core.tasks_new import process_single_text_result, run_structured_detection_task
 
 
 class ResourceManagementApiTests(TestCase):
@@ -142,6 +144,96 @@ class ResourceManagementApiTests(TestCase):
         )
         self.assertEqual(wrong_type_resp.status_code, 400)
         self.assertEqual(wrong_type_resp.data['error_code'], 'INVALID_CONTAINER_TYPE')
+
+    @patch('core.views.views_dectection.process_text_detection_task.apply_async')
+    def test_submit_text_detection_enqueues_task(self, mocked_apply_async):
+        review_container = ResourceContainer.objects.create(
+            organization=self.organization,
+            owner=self.user,
+            container_type='review',
+            title='Review Container',
+        )
+        review_text = ReviewTextResource.objects.create(
+            container=review_container,
+            source_type='paste',
+            language='zh',
+            raw_text='这是一段需要检测的评审文本',
+            normalized_text='这是一段需要检测的评审文本',
+            token_count=1,
+            parse_status='parsed',
+        )
+
+        response = self.client.post(
+            '/api/detection/submit_text/',
+            {
+                'task_name': 'review-text-check',
+                'task_type': 'review_text',
+                'resource_ids': [review_text.id],
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        task = DetectionTask.objects.get(id=response.data['task_id'])
+        self.assertEqual(task.task_type, 'review_text')
+        self.assertTrue(
+            TextDetectionResult.objects.filter(detection_task=task, text_resource=review_text).exists()
+        )
+        mocked_apply_async.assert_called_once()
+
+    @patch('core.tasks_new.BertTextAIDetectionBridge.submit_text')
+    def test_process_single_text_result_stores_bert_result(self, mocked_submit_text):
+        review_container = ResourceContainer.objects.create(
+            organization=self.organization,
+            owner=self.user,
+            container_type='review',
+            title='Review Container',
+        )
+        review_text = ReviewTextResource.objects.create(
+            container=review_container,
+            source_type='paste',
+            language='zh',
+            raw_text='这是一段需要检测的评审文本',
+            normalized_text='这是一段需要检测的评审文本',
+            token_count=1,
+            parse_status='parsed',
+        )
+        task = DetectionTask.objects.create(
+            organization=self.organization,
+            user=self.user,
+            task_name='review-text-check',
+            task_type='review_text',
+            status='in_progress',
+        )
+        result = TextDetectionResult.objects.create(
+            detection_task=task,
+            text_resource=review_text,
+            status='in_progress',
+        )
+        mocked_submit_text.return_value = {
+            'is_aigc': True,
+            'label_name': 'aigc',
+            'confidence_score': 0.93,
+            'probabilities': {
+                'human': 0.07,
+                'aigc': 0.93,
+            },
+            'input_summary': {
+                'pair_mode': False,
+                'text_length': 12,
+                'max_length': 256,
+            },
+        }
+
+        ok = process_single_text_result(result.id, review_text.normalized_text, True)
+        self.assertTrue(ok)
+
+        result.refresh_from_db()
+        self.assertEqual(result.status, 'completed')
+        self.assertTrue(result.is_fake)
+        self.assertEqual(result.confidence_score, 0.93)
+        self.assertEqual(result.template_tendency_score, 0.93)
+        self.assertIn('AIGC 概率', result.template_analysis_reason)
 
     def test_material_validation_pass_and_fail(self):
         container = ResourceContainer.objects.create(

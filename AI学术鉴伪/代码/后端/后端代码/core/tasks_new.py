@@ -31,6 +31,11 @@ from core.models import (
     TextDetectionResult,  # 文本检测结果表
     ReviewTextResource,   # 文本资源表
 )
+from core.services.bert_text_ai_bridge import (
+    BertTextAIPermanentError,
+    BertTextAITransientError,
+    BertTextAIDetectionBridge,
+)
 from core.services.structured_ai_bridge import StructuredAITransientError
 from core.services.structured_detection_service import StructuredDetectionService
 from core.utils.log_utils import log_action
@@ -410,45 +415,43 @@ def process_text_detection_task(self, text_result_ids: List[int], task_pk: int, 
 
 @shared_task(queue="cpu", acks_late=True)
 def process_single_text_result(tr_pk: int, text_content: str, is_review: bool) -> bool:
-    """单个文本的调用大模型与数据库写回（由于文本API一般有速率限制或延迟，适合放在普通队列并行）"""
-    import json
-    import random # TODO: 替换为实际的大模型调用逻辑
-    
+    """单个文本的 Bert 文本鉴伪调用与数据库写回。"""
     tr = TextDetectionResult.objects.select_related("detection_task", "text_resource").get(pk=tr_pk)
     
     try:
-        # TODO: 这里应该替换为真实的 AI 接口请求代码
-        # 模拟 AI 接口耗时
-        import time
-        time.sleep(random.uniform(1.0, 3.0))
-        
+        ai_result = BertTextAIDetectionBridge.submit_text(
+            text=text_content,
+            language=tr.text_resource.language,
+        )
+
+        is_fake = bool(ai_result.get("is_aigc"))
+        overall_score = float(ai_result.get("confidence_score") or 0.0)
+        probabilities = ai_result.get("probabilities") or {}
+        reason = _build_bert_reason(ai_result, is_review=is_review)
+
+        tr.is_fake = is_fake
+        tr.confidence_score = overall_score
+
         if not is_review:
-            # 论文 AIGC 检测逻辑
-            # 模拟检测结果
-            ai_paragraphs = [
-                {"paragraph_index": 1, "text": text_content[:50] + "...", "ai_probability": round(random.uniform(0.7, 0.99), 2), "reason": "存在明显的语言模型生成特征：使用过度工整的排比和学术套话。"},
-                {"paragraph_index": 3, "text": "Another paragraph...", "ai_probability": round(random.uniform(0.5, 0.8), 2), "reason": "词汇分布熵极低。"}
-            ] if random.random() > 0.5 else []
-            
-            is_fake = len(ai_paragraphs) > 0
-            overall_score = max([p["ai_probability"] for p in ai_paragraphs]) if is_fake else round(random.uniform(0.01, 0.15), 2)
-            
-            tr.ai_generated_paragraphs = ai_paragraphs
-            tr.factual_fake_reason = "通过困惑度分析，部分段落高度符合大语言模型的生成分布。" if is_fake else "未见明显 AI 生成痕迹。"
-            tr.is_fake = is_fake
-            tr.confidence_score = overall_score
-            
+            tr.ai_generated_paragraphs = [
+                {
+                    "paragraph_index": 1,
+                    "text": text_content[:200],
+                    "ai_probability": float(probabilities.get("aigc", overall_score) or 0.0),
+                    "label_name": ai_result.get("label_name"),
+                    "reason": reason,
+                    "input_summary": ai_result.get("input_summary") or {},
+                }
+            ]
+            tr.factual_fake_reason = reason
+            tr.template_tendency_score = None
+            tr.template_analysis_reason = None
         else:
-            # Review 模板化检测逻辑
-            # 模拟检测结果
-            score = round(random.uniform(0.1, 0.95), 2)
-            is_fake = score > 0.7
-            
-            tr.template_tendency_score = score
-            tr.template_analysis_reason = "该同行评审意见使用了常见的模板句式，缺乏对文章具体内容的实质性探讨。" if is_fake else "评审意见详细具体，模板化概率低。"
-            tr.is_fake = is_fake
-            tr.confidence_score = score
-            
+            tr.ai_generated_paragraphs = None
+            tr.factual_fake_reason = None
+            tr.template_tendency_score = overall_score
+            tr.template_analysis_reason = reason
+
         tr.detection_time = timezone.now()
         tr.status = "completed"
         tr.save(update_fields=[
@@ -458,7 +461,21 @@ def process_single_text_result(tr_pk: int, text_content: str, is_review: bool) -
         ])
         return True
         
-    except Exception as e:
+    except BertTextAITransientError as e:
+        import traceback
+        log_action(
+            user=tr.detection_task.user,
+            operation_type='review_detect' if is_review else 'paper_detect',
+            target_type='TextDetectionResult',
+            target_id=tr.id,
+            result='failure',
+            error_msg=f"Bert text transient failure: {str(e)}",
+            detail={'traceback': traceback.format_exc()}
+        )
+        tr.status = "failed"
+        tr.save(update_fields=["status"])
+        return False
+    except (BertTextAIPermanentError, Exception) as e:
         import traceback
         log_action(
             user=tr.detection_task.user,
@@ -614,6 +631,35 @@ def _extract_single_result(raw_results: Any, idx: int) -> Dict[str, Any]:
         "exif_flags": exif_flags,
         "sub_method_results": sub_method_results,
     }
+
+
+def _build_bert_reason(ai_result: Dict[str, Any], is_review: bool) -> str:
+    label_name = ai_result.get("label_name") or ("aigc" if ai_result.get("is_aigc") else "human")
+    score = float(ai_result.get("confidence_score") or 0.0)
+    probabilities = ai_result.get("probabilities") or {}
+    aigc_prob = float(probabilities.get("aigc") or 0.0)
+    human_prob = float(probabilities.get("human") or 0.0)
+
+    if is_review:
+        if ai_result.get("is_aigc"):
+            return (
+                f"Bert 文本鉴伪判定该评审文本存在较强模板化/AI生成倾向，"
+                f"标签为 {label_name}，置信度 {score:.4f}，AIGC 概率 {aigc_prob:.4f}。"
+            )
+        return (
+            f"Bert 文本鉴伪判定该评审文本更接近人工撰写，"
+            f"标签为 {label_name}，置信度 {score:.4f}，人工概率 {human_prob:.4f}。"
+        )
+
+    if ai_result.get("is_aigc"):
+        return (
+            f"Bert 文本鉴伪判定该文本存在 AI 生成倾向，"
+            f"标签为 {label_name}，置信度 {score:.4f}，AIGC 概率 {aigc_prob:.4f}。"
+        )
+    return (
+        f"Bert 文本鉴伪判定该文本更接近人工撰写，"
+        f"标签为 {label_name}，置信度 {score:.4f}，人工概率 {human_prob:.4f}。"
+    )
 
 
 # ───────────────────────────────────────────────────────────────────────────────

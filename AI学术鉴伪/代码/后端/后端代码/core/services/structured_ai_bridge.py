@@ -8,6 +8,8 @@ import time
 import paramiko
 from scp import SCPClient
 
+from core.call_figure_detection import get_unified_ai_defaults
+
 
 logger = logging.getLogger(__name__)
 
@@ -27,22 +29,23 @@ class StructuredAIPermanentError(StructuredAIError):
 class StructuredAIDetectionBridge:
     @staticmethod
     def _config():
+        defaults = get_unified_ai_defaults()
         return {
-            'remote_root': os.getenv('STRUCTURED_AI_REMOTE_ROOT', '/root/autodl-tmp/BUAA_SE_DetectFake'),
+            'remote_root': os.getenv('STRUCTURED_AI_REMOTE_ROOT', defaults['service_root']),
             'remote_request_dir': os.getenv(
                 'STRUCTURED_AI_REMOTE_REQUEST_DIR',
-                '/root/autodl-tmp/BUAA_SE_DetectFake/structured_test/',
+                defaults['request_dir'],
             ),
             'remote_command': os.getenv(
                 'STRUCTURED_AI_REMOTE_COMMAND',
-                'cd /root/autodl-tmp/BUAA_SE_DetectFake && /root/miniconda3/envs/llm/bin/python trigger_structured.py',
+                defaults['command'],
             ),
-            'host': os.getenv('STRUCTURED_AI_HOST', 'connect.nmb1.seetacloud.com'),
-            'port': int(os.getenv('STRUCTURED_AI_PORT', '24241')),
-            'username': os.getenv('STRUCTURED_AI_USERNAME', 'root'),
-            'password': os.getenv('STRUCTURED_AI_PASSWORD', ''),
-            'ready_marker': os.getenv('STRUCTURED_AI_READY_MARKER', 'structured ready'),
-            'result_marker': os.getenv('STRUCTURED_AI_RESULT_MARKER', 'structured results'),
+            'host': os.getenv('STRUCTURED_AI_HOST', defaults['host']),
+            'port': int(os.getenv('STRUCTURED_AI_PORT', str(defaults['port']))),
+            'username': os.getenv('STRUCTURED_AI_USERNAME', defaults['username']),
+            'password': os.getenv('STRUCTURED_AI_PASSWORD', defaults['password']),
+            'ready_marker': os.getenv('STRUCTURED_AI_READY_MARKER', defaults['ready_marker']),
+            'result_marker': os.getenv('STRUCTURED_AI_RESULT_MARKER', defaults['result_marker']),
             'connect_timeout': float(os.getenv('STRUCTURED_AI_CONNECT_TIMEOUT', '10')),
             'ready_timeout': float(os.getenv('STRUCTURED_AI_READY_TIMEOUT', '60')),
             'result_timeout': float(os.getenv('STRUCTURED_AI_RESULT_TIMEOUT', '120')),

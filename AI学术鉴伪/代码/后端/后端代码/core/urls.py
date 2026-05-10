@@ -85,7 +85,6 @@ urlpatterns = [
     path("tasks/<int:task_id>/results/",   list_task_results,        name="task-results"),
     path("tasks/<int:task_id>/structured-result/", structured_task_result, name="task-structured-result"),
     path("tasks/<int:task_id>/text_results/", get_task_text_results, name="task-text-results"), # 新增：任务维度文本检测结果列表
-    path("tasks/<int:task_id>/structured-result/", structured_task_result, name="task-structured-result"),
     path("results/<int:result_id>/",       detection_result_detail,  name="result-detail"),
     path("results_image/<int:image_id>/", detection_result_by_image, name="result-image"),
     path("tasks/<int:task_id>/fake_results/", list_fake_task_results, name="fake-results"),
