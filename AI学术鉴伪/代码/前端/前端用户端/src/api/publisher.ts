@@ -50,6 +50,26 @@ export default {
     return http.get(`/tasks/${data}/structured-result/`)
   },
 
+  //提交AI文本检测任务
+  submitTextDetection(data: any) {
+    return http.post('/detection/submit_text/', data)
+  },
+
+  //获取某个任务的所有文本的AI检测结果
+  getTaskTextResults(data: any) {
+    return http.get(`/tasks/${data}/text_results/`)
+  },
+
+  //获取单条文本记录的AI检测结果详情
+  getSingleTextResult(data: any) {
+    return http.get(`/detection/text/${data}/`)
+  },
+
+  //获取某个任务的所有图片的AI检测结果
+  getTaskResults(data: any) {
+    return http.get(`/tasks/${data}/results/`)
+  },
+
   getFakeImage(data: any) {
     return http.get(`/tasks/${data.task_id}/fake_results/?include_image=${data.include_image}`)
   },

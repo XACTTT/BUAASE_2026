@@ -372,6 +372,7 @@ class DetectionTask(models.Model):
         ('pending', '待处理'),
         ('in_progress', '进行中'),
         ('completed', '已完成'),
+        ('partially_completed', '部分完成'),
         ('failed', '失败'),
     ]
 
@@ -380,6 +381,13 @@ class DetectionTask(models.Model):
         ('paper', 'Paper'),
         ('review', 'Review'),
         ('multi', 'Multi Material'),
+    ]
+
+    TASK_TYPE_CHOICES = [
+        ('image', '图像检测'),
+        ('paper_text', '论文文本检测'),
+        ('review_text', 'Review文本检测'),
+        ('multi_material', '综合检测'),
     ]
 
     user = models.ForeignKey(User, on_delete=models.CASCADE)  # 任务属于哪个用户
@@ -393,6 +401,7 @@ class DetectionTask(models.Model):
     )
     detect_type = models.CharField(max_length=20, choices=DETECT_TYPE_CHOICES, default='image', db_index=True)
     task_name = models.CharField(max_length=255)  # 任务名称，用户可以自定义
+    task_type = models.CharField(max_length=20, choices=TASK_TYPE_CHOICES, default='image')  # 任务类型
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')  # 任务状态
     upload_time = models.DateTimeField(default=timezone.localtime)  # 上传时间
     completion_time = models.DateTimeField(null=True, blank=True)  # 完成时间（如果已完成）
@@ -520,6 +529,7 @@ class DetectionResult(models.Model):
     STATUS_CHOICES = [
         ('in_progress', '正在检测中'),
         ('completed', '检测已完成'),
+        ('failed', '检测失败'),
     ]
 
     image_upload = models.ForeignKey(ImageUpload, on_delete=models.CASCADE, related_name="detection_results")
@@ -581,9 +591,57 @@ class SubDetectionResult(models.Model):
         return f"{self.method} of DetectionResult #{self.detection_result_id}"
 
 
+class TextDetectionResult(models.Model):
+    """
+    用于存储文本类型（全篇论文、Review）的检测结果
+    """
+    STATUS_CHOICES = [
+        ('in_progress', '正在检测中'),
+        ('completed', '检测已完成'),
+        ('failed', '检测失败'),
+    ]
+
+    detection_task = models.ForeignKey(DetectionTask, on_delete=models.CASCADE, related_name='text_detection_results')
+    text_resource = models.ForeignKey(ReviewTextResource, on_delete=models.CASCADE, related_name='detection_results')
+    
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='in_progress')
+    detection_time = models.DateTimeField(null=True, blank=True)
+    
+    # AI判断结果（是否为AI生成/是否有模板化倾向）
+    is_fake = models.BooleanField(null=True)
+    # AI生成整体概率/置信度
+    confidence_score = models.FloatField(null=True)
+    
+    # 论文专属：AI生成段落详情（段落位置、文本、概率、原因等）
+    # JSON结构示例: [{"paragraph_index": 1, "text": "...", "ai_probability": 0.95, "reason": "..."}]
+    ai_generated_paragraphs = models.JSONField(null=True, blank=True, help_text="AI生成的文本段落详情及概率")
+    factual_fake_reason = models.TextField(null=True, blank=True, help_text="事实性鉴伪子结论与原因")
+    
+    # Review专属：模板化倾向
+    template_tendency_score = models.FloatField(null=True, blank=True, help_text="模板化倾向评分")
+    template_analysis_reason = models.TextField(null=True, blank=True, help_text="模板化倾向分析原因")
+    
+    is_under_review = models.BooleanField(default=False)
+    
+    class Meta:
+        indexes = [
+            models.Index(fields=['detection_task', 'status']),
+        ]
+
+    def __str__(self):
+        return f"Text Detection Result for Task {self.detection_task.id}"
+
+
 class ReviewRequest(models.Model):
-    detection_result = models.ForeignKey(DetectionResult, on_delete=models.CASCADE, related_name='review_requests')
-    imgs = models.ManyToManyField(ImageUpload, related_name='review_requests')  # 新增字段：与ImageUpload的一对多关系
+    # 改为允许为空，因为文本检测不再依赖原有的 DetectionResult 表
+    detection_result = models.ForeignKey(DetectionResult, on_delete=models.CASCADE, related_name='review_requests', null=True, blank=True)
+    text_detection_result = models.ForeignKey(TextDetectionResult, on_delete=models.CASCADE, related_name='review_requests', null=True, blank=True)
+    
+    # 兼容图片的审核
+    imgs = models.ManyToManyField(ImageUpload, related_name='review_requests', blank=True)
+    # 兼容文本（全篇论文、Review）的审核，绑定到资源容器或文本资源
+    text_resources = models.ManyToManyField(ReviewTextResource, related_name='review_requests', blank=True)
+    
     user = models.ForeignKey(User, on_delete=models.CASCADE)  # 提交审核请求的用户
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE, db_index=True, null=True, blank=True)
     # request_time = models.DateTimeField(default=timezone.localtime, db_index=True)  # 申请时间，添加索引
@@ -606,7 +664,11 @@ class ReviewRequest(models.Model):
     check_reason = models.TextField()  # 管理员审核的理由
 
     def __str__(self):
-        return f"Review Request for Detection {self.detection_result.id} by {self.user.username}"
+        if self.detection_result:
+            return f"Image Review Request for Detection {self.detection_result.id} by {self.user.username}"
+        elif self.text_detection_result:
+            return f"Text Review Request for Task {self.text_detection_result.detection_task.id} by {self.user.username}"
+        return f"Review Request by {self.user.username}"
 
 
 class ManualReview(models.Model):
@@ -615,13 +677,20 @@ class ManualReview(models.Model):
     reviewer = models.ForeignKey(User, on_delete=models.CASCADE, related_name='reviews')  # 参与审核的审核员
     status = models.CharField(max_length=50, choices=[('undo', 'Undo'), ('completed', 'Completed')],
                               default='undo')  # 审核状态
-    imgs = models.ManyToManyField(ImageUpload, related_name='manual_reviews')  # 关联的图片
-    img_reviews = models.ManyToManyField('ImageReview', related_name='manual_reviews')  # 关联的ImageReview
+                              
+    # 图片相关
+    imgs = models.ManyToManyField(ImageUpload, related_name='manual_reviews', blank=True)
+    img_reviews = models.ManyToManyField('ImageReview', related_name='manual_reviews', blank=True)
+    
+    # 文本相关
+    text_resources = models.ManyToManyField(ReviewTextResource, related_name='manual_reviews', blank=True)
+    text_reviews = models.ManyToManyField('TextReview', related_name='manual_reviews', blank=True)
+    
     review_time = models.DateTimeField(default=timezone.localtime, db_index=True)  # 审核时间，添加索引
     report_file = models.FileField(upload_to='reports/', null=True, blank=True,
                                    help_text='生成的 PDF 检测报告')
     def __str__(self):
-        return f"Review by {self.reviewer.username} on {self.review_request.detection_result.detection_task.id}"
+        return f"Review by {self.reviewer.username} on Request {self.review_request.id}"
 
 
 class ImageReview(models.Model):
@@ -656,6 +725,25 @@ class ImageReview(models.Model):
     review_time = models.DateTimeField(default=timezone.localtime, db_index=True)  # 审核时间，添加索引
 
 
+class TextReview(models.Model):
+    """新增：用于记录审核员对单篇文本材料的审查结果"""
+    manual_review = models.ForeignKey(ManualReview, on_delete=models.CASCADE, related_name='text_reviews')
+    text_resource = models.ForeignKey(ReviewTextResource, on_delete=models.CASCADE, related_name='text_reviews')
+    
+    # 论文专属：针对被判定为AI生成段落的复核结论
+    # [{"paragraph_index": 1, "is_ai_agreed": True, "comment": "确实是AI生成的痕迹"}]
+    paragraph_reviews = models.JSONField(null=True, blank=True)
+    
+    # Review专属：针对模板化倾向的复核结论
+    template_review_score = models.FloatField(null=True, blank=True)
+    template_review_comment = models.TextField(blank=True, null=True)
+    
+    # 综合复核意见
+    overall_comment = models.TextField(blank=True, null=True)
+    result = models.BooleanField(null=True, help_text="最终判定真假结果(True为造假)")
+    review_time = models.DateTimeField(default=timezone.localtime, db_index=True)
+
+
 class Feedback(models.Model):
     manual_review = models.ForeignKey(ManualReview, on_delete=models.CASCADE, related_name="feedbacks")
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="feedbacks")
@@ -673,6 +761,8 @@ class Log(models.Model):
         ('logout', 'Logout'),
         ('upload', 'Upload'),
         ('ai_detect', 'AI Detection'),
+        ('paper_detect', 'Paper Text Detection'),  # 新增：全篇论文AIGC检测日志
+        ('review_detect', 'Review Text Detection'), # 新增：同行评审模板化检测日志
         ('audit_submit', 'Audit Submit'),
         ('audit_op', 'Audit Operation'),
         ('comment', 'Comment'),
