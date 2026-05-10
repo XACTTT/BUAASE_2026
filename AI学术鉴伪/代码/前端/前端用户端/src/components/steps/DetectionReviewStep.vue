@@ -359,6 +359,7 @@ const searchQuery = ref('')
 const isSearching = ref(false)
 const allPeople = ref<Person[]>([])
 const selectedPeopleList = ref<Person[]>([])
+const apiBaseUrl = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000').replace(/\/$/, '')
 
 // 计算是否可以提交
 const canSubmit = computed(() => {
@@ -534,17 +535,21 @@ const getProbabilityColor = (probability: number): string => {
 
 const getSelectedImageUrl = (selectedImage: Image | null) => {
   if (selectedImage) {
-    return import.meta.env.VITE_API_URL + selectedImage.image_url
+    return getImageUrl(selectedImage.image_url)
   }
   return ''
 }
 
 const getImageUrl = (url: string) => {
-  return import.meta.env.VITE_API_URL + url
+  if (!url) return ''
+  if (/^https?:\/\//.test(url)) return url
+  return `${apiBaseUrl}${url}`
 }
 
 const getAvatar = (url: string) => {
-  return import.meta.env.VITE_API_URL + url
+  if (!url) return ''
+  if (/^https?:\/\//.test(url)) return url
+  return `${apiBaseUrl}${url}`
 }
 
 const selectedFakeCount = ref(0)

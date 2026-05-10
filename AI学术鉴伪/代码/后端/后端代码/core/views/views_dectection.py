@@ -606,7 +606,7 @@ def list_fake_task_results(request, task_id):
     result_list = []
 
     for dr in task.detection_results.select_related("image_upload"):
-        if dr.is_fake:
+        if dr.status == "completed" and dr.is_fake is True:
             item = {"result_id": dr.id, "image_id": dr.image_upload.id, "timestamp": dr.detection_time}
             if include_img:
                 item["image_url"] = serialize_value(dr.image_upload.image, request)
@@ -631,7 +631,7 @@ def list_normal_task_results(request, task_id):
     result_list = []
 
     for dr in task.detection_results.select_related("image_upload"):
-        if not dr.is_fake:
+        if dr.status == "completed" and dr.is_fake is False:
             item = {"result_id": dr.id, "image_id": dr.image_upload.id, "timestamp": dr.detection_time}
             if include_img:
                 item["image_url"] = serialize_value(dr.image_upload.image, request)
