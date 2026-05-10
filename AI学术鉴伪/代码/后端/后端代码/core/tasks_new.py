@@ -28,6 +28,8 @@ from core.models import (
     DetectionResult,      # 主结果表
     SubDetectionResult,   # 子检测方法结果表
     DetectionTask,        # 整体任务表
+    TextDetectionResult,  # 文本检测结果表
+    ReviewTextResource,   # 文本资源表
 )
 from core.services.structured_ai_bridge import StructuredAITransientError
 from core.services.structured_detection_service import StructuredDetectionService
@@ -44,6 +46,29 @@ from core.call_figure_detection import (
 from datetime import datetime
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
+
+def send_task_progress_update(task_id, status, progress, message=None, eta=None):
+    """发送任务进度更新到 WebSocket 频道"""
+    channel_layer = get_channel_layer()
+    group_name = f'task_{task_id}'
+    
+    event_data = {
+        'type': 'task_status_update',
+        'message': {
+            'task_id': task_id,
+            'status': status,
+            'progress': progress,
+        }
+    }
+    if message:
+        event_data['message']['detail'] = message
+    if eta:
+        event_data['message']['eta'] = eta
+
+    async_to_sync(channel_layer.group_send)(
+        group_name,
+        event_data
+    )
 
 def send_task_completion_notification(user, task_id):
     channel_layer = get_channel_layer()
@@ -84,17 +109,21 @@ def fetch_batch(
     batch_dir: str | Path,
     image_num: int,
     task_pk: int,
+    cmd_block_size: int = 64,
+    urn_k: float = 0.3,
+    if_use_llm: bool = False,
 ) -> None:
-    """同 AI 服务器通信，只负责拿到整批结果，不做大量 I/O。"""
+    """同 AI 服务器通信，负责写 zip 和 json，并拿到整批结果，防止阻塞主线程。"""
 
     t0 = time.time()
     batch_dir = Path(batch_dir)
+    batch_dir.mkdir(parents=True, exist_ok=True)
     zip_path = batch_dir / "img.zip"
     data_path = batch_dir / "data.json"
 
     # 1️⃣  标记任务 & 子结果为 in_progress（DB I/O 很少，可以接受）
     dr_qs = (
-        DetectionResult.objects.select_related("detection_task")
+        DetectionResult.objects.select_related("detection_task", "image_upload")
         .filter(id__in=detection_result_ids)
         .order_by("id")
     )
@@ -106,6 +135,38 @@ def fetch_batch(
         task.status = "in_progress"
         task.save(update_fields=["status"])
     dr_qs.update(status="in_progress")
+    
+    # WebSocket 进度推送：开始准备批次数据
+    send_task_progress_update(
+        task_id=task_pk, 
+        status="in_progress", 
+        progress=5, 
+        message="开始处理批次，准备打包数据"
+    )
+
+    # 1.5️⃣ 异步写 img.zip 和 data.json
+    import zipfile, json
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        sorted_drs = sorted(list(dr_qs), key=lambda dr: dr.image_upload.id)
+        for dr in sorted_drs:
+            src = dr.image_upload.image.path
+            arcname = f"{int(dr.image_upload.id):08d}{Path(src).suffix}"
+            zf.write(src, arcname=arcname)
+
+    with open(data_path, "w", encoding="utf-8") as f:
+        json.dump(
+            {"cmd_block_size": cmd_block_size, "urn_k": urn_k, "if_use_llm": if_use_llm},
+            f, ensure_ascii=False, indent=4
+        )
+
+    # WebSocket 进度推送：开始检测
+    send_task_progress_update(
+        task_id=task_pk, 
+        status="in_progress", 
+        progress=10, 
+        message="开始连接AI服务器进行检测",
+        eta=10 if if_use_llm else 3  # 简单估算剩余时间
+    )
 
     # 2️⃣  GPU / 网络 调用
     results = get_result(zip_path, data_path)
@@ -125,7 +186,16 @@ def fetch_batch(
             error_msg='GPU server connection failed, retrying...',
             detail={'retry': True}
         )
+        send_task_progress_update(task_pk, "failed", 0, "AI 服务器连接失败，正在重试...")
         raise self.retry(exc=RuntimeError("AI 服务器不可达"))
+
+    # WebSocket 进度推送：GPU计算完成，开始后处理
+    send_task_progress_update(
+        task_id=task_pk, 
+        status="in_progress", 
+        progress=60, 
+        message="AI检测完成，正在处理检测结果"
+    )
 
     # 3️⃣  将每张图片拆成独立 payload，fan‑out 给 CPU worker
     subtasks = []
@@ -158,75 +228,83 @@ def process_single_result(dr_pk: int, result_dict: Dict[str, Any]) -> bool:
 
     dr = DetectionResult.objects.select_related("image_upload").get(pk=dr_pk)
 
-    # --- 还原 ndarray ---------------------------------------
-    ela_np = np.array(result_dict["ela"], dtype=np.float32)
-    llm_img_np = None
-    if result_dict.get("llm_img") is not None:
-        llm_img_np = np.array(result_dict["llm_img"], dtype=np.float32)
+    try:
+        # --- 还原 ndarray ---------------------------------------
+        ela_np = np.array(result_dict["ela"], dtype=np.float32)
+        llm_img_np = None
+        if result_dict.get("llm_img") is not None:
+            llm_img_np = np.array(result_dict["llm_img"], dtype=np.float32)
 
-    # 2‑1  文件写入（磁盘 I/O）
-    ela_path = save_ndarray_as_image(ela_np, subdir="ela_results", prefix=f"ela_{dr_pk}")
-    llm_image_path = None
-    if llm_img_np is not None:
-        # print('llm info:')
-        # print(type(llm_img_np))
-        # print(llm_img_np.shape)
-        # print(llm_img_np)
-        # # 保存llm_img_np
-        # import pickle
-        # with open(f"llm_img_np.pkl", "wb") as f:
-        #     pickle.dump(llm_img_np, f)
-        llm_image_path = save_ndarray_as_image(llm_img_np, subdir="llm_results", prefix=f"llm_{dr_pk}")
+        # 2‑1  文件写入（磁盘 I/O）
+        ela_path = save_ndarray_as_image(ela_np, subdir="ela_results", prefix=f"ela_{dr_pk}")
+        llm_image_path = None
+        if llm_img_np is not None:
+            llm_image_path = save_ndarray_as_image(llm_img_np, subdir="llm_results", prefix=f"llm_{dr_pk}")
 
-    # 2‑2  更新 DetectionResult 主表
-    dr.is_fake = result_dict["overall_is_fake"]
-    dr.confidence_score = result_dict["overall_confidence"]
-    dr.llm_judgment = fanyi_text(result_dict["llm_text"])
-    dr.ela_image = ela_path
-    if llm_image_path:
-        dr.llm_image = llm_image_path
-    dr.exif_photoshop = result_dict["exif_flags"]["photoshop"]
-    dr.exif_time_modified = result_dict["exif_flags"]["time_modified"]
-    dr.detection_time = timezone.now()
-    dr.status = "completed"
-    dr.save(
-        update_fields=[
-            "is_fake",
-            "confidence_score",
-            "llm_judgment",
-            "ela_image",
-            "llm_image",
-            "exif_photoshop",
-            "exif_time_modified",
-            "detection_time",
-            "status",
-        ]
-    )
-
-    # 2‑3  子检测方法批量写入
-    subs = []
-    for sub in result_dict["sub_method_results"]:
-        mask_path = save_ndarray_as_image(
-            np.array(sub["mask"]), subdir="masks", prefix=f"mask_{sub['method']}_{dr_pk}"
+        # 2‑2  更新 DetectionResult 主表
+        dr.is_fake = result_dict["overall_is_fake"]
+        dr.confidence_score = result_dict["overall_confidence"]
+        dr.llm_judgment = fanyi_text(result_dict["llm_text"])
+        dr.ela_image = ela_path
+        if llm_image_path:
+            dr.llm_image = llm_image_path
+        dr.exif_photoshop = result_dict["exif_flags"]["photoshop"]
+        dr.exif_time_modified = result_dict["exif_flags"]["time_modified"]
+        dr.detection_time = timezone.now()
+        dr.status = "completed"
+        dr.save(
+            update_fields=[
+                "is_fake",
+                "confidence_score",
+                "llm_judgment",
+                "ela_image",
+                "llm_image",
+                "exif_photoshop",
+                "exif_time_modified",
+                "detection_time",
+                "status",
+            ]
         )
-        subs.append(
-            SubDetectionResult(
-                detection_result=dr,
-                method=sub["method"],
-                probability=sub["prob"],
-                mask_image=mask_path,
-                mask_matrix=sub["mask"],
+
+        # 2‑3  子检测方法批量写入
+        subs = []
+        for sub in result_dict["sub_method_results"]:
+            mask_path = save_ndarray_as_image(
+                np.array(sub["mask"]), subdir="masks", prefix=f"mask_{sub['method']}_{dr_pk}"
             )
+            subs.append(
+                SubDetectionResult(
+                    detection_result=dr,
+                    method=sub["method"],
+                    probability=sub["prob"],
+                    mask_image=mask_path,
+                    mask_matrix=sub["mask"],
+                )
+            )
+        SubDetectionResult.objects.bulk_create(subs, ignore_conflicts=True)
+
+        # 2‑4  更新 ImageUpload 标志位
+        iu = dr.image_upload
+        iu.isFake = dr.is_fake
+        iu.isDetect = True
+        iu.save(update_fields=["isFake", "isDetect"])
+
+        return True
+        
+    except Exception as e:
+        import traceback
+        log_action(
+            user=dr.detection_task.user,
+            operation_type='ai_detect_subtask',
+            target_type='DetectionResult',
+            target_id=dr.id,
+            result='failure',
+            error_msg=f"Subtask failed: {str(e)}",
+            detail={'traceback': traceback.format_exc()}
         )
-    SubDetectionResult.objects.bulk_create(subs, ignore_conflicts=True)
-
-    # 2‑4  更新 ImageUpload 标志位
-    iu = dr.image_upload
-    iu.isFake = dr.is_fake
-    iu.isDetect = True
-    iu.save(update_fields=["isFake", "isDetect"])
-
-    return True
+        dr.status = "failed"
+        dr.save(update_fields=["status"])
+        return False
 
 
 # ───────────────────────────────────────────────────────────────────────────────
@@ -236,16 +314,27 @@ def process_single_result(dr_pk: int, result_dict: Dict[str, Any]) -> bool:
 @shared_task(queue="cpu", acks_late=True)
 def finalize_task(_chord_results: list | None, task_pk: int, image_num: int, _=None) -> None:  # body 签名固定
     task = DetectionTask.objects.get(pk=task_pk)
-    completed = (
-        DetectionResult.objects.filter(detection_task=task, status="completed").count()
+    processed = (
+        DetectionResult.objects.filter(detection_task=task, status__in=["completed", "failed"]).count()
     )
-    if completed != image_num:
+    if processed != image_num:
         # 说明还有图片未完成，直接返回即可
         return
 
-    # 全部完成 – 原子操作
+    # 全部完成(或部分失败) – 原子操作
     with transaction.atomic():
-        task.status = "completed"
+        # 获取悲观锁，防止并发写入导致状态覆盖
+        task = DetectionTask.objects.select_for_update().get(pk=task_pk)
+        
+        # 判断整体状态：如果有任意失败则为部分成功或失败
+        failed_count = DetectionResult.objects.filter(detection_task=task, status="failed").count()
+        if failed_count == image_num:
+            task.status = "failed"
+        elif failed_count > 0:
+            task.status = "partially_completed"
+        else:
+            task.status = "completed"
+            
         task.completion_time = timezone.now()
         task.save(update_fields=["status", "completion_time"])
         generate_detection_task_report(task)
@@ -255,10 +344,179 @@ def finalize_task(_chord_results: list | None, task_pk: int, image_num: int, _=N
         operation_type='ai_detect',
         target_type='DetectionTask',
         target_id=task.id,
-        result='success',
-        detail={'message': 'Task finalized successfully'}
+        result='success' if task.status == "completed" else "partial_success" if task.status == "partially_completed" else "failure",
+        detail={'message': f'Task finalized with status: {task.status}', 'failed_count': failed_count}
     )
 
+    send_task_progress_update(
+        task_id=task_pk, 
+        status=task.status, 
+        progress=100, 
+        message=f"检测任务完成" if failed_count == 0 else f"任务完成，{failed_count} 张图片处理失败"
+    )
+    send_task_completion_notification(task.user, task_pk)
+
+
+# ───────────────────────────────────────────────────────────────────────────────
+# 4. 文本专属：全篇论文和 Review 文本的异步检测
+# ───────────────────────────────────────────────────────────────────────────────
+
+@shared_task(queue="ai", bind=True, acks_late=True, max_retries=3, default_retry_delay=15)
+def process_text_detection_task(self, text_result_ids: List[int], task_pk: int, is_review: bool = False) -> None:
+    """处理全篇论文或 Review 的检测（通常调用外部 LLM API 或特定的文本鉴伪算法）"""
+    t0 = time.time()
+    
+    # 1. 标记任务为 in_progress
+    tr_qs = (
+        TextDetectionResult.objects.select_related("detection_task", "text_resource")
+        .filter(id__in=text_result_ids)
+        .order_by("id")
+    )
+    if not tr_qs:
+        return
+        
+    task = tr_qs[0].detection_task
+    if task.status != "in_progress":
+        task.status = "in_progress"
+        task.save(update_fields=["status"])
+    tr_qs.update(status="in_progress")
+    
+    # WebSocket 进度推送
+    task_type_str = "Review" if is_review else "论文"
+    send_task_progress_update(
+        task_id=task_pk, 
+        status="in_progress", 
+        progress=10, 
+        message=f"开始连接大模型进行{task_type_str}文本分析",
+        eta=15
+    )
+    
+    # 2. 分发单个文本的处理任务
+    subtasks = []
+    for tr in tr_qs:
+        # 提取需要检测的文本内容
+        text_content = tr.text_resource.raw_text
+        if tr.text_resource.normalized_text:
+            text_content = tr.text_resource.normalized_text
+            
+        subtasks.append(process_single_text_result.s(tr.id, text_content, is_review))
+        
+    # 3. fan-in: 全部结束后触发文本专属的 finalize
+    from celery import chord, group
+    chord(group(subtasks), finalize_text_task.s(task_pk, len(text_result_ids))).delay()
+    
+    print(f"[process_text_detection_task] 分发完成，用时 {time.time() - t0} s")
+
+
+@shared_task(queue="cpu", acks_late=True)
+def process_single_text_result(tr_pk: int, text_content: str, is_review: bool) -> bool:
+    """单个文本的调用大模型与数据库写回（由于文本API一般有速率限制或延迟，适合放在普通队列并行）"""
+    import json
+    import random # TODO: 替换为实际的大模型调用逻辑
+    
+    tr = TextDetectionResult.objects.select_related("detection_task", "text_resource").get(pk=tr_pk)
+    
+    try:
+        # TODO: 这里应该替换为真实的 AI 接口请求代码
+        # 模拟 AI 接口耗时
+        import time
+        time.sleep(random.uniform(1.0, 3.0))
+        
+        if not is_review:
+            # 论文 AIGC 检测逻辑
+            # 模拟检测结果
+            ai_paragraphs = [
+                {"paragraph_index": 1, "text": text_content[:50] + "...", "ai_probability": round(random.uniform(0.7, 0.99), 2), "reason": "存在明显的语言模型生成特征：使用过度工整的排比和学术套话。"},
+                {"paragraph_index": 3, "text": "Another paragraph...", "ai_probability": round(random.uniform(0.5, 0.8), 2), "reason": "词汇分布熵极低。"}
+            ] if random.random() > 0.5 else []
+            
+            is_fake = len(ai_paragraphs) > 0
+            overall_score = max([p["ai_probability"] for p in ai_paragraphs]) if is_fake else round(random.uniform(0.01, 0.15), 2)
+            
+            tr.ai_generated_paragraphs = ai_paragraphs
+            tr.factual_fake_reason = "通过困惑度分析，部分段落高度符合大语言模型的生成分布。" if is_fake else "未见明显 AI 生成痕迹。"
+            tr.is_fake = is_fake
+            tr.confidence_score = overall_score
+            
+        else:
+            # Review 模板化检测逻辑
+            # 模拟检测结果
+            score = round(random.uniform(0.1, 0.95), 2)
+            is_fake = score > 0.7
+            
+            tr.template_tendency_score = score
+            tr.template_analysis_reason = "该同行评审意见使用了常见的模板句式，缺乏对文章具体内容的实质性探讨。" if is_fake else "评审意见详细具体，模板化概率低。"
+            tr.is_fake = is_fake
+            tr.confidence_score = score
+            
+        tr.detection_time = timezone.now()
+        tr.status = "completed"
+        tr.save(update_fields=[
+            "is_fake", "confidence_score", "ai_generated_paragraphs", 
+            "factual_fake_reason", "template_tendency_score", "template_analysis_reason",
+            "detection_time", "status"
+        ])
+        return True
+        
+    except Exception as e:
+        import traceback
+        log_action(
+            user=tr.detection_task.user,
+            operation_type='review_detect' if is_review else 'paper_detect',
+            target_type='TextDetectionResult',
+            target_id=tr.id,
+            result='failure',
+            error_msg=f"Text Subtask failed: {str(e)}",
+            detail={'traceback': traceback.format_exc()}
+        )
+        tr.status = "failed"
+        tr.save(update_fields=["status"])
+        return False
+
+
+@shared_task(queue="cpu", acks_late=True)
+def finalize_text_task(_chord_results: list | None, task_pk: int, text_num: int, _=None) -> None:
+    """文本任务全部检测完成后的收尾"""
+    task = DetectionTask.objects.get(pk=task_pk)
+    processed = (
+        TextDetectionResult.objects.filter(detection_task=task, status__in=["completed", "failed"]).count()
+    )
+    if processed != text_num:
+        return
+
+    with transaction.atomic():
+        # 获取悲观锁，防止并发写入导致状态覆盖
+        task = DetectionTask.objects.select_for_update().get(pk=task_pk)
+        
+        failed_count = TextDetectionResult.objects.filter(detection_task=task, status="failed").count()
+        if failed_count == text_num:
+            task.status = "failed"
+        elif failed_count > 0:
+            task.status = "partially_completed"
+        else:
+            task.status = "completed"
+            
+        task.completion_time = timezone.now()
+        task.save(update_fields=["status", "completion_time"])
+        
+        # TODO: generate_text_detection_task_report(task) 如果有针对文本的报告生成的话
+        # generate_detection_task_report(task)
+
+    log_action(
+        user=task.user,
+        operation_type='paper_detect' if task.task_type == 'paper_text' else 'review_detect',
+        target_type='DetectionTask',
+        target_id=task.id,
+        result='success' if task.status == "completed" else "partial_success" if task.status == "partially_completed" else "failure",
+        detail={'message': f'Text Task finalized with status: {task.status}', 'failed_count': failed_count}
+    )
+
+    send_task_progress_update(
+        task_id=task_pk, 
+        status=task.status, 
+        progress=100, 
+        message="文本检测任务已全部完成"
+    )
     send_task_completion_notification(task.user, task_pk)
 
 
