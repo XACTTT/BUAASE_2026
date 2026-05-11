@@ -35,7 +35,7 @@ class BertTextAIDetectionBridge:
             defaults["service_root"],
         )
         return {
-            "mode": os.getenv("BERT_TEXT_AI_MODE", "local").strip().lower(),
+            "mode": os.getenv("BERT_TEXT_AI_MODE", "auto").strip().lower(),
             "service_root": service_root,
             "request_filename": "request.json",
             "ready_marker": os.getenv("UNIFIED_AI_READY_MARKER", defaults["ready_marker"]),
@@ -65,13 +65,21 @@ class BertTextAIDetectionBridge:
         }
 
     @staticmethod
+    def _local_trigger_path(config) -> Path:
+        return Path(config["service_root"]).expanduser().resolve() / "trigger_unified.py"
+
+    @classmethod
+    def _can_use_local_mode(cls, config) -> bool:
+        return cls._local_trigger_path(config).is_file()
+
+    @staticmethod
     def _build_request_payload(text: str, language: str | None = None, max_length: int | None = None):
         payload = {
             "request_id": f"bert-text-{int(time.time() * 1000)}",
             "pipeline": "bert",
             "payload": {
                 "lang": BertTextAIDetectionBridge._normalize_language(language),
-                "text": text,
+                "answer": text,
             },
         }
         if max_length:
@@ -119,7 +127,7 @@ class BertTextAIDetectionBridge:
     @classmethod
     def _submit_local(cls, request_payload, config):
         service_root = Path(config["service_root"]).expanduser().resolve()
-        trigger_path = service_root / "trigger_unified.py"
+        trigger_path = cls._local_trigger_path(config)
         if not trigger_path.is_file():
             raise BertTextAIPermanentError(f"unified ai entrypoint not found: {trigger_path}")
 
@@ -301,10 +309,15 @@ class BertTextAIDetectionBridge:
         config = cls._config()
         last_exc = None
         attempts = max(1, config["submit_retry"] + 1)
+        mode = config["mode"]
 
         for attempt in range(1, attempts + 1):
             try:
-                if config["mode"] == "ssh":
+                if mode == "ssh":
+                    return cls._submit_remote(request_payload, config)
+                if mode == "auto":
+                    if cls._can_use_local_mode(config):
+                        return cls._submit_local(request_payload, config)
                     return cls._submit_remote(request_payload, config)
                 return cls._submit_local(request_payload, config)
             except BertTextAITransientError as exc:

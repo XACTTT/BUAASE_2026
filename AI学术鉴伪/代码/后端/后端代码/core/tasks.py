@@ -323,24 +323,7 @@ def parse_uploaded_file_task(file_management_id, container_id, content_type, fil
         )
         raise
 
-    # ─── 4. 若同一 DetectionTask 全部图片都完成，则标记任务完成 ─────────
-    task = dr.detection_task
-    # 获取任务中的所有检测结果
-    all_results = DetectionResult.objects.filter(detection_task=task)
-    if all(result.status == 'completed' for result in all_results):  # 使用正确的判断方式
-        # 使用事务确保任务状态的更新被提交到数据库
-        with transaction.atomic():
-            task.status = 'completed'  # 设置任务状态为已完成
-            task.completion_time = timezone.now()  # 记录完成时间
-            task.save(update_fields=['status', 'completion_time'])
-            generate_report_for_task(task.id)
-
-            print('send message')
-
-        # 通知用户任务已完成
-        send_task_completion_notification(task.user, task.id)
-
-    return f"Detection finished for DetectionResult #{dr.id}"
+    return f"Parse finished for FileManagement #{file_management_id}"
 
 from datetime import datetime
 

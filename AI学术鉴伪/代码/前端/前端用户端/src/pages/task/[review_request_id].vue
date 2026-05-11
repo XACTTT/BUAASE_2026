@@ -153,10 +153,10 @@
 
                     <!-- 模板化倾向分析 (Review模式) -->
                     <div v-if="currentTextResult.template_analysis_reason" class="mb-6">
-                      <div class="text-h6 font-weight-bold mb-2 d-flex align-center" :class="currentTextResult.template_tendency_score > 0.6 ? 'text-warning' : 'text-success'">
-                        <v-icon left class="mr-2">mdi-text-box-search-outline</v-icon> 模板化/套话分析 (得分: {{ currentTextResult.template_tendency_score.toFixed(2) }})
+                      <div class="text-h6 font-weight-bold mb-2 d-flex align-center" :class="(currentTextResult.template_tendency_score ?? 0) > 0.6 ? 'text-warning' : 'text-success'">
+                        <v-icon left class="mr-2">mdi-text-box-search-outline</v-icon> 模板化/套话分析 (得分: {{ (currentTextResult.template_tendency_score ?? 0).toFixed(2) }})
                       </div>
-                      <v-alert border="start" :border-color="currentTextResult.template_tendency_score > 0.6 ? 'warning' : 'success'" :color="currentTextResult.template_tendency_score > 0.6 ? 'warning' : 'success'" variant="tonal" class="text-body-1">
+                      <v-alert border="start" :border-color="(currentTextResult.template_tendency_score ?? 0) > 0.6 ? 'warning' : 'success'" :color="(currentTextResult.template_tendency_score ?? 0) > 0.6 ? 'warning' : 'success'" variant="tonal" class="text-body-1">
                         {{ currentTextResult.template_analysis_reason }}
                       </v-alert>
                     </div>
@@ -238,8 +238,8 @@
           <v-toolbar-title>检测详情</v-toolbar-title>
           <v-spacer></v-spacer>
         </v-toolbar>
-        <result-component v-if="showDetailDialog" :task-id="taskData?.id"
-          :imageUrl="getImageUrl(images[currentImageIndex].img_url)" :reasons="reasons" :result="result"
+        <result-component v-if="showDetailDialog && currentImage" :task-id="taskData?.id"
+          :imageUrl="getImageUrl(currentImage.img_url)" :reasons="reasons" :result="result"
           :scores="scores" :ai_detection="AI_detection" :annotations="annotations" />
       </v-card>
     </v-dialog>

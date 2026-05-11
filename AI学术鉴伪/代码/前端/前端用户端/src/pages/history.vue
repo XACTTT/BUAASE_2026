@@ -151,6 +151,9 @@ const headers = [
 
 interface Task {
   task_id: string
+  task_name?: string
+  task_type?: string
+  detect_type?: string
   upload_time: string
   completion_time: string
   status: 'pending' | 'in_progress' | 'completed' | 'failed' | 'partially_completed'
@@ -319,6 +322,9 @@ const fetchTasks = async (page: number, pageSize: number) => {
     tasks.value = taskList.map((task: any) => {
       const t: Task = {
         task_id: task.task_id,
+        task_name: task.task_name,
+        task_type: task.task_type,
+        detect_type: task.detect_type,
         upload_time: task.upload_time,
         completion_time: task.completion_time,
         status: task.status,
@@ -448,7 +454,11 @@ const applyFilters = () => {
 
 // 操作按钮处理函数
 const handleNext = (item: Task) => {
-  router.push(`/step/${item.task_id}`)
+  const type = item.task_type || item.detect_type
+  router.push({
+    path: `/step/${item.task_id}`,
+    query: type ? { type } : undefined,
+  })
 }
 
 //处理删除

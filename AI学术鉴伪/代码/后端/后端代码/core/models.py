@@ -684,7 +684,6 @@ class ManualReview(models.Model):
     
     # 文本相关
     text_resources = models.ManyToManyField(ReviewTextResource, related_name='manual_reviews', blank=True)
-    text_reviews = models.ManyToManyField('TextReview', related_name='manual_reviews', blank=True)
     
     review_time = models.DateTimeField(default=timezone.localtime, db_index=True)  # 审核时间，添加索引
     report_file = models.FileField(upload_to='reports/', null=True, blank=True,

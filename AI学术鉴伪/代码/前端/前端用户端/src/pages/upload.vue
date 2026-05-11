@@ -943,7 +943,7 @@ const handleNext = async () => {
 
       if (selectedModule.value === 'paper' || selectedModule.value === 'review') {
         const textPayload: Record<string, any> = {
-          resource_ids: normalizedFileIds,
+          file_ids: normalizedFileIds,
           task_name: currentTaskName.value || 'New Text Detection Task',
           task_type: selectedModule.value === 'paper' ? 'paper_text' : 'review_text'
         }

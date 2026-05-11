@@ -33,6 +33,7 @@
     "eslint-plugin-vue": "^9.30.0",
     "npm-run-all2": "^7.0.1",
     "pinia": "^2.1.7",
+    "playwright": "^1.59.1",
     "sass": "1.77.8",
     "sass-embedded": "^1.77.8",
     "typescript": "~5.6.3",

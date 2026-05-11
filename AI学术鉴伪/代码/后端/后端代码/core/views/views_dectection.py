@@ -26,6 +26,7 @@ from core.models import (
     User,
 )
 from core.services.material_validation_service import MaterialValidationService
+from core.services.content_extraction_service import ContentExtractionService
 from core.services.structured_detection_service import StructuredDetectionService
 from ..utils.log_utils import action_log
 from django.db.models import Q
@@ -128,6 +129,50 @@ def _normalize_structured_submit_payload(request):
             continue
 
     return detect_type, container_id, file_ids, review_text_ids
+
+
+def _build_text_resource_from_file(user, file_record, task_type, task_name):
+    sections = ContentExtractionService.extract_text_sections_from_file(file_record)
+    merged_text = '\n\n'.join(
+        str(item.get('text') or '').strip()
+        for item in sections
+        if str(item.get('text') or '').strip()
+    ).strip()
+
+    if not merged_text:
+        return None
+
+    container = file_record.container
+    if container is None:
+        container = ResourceContainer.objects.create(
+            organization=user.organization,
+            owner=user,
+            container_type='paper' if task_type == 'paper_text' else 'review',
+            title=task_name or f'{file_record.file_name}-text',
+            status='uploaded',
+            progress_status='ready',
+            submitted_at=timezone.localtime(),
+        )
+        file_record.container = container
+        file_record.save(update_fields=['container'])
+
+    existing = ReviewTextResource.objects.filter(
+        container=container,
+        source_type='file_parsed',
+        raw_text=merged_text,
+    ).first()
+    if existing:
+        return existing
+
+    return ReviewTextResource.objects.create(
+        container=container,
+        source_type='file_parsed',
+        language='zh',
+        raw_text=merged_text,
+        normalized_text=merged_text,
+        token_count=len(merged_text.split()),
+        parse_status='parsed',
+    )
 
 
 def _submit_structured_detection(request, user, mode, task_name, cmd_block_size, urn_k, if_use_llm):
@@ -503,16 +548,50 @@ def submit_text_detection(request):
     resource_ids.extend(_to_int_list(request.data.get('resource_ids')))
     resource_ids = sorted(set(resource_ids))
 
-    if not resource_ids:
-        return Response({"message": "No resource_ids provided"}, status=400)
+    file_ids = []
+    if hasattr(request.data, 'getlist'):
+        file_ids.extend(_to_int_list(request.data.getlist('file_ids')))
+        file_ids.extend(_to_int_list(request.data.getlist('file_id')))
+    file_ids.extend(_to_int_list(request.data.get('file_ids')))
+    file_ids.extend(_to_int_list(request.data.get('file_id')))
+    file_ids = sorted(set(file_ids))
 
-    # 验证资源存在并且属于该用户（这里假定容器拥有者是当前用户）
-    text_resources = ReviewTextResource.objects.filter(
+    text_resources_qs = ReviewTextResource.objects.filter(
         id__in=resource_ids,
         container__owner=request.user
     )
 
-    if not text_resources.exists():
+    text_resources = list(text_resources_qs.order_by('id'))
+
+    # 兼容当前上传页：前端预览阶段拿到的是 FileManagement.id，
+    # 旧实现却把它误当成 resource_ids 传入这里。
+    candidate_file_ids = file_ids or resource_ids
+    if not text_resources and candidate_file_ids:
+        file_queryset = FileManagement.objects.filter(
+            id__in=candidate_file_ids,
+            user=request.user
+        ).order_by('id')
+
+        if not file_queryset.exists():
+            return Response({"message": "No valid text resources found"}, status=404)
+
+        generated_resources = []
+        for file_record in file_queryset:
+            review_text = _build_text_resource_from_file(
+                user=request.user,
+                file_record=file_record,
+                task_type=task_type,
+                task_name=task_name,
+            )
+            if review_text is not None:
+                generated_resources.append(review_text)
+
+        if not generated_resources:
+            return Response({"message": "No textual content extracted from selected files"}, status=400)
+
+        text_resources = generated_resources
+
+    if not text_resources:
         return Response({"message": "No valid text resources found"}, status=404)
 
     # 创建检测任务
@@ -520,8 +599,10 @@ def submit_text_detection(request):
         organization=user.organization,
         user=request.user,
         task_name=task_name,
+        detect_type='paper' if task_type == 'paper_text' else 'review',
         task_type=task_type,
-        status='pending'
+        status='pending',
+        container=text_resources[0].container if text_resources and text_resources[0].container_id else None,
     )
 
     # 创建文本检测结果记录
@@ -595,6 +676,29 @@ def get_text_detection_result(request, resource_id):
         return Response({"message": f"Error: {str(e)}"}, status=500)
 
 
+def _resolve_text_result_type(text_resource, task=None):
+    container = getattr(text_resource, 'container', None)
+    container_type = getattr(container, 'container_type', None)
+    if container_type in {'paper', 'review', 'multi_material'}:
+        return container_type
+
+    task_type = getattr(task, 'task_type', None)
+    if task_type == 'paper_text':
+        return 'paper'
+    if task_type == 'review_text':
+        return 'review'
+    return 'unknown'
+
+
+def _resolve_task_detect_type(task):
+    task_type = getattr(task, 'task_type', None)
+    if task_type == 'paper_text':
+        return 'paper'
+    if task_type == 'review_text':
+        return 'review'
+    return getattr(task, 'detect_type', None)
+
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def get_task_text_results(request, task_id):
@@ -614,7 +718,7 @@ def get_task_text_results(request, task_id):
             data.append({
                 "result_id": tdr.id,
                 "resource_id": tdr.text_resource.id,
-                "text_type": tdr.text_resource.text_type,
+                "text_type": _resolve_text_result_type(tdr.text_resource, task),
                 "status": tdr.status,
                 "is_fake": tdr.is_fake,
                 "confidence_score": tdr.confidence_score,
@@ -949,7 +1053,7 @@ def structured_task_result(request, task_id):
             {
                 'task_id': task.id,
                 'task_name': task.task_name,
-                'detect_type': task.detect_type,
+                'detect_type': _resolve_task_detect_type(task),
                 'task_type': task.task_type,
                 'status': task.status,
                 'failure_reason': task.failure_reason,
@@ -962,7 +1066,7 @@ def structured_task_result(request, task_id):
                     {
                         'result_id': result.id,
                         'resource_id': result.text_resource_id,
-                        'text_type': result.text_resource.text_type,
+                        'text_type': _resolve_text_result_type(result.text_resource, task),
                         'status': result.status,
                         'is_fake': result.is_fake,
                         'confidence_score': result.confidence_score,
@@ -1097,7 +1201,8 @@ def get_user_tasks(request):
         {
             'task_id': task.id,
             'task_name': task.task_name,
-            'detect_type': task.detect_type,
+            'detect_type': _resolve_task_detect_type(task),
+            'task_type': task.task_type,
             'container_id': task.container_id,
             'upload_time': timezone.localtime(task.upload_time).strftime('%Y-%m-%d %H:%M:%S'),
             'status': task.status,

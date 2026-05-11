@@ -1,5 +1,6 @@
 import atexit
 import base64
+import json
 import pickle
 from pathlib import Path
 
@@ -23,6 +24,7 @@ REMOTE_AI_CONFIG = {
     "remote_ready_marker": "ai service ready",
     "remote_result_marker": "ai service result",
     "remote_upload_dir": "/mnt/data14/ccy/Bert/SE/AI_service/service_code/test/",
+    "remote_request_dir": "/mnt/data14/ccy/Bert/SE/AI_service/service_code/requests",
 }
 
 
@@ -108,7 +110,46 @@ def remote_monitor(stdout_stream, stderr_stream, config=None):
 
     output = stdout_stream.readline()
     result_bytes = base64.b64decode(output)
-    return pickle.loads(result_bytes)
+
+    # 统一入口当前先返回 JSON 外壳。
+    # 图片 pipeline 的真实大结果会放在 result.transport.data 中，
+    # 其格式仍为 pickle_base64，保持与旧图片后处理兼容。
+    try:
+        payload = json.loads(result_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        # 兼容旧协议：stdout 下一行直接就是 pickle 的 base64
+        return pickle.loads(result_bytes)
+
+    if not isinstance(payload, dict):
+        raise RuntimeError("远程返回格式非法：顶层不是 JSON object")
+
+    if payload.get("success") is False:
+        error = payload.get("error") or {}
+        raise RuntimeError(
+            f"远程 AI 服务返回失败: {error.get('type', 'Error')}: {error.get('message', 'unknown error')}"
+        )
+
+    pipeline = payload.get("pipeline")
+    result = payload.get("result")
+
+    if pipeline == "image":
+        if not isinstance(result, dict):
+            raise RuntimeError("远程 image pipeline 返回结果缺少 result 对象")
+
+        transport = result.get("transport") or {}
+        if not isinstance(transport, dict):
+            raise RuntimeError("远程 image pipeline 返回结果缺少 transport 对象")
+
+        if transport.get("format") != "pickle_base64":
+            raise RuntimeError(f"远程 image transport 格式不支持: {transport.get('format')}")
+
+        encoded = transport.get("data")
+        if not isinstance(encoded, str):
+            raise RuntimeError("远程 image transport 缺少 data 字段")
+
+        return pickle.loads(base64.b64decode(encoded))
+
+    raise RuntimeError(f"远程返回了非图片 pipeline 结果: {pipeline}")
 
 
 def transfer_image(ssh_client, local_path, remote_path=None, config=None):
@@ -170,8 +211,31 @@ def get_result(local_path, json_path, config=None):
     config = config or REMOTE_AI_CONFIG
     ensure_connection(config)
 
-    transfer_image(ssh, json_path, config=config)
-    transfer_image(ssh, local_path, config=config)
+    remote_upload_dir = Path(config["remote_upload_dir"])
+    remote_request_dir = Path(config["remote_request_dir"])
+
+    remote_json_path = str((remote_upload_dir / Path(json_path).name).as_posix())
+    remote_zip_path = str((remote_upload_dir / Path(local_path).name).as_posix())
+    remote_request_path = str((remote_request_dir / "request.json").as_posix())
+
+    request_payload = {
+        "request_id": f"image-{Path(local_path).stem}",
+        "pipeline": "image",
+        "payload": {
+            "image_zip": remote_zip_path,
+            "config_path": remote_json_path,
+        },
+    }
+
+    local_request_path = Path(json_path).with_name("request.json")
+    local_request_path.write_text(
+        json.dumps(request_payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    transfer_image(ssh, json_path, remote_path=remote_json_path, config=config)
+    transfer_image(ssh, local_path, remote_path=remote_zip_path, config=config)
+    transfer_image(ssh, local_request_path, remote_path=remote_request_path, config=config)
 
     try:
         result = remote_monitor(stdout, stderr, config=config)

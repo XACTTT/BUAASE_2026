@@ -1,5 +1,6 @@
 import io
 import shutil
+import sys
 import tempfile
 from unittest.mock import patch
 
@@ -19,7 +20,13 @@ from core.models import (
     StructuredDetectionResult,
     TextDetectionResult,
 )
-from core.tasks_new import process_single_text_result, run_structured_detection_task
+from core.services.bert_text_ai_bridge import BertTextAIDetectionBridge
+from core.tasks_new import (
+    finalize_text_task,
+    process_single_text_result,
+    process_text_detection_task,
+    run_structured_detection_task,
+)
 
 
 class ResourceManagementApiTests(TestCase):
@@ -176,8 +183,49 @@ class ResourceManagementApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         task = DetectionTask.objects.get(id=response.data['task_id'])
         self.assertEqual(task.task_type, 'review_text')
+        self.assertEqual(task.detect_type, 'review')
         self.assertTrue(
             TextDetectionResult.objects.filter(detection_task=task, text_resource=review_text).exists()
+        )
+        mocked_apply_async.assert_called_once()
+
+    @patch('core.views.views_dectection.process_text_detection_task.apply_async')
+    def test_submit_text_detection_accepts_file_ids_and_creates_review_text_resource(self, mocked_apply_async):
+        upload_resp = self.client.post(
+            '/api/upload/',
+            {
+                'file': self._txt_upload('review.txt', '第一段内容\n\n第二段内容'),
+                'resource_role': 'review_main',
+            },
+        )
+        self.assertEqual(upload_resp.status_code, 200)
+        file_id = upload_resp.data['file_id']
+
+        response = self.client.post(
+            '/api/detection/submit_text/',
+            {
+                'task_name': 'review-from-file',
+                'task_type': 'review_text',
+                'file_ids': [file_id],
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        task = DetectionTask.objects.get(id=response.data['task_id'])
+        self.assertEqual(task.task_type, 'review_text')
+        self.assertEqual(task.detect_type, 'review')
+        self.assertIsNotNone(task.container_id)
+
+        created_review_text = ReviewTextResource.objects.filter(container_id=task.container_id).first()
+        self.assertIsNotNone(created_review_text)
+        self.assertEqual(created_review_text.source_type, 'file_parsed')
+        self.assertIn('第一段内容', created_review_text.raw_text)
+        self.assertTrue(
+            TextDetectionResult.objects.filter(
+                detection_task=task,
+                text_resource=created_review_text,
+            ).exists()
         )
         mocked_apply_async.assert_called_once()
 
@@ -234,6 +282,109 @@ class ResourceManagementApiTests(TestCase):
         self.assertEqual(result.confidence_score, 0.93)
         self.assertEqual(result.template_tendency_score, 0.93)
         self.assertIn('AIGC 概率', result.template_analysis_reason)
+
+    @patch('core.tasks_new.chord')
+    @patch('core.tasks_new.group')
+    def test_process_text_detection_task_routes_subtasks_to_ai_queue(self, mocked_group, mocked_chord):
+        review_container = ResourceContainer.objects.create(
+            organization=self.organization,
+            owner=self.user,
+            container_type='review',
+            title='Review Container',
+        )
+        review_text = ReviewTextResource.objects.create(
+            container=review_container,
+            source_type='paste',
+            language='zh',
+            raw_text='这是一段需要检测的评审文本',
+            normalized_text='这是一段需要检测的评审文本',
+            token_count=1,
+            parse_status='parsed',
+        )
+        task = DetectionTask.objects.create(
+            organization=self.organization,
+            user=self.user,
+            task_name='review-text-check',
+            task_type='review_text',
+            status='pending',
+        )
+        result = TextDetectionResult.objects.create(
+            detection_task=task,
+            text_resource=review_text,
+            status='pending',
+        )
+
+        chord_result = mocked_chord.return_value
+
+        process_text_detection_task.run([result.id], task.id, True)
+
+        mocked_group.assert_called_once()
+        header_tasks = mocked_group.call_args.args
+        self.assertEqual(len(header_tasks), 1)
+        self.assertEqual(header_tasks[0].options.get('queue'), 'ai')
+
+        mocked_chord.assert_called_once()
+        body_signature = mocked_chord.call_args.args[1]
+        self.assertEqual(body_signature.options.get('queue'), 'ai')
+        chord_result.delay.assert_called_once()
+
+        result.refresh_from_db()
+        task.refresh_from_db()
+        self.assertEqual(result.status, 'in_progress')
+        self.assertEqual(task.status, 'in_progress')
+
+    @patch.object(BertTextAIDetectionBridge, '_submit_local')
+    @patch.object(BertTextAIDetectionBridge, '_submit_remote')
+    @patch.object(BertTextAIDetectionBridge, '_can_use_local_mode', return_value=False)
+    @patch.object(BertTextAIDetectionBridge, '_config')
+    def test_bert_bridge_auto_mode_falls_back_to_ssh(
+        self,
+        mocked_config,
+        mocked_can_use_local_mode,
+        mocked_submit_remote,
+        mocked_submit_local,
+    ):
+        mocked_config.return_value = {
+            'mode': 'auto',
+            'service_root': '/tmp/nonexistent-service-root',
+            'request_filename': 'request.json',
+            'ready_marker': 'ai service ready',
+            'result_marker': 'ai service result',
+            'connect_timeout': 10.0,
+            'ready_timeout': 60.0,
+            'result_timeout': 300.0,
+            'submit_retry': 1,
+            'host': '127.0.0.1',
+            'port': 22,
+            'username': 'tester',
+            'password': 'secret',
+            'remote_request_dir': '/tmp/requests',
+            'remote_command': 'python trigger_unified.py',
+            'local_python': sys.executable,
+            'bert_project_root': '/tmp/checkpoints',
+            'bert_text_model_dir': '',
+        }
+        mocked_submit_remote.return_value = {
+            'is_aigc': False,
+            'confidence_score': 0.12,
+            'probabilities': {'human': 0.88, 'aigc': 0.12},
+        }
+
+        result = BertTextAIDetectionBridge.submit_text('test review text', language='zh')
+
+        self.assertFalse(result['is_aigc'])
+        mocked_can_use_local_mode.assert_called_once()
+        mocked_submit_remote.assert_called_once()
+        mocked_submit_local.assert_not_called()
+
+    def test_bert_bridge_single_text_payload_uses_answer_field(self):
+        payload = BertTextAIDetectionBridge._build_request_payload('test review text', language='zh', max_length=128)
+
+        self.assertEqual(payload['pipeline'], 'bert')
+        self.assertEqual(payload['payload']['lang'], 'chinese')
+        self.assertEqual(payload['payload']['answer'], 'test review text')
+        self.assertNotIn('text', payload['payload'])
+        self.assertEqual(payload['payload']['max_length'], 128)
 
     def test_material_validation_pass_and_fail(self):
         container = ResourceContainer.objects.create(
@@ -311,3 +462,42 @@ class ResourceManagementApiTests(TestCase):
         self.assertEqual(result_resp.status_code, 200)
         self.assertEqual(result_resp.data['detect_type'], 'paper')
         self.assertIn('dimensions', result_resp.data['result'])
+
+    def test_structured_result_for_review_text_task_uses_container_type_as_text_type(self):
+        review_container = ResourceContainer.objects.create(
+            organization=self.organization,
+            owner=self.user,
+            container_type='review',
+            title='Review Container',
+        )
+        review_text = ReviewTextResource.objects.create(
+            container=review_container,
+            source_type='paste',
+            language='zh',
+            raw_text='这是一段需要检测的评审文本',
+            normalized_text='这是一段需要检测的评审文本',
+            token_count=1,
+            parse_status='parsed',
+        )
+        task = DetectionTask.objects.create(
+            organization=self.organization,
+            user=self.user,
+            task_name='review-text-check',
+            task_type='review_text',
+            status='completed',
+            container=review_container,
+        )
+        TextDetectionResult.objects.create(
+            detection_task=task,
+            text_resource=review_text,
+            status='completed',
+            is_fake=False,
+            confidence_score=0.91,
+            template_tendency_score=0.91,
+        )
+
+        result_resp = self.client.get(f'/api/tasks/{task.id}/structured-result/')
+        self.assertEqual(result_resp.status_code, 200)
+        self.assertEqual(result_resp.data['detect_type'], 'review')
+        self.assertEqual(result_resp.data['task_type'], 'review_text')
+        self.assertEqual(result_resp.data['results'][0]['text_type'], 'review')

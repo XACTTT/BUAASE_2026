@@ -81,7 +81,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useSnackbarStore } from '@/stores/snackbar';
 import upload from '@/api/upload'
 import { appendPreviewToken, resolveApiAssetUrl } from '@/utils/preview-url'
@@ -180,6 +180,17 @@ const previewCardStyle = computed(() => {
 const loading = ref(false)
 const pageSize = ref(50)
 const loadedImageIds = ref<Set<number>>(new Set())
+const retryCount = ref(0)
+const maxRetryCount = 12
+const retryDelayMs = 1200
+let retryTimer: ReturnType<typeof setTimeout> | null = null
+
+const clearRetryTimer = () => {
+  if (retryTimer) {
+    clearTimeout(retryTimer)
+    retryTimer = null
+  }
+}
 
 const appendImages = (images: any[]) => {
   images.forEach(img => {
@@ -240,7 +251,21 @@ const loadAllImages = async () => {
     for (const targetFileId of targets) {
       await loadImagesForFile(targetFileId)
     }
+
+    // 上传成功后，后端会异步创建 ImageUpload。
+    // 如果首轮请求时还没有图片，就短暂轮询等待提取完成。
+    if (!localImages.value.length && retryCount.value < maxRetryCount) {
+      retryCount.value += 1
+      clearRetryTimer()
+      retryTimer = setTimeout(() => {
+        loadAllImages()
+      }, retryDelayMs)
+      return
+    }
+
+    retryCount.value = 0
   } catch (error) {
+    retryCount.value = 0
     snackbar.showMessage('图片加载失败', 'error')
   } finally {
     loading.value = false
@@ -281,6 +306,7 @@ const handleName = () => {
 // 获取提取的图片
 onMounted(async () => {
   if (props.fileId || props.fileIds.length) {
+    retryCount.value = 0
     await loadAllImages()
   }
 })
@@ -288,11 +314,17 @@ onMounted(async () => {
 watch(
   () => [props.fileId, props.fileIds.join(',')],
   async () => {
+    clearRetryTimer()
     if (props.fileId || props.fileIds.length) {
+      retryCount.value = 0
       await loadAllImages()
     }
   }
 )
+
+onUnmounted(() => {
+  clearRetryTimer()
+})
 
 const mappedTag = [
   { title: '医学', value: 'Medicine' },

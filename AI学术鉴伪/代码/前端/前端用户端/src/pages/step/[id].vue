@@ -152,7 +152,15 @@ const resolvedTaskType = computed(() => {
   return taskMeta.value?.task_type || (route.query.type as string) || taskMeta.value?.detect_type || 'image'
 })
 const isTextTask = computed(() => ['paper_text', 'review_text'].includes(resolvedTaskType.value))
-const isImageTask = computed(() => resolvedTaskType.value === 'image' && taskMeta.value?.detect_type === 'image')
+const isImageTask = computed(() => {
+  if (isTextTask.value) {
+    return false
+  }
+  if (resolvedTaskType.value === 'image') {
+    return true
+  }
+  return taskMeta.value?.detect_type === 'image'
+})
 const materialSummary = computed(() => {
   const summary = taskMeta.value?.material_summary
   return summary && typeof summary === 'object' ? summary : null
@@ -245,6 +253,9 @@ onMounted(async () => {
       return
     }
     taskMeta.value = (await publisher.getStructuredTaskResult(taskId.value)).data
+    if (!taskMeta.value?.detect_type && taskMeta.value?.task_type === 'image') {
+      taskMeta.value.detect_type = 'image'
+    }
   } catch (error) {
     snackbar.showMessage('获取任务详情失败', 'error')
     router.push('/history')

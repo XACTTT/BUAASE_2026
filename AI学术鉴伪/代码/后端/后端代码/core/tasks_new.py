@@ -404,16 +404,20 @@ def process_text_detection_task(self, text_result_ids: List[int], task_pk: int, 
         if tr.text_resource.normalized_text:
             text_content = tr.text_resource.normalized_text
             
-        subtasks.append(process_single_text_result.s(tr.id, text_content, is_review))
+        subtasks.append(
+            process_single_text_result.s(tr.id, text_content, is_review).set(queue="ai")
+        )
         
     # 3. fan-in: 全部结束后触发文本专属的 finalize
-    from celery import chord, group
-    chord(group(subtasks), finalize_text_task.s(task_pk, len(text_result_ids))).delay()
+    chord(
+        group(subtasks),
+        finalize_text_task.s(task_pk, len(text_result_ids)).set(queue="ai"),
+    ).delay()
     
     print(f"[process_text_detection_task] 分发完成，用时 {time.time() - t0} s")
 
 
-@shared_task(queue="cpu", acks_late=True)
+@shared_task(queue="ai", acks_late=True)
 def process_single_text_result(tr_pk: int, text_content: str, is_review: bool) -> bool:
     """单个文本的 Bert 文本鉴伪调用与数据库写回。"""
     tr = TextDetectionResult.objects.select_related("detection_task", "text_resource").get(pk=tr_pk)
@@ -463,6 +467,7 @@ def process_single_text_result(tr_pk: int, text_content: str, is_review: bool) -
         
     except BertTextAITransientError as e:
         import traceback
+        _record_text_task_failure(tr.detection_task, str(e))
         log_action(
             user=tr.detection_task.user,
             operation_type='review_detect' if is_review else 'paper_detect',
@@ -477,6 +482,7 @@ def process_single_text_result(tr_pk: int, text_content: str, is_review: bool) -
         return False
     except (BertTextAIPermanentError, Exception) as e:
         import traceback
+        _record_text_task_failure(tr.detection_task, str(e))
         log_action(
             user=tr.detection_task.user,
             operation_type='review_detect' if is_review else 'paper_detect',
@@ -491,7 +497,7 @@ def process_single_text_result(tr_pk: int, text_content: str, is_review: bool) -
         return False
 
 
-@shared_task(queue="cpu", acks_late=True)
+@shared_task(queue="ai", acks_late=True)
 def finalize_text_task(_chord_results: list | None, task_pk: int, text_num: int, _=None) -> None:
     """文本任务全部检测完成后的收尾"""
     task = DetectionTask.objects.get(pk=task_pk)
@@ -660,6 +666,14 @@ def _build_bert_reason(ai_result: Dict[str, Any], is_review: bool) -> str:
         f"Bert 文本鉴伪判定该文本更接近人工撰写，"
         f"标签为 {label_name}，置信度 {score:.4f}，人工概率 {human_prob:.4f}。"
     )
+
+
+def _record_text_task_failure(task: DetectionTask, reason: str) -> None:
+    reason = (reason or "").strip()
+    if not reason:
+        return
+
+    DetectionTask.objects.filter(pk=task.pk).update(failure_reason=reason)
 
 
 # ───────────────────────────────────────────────────────────────────────────────

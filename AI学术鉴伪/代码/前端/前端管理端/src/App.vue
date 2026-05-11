@@ -166,7 +166,7 @@
           <v-spacer></v-spacer>
           <v-btn color="grey" variant="text" @click="showBroadcastDialog = false">取消</v-btn>
           <v-btn color="primary" @click="sendBroadcast" 
-            :disabled="!broadcastTitle || !broadcastContent || broadcastTitle.length > 15 || broadcastContent.length > 100">
+            :disabled="!broadcastTitle || !broadcastContent || broadcastTitle.length > 15 || broadcastContent.length > 400">
             发送
           </v-btn>
         </v-card-actions>

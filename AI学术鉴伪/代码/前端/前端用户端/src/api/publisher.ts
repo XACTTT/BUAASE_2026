@@ -41,11 +41,6 @@ export default {
     return http.post('/detection/submit/', data)
   },
 
-  //获取某个任务的所有图片的AI检测结果
-  getTaskResults(data: any) {
-    return http.get(`/tasks/${data}/results/`)
-  },
-
   getStructuredTaskResult(data: any) {
     return http.get(`/tasks/${data}/structured-result/`)
   },
@@ -63,11 +58,6 @@ export default {
   //获取单条文本记录的AI检测结果详情
   getSingleTextResult(data: any) {
     return http.get(`/detection/text/${data}/`)
-  },
-
-  //获取某个任务的所有图片的AI检测结果
-  getTaskResults(data: any) {
-    return http.get(`/tasks/${data}/results/`)
   },
 
   getFakeImage(data: any) {
