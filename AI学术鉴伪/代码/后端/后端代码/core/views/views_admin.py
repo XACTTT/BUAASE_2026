@@ -1493,8 +1493,8 @@ def get_all_user_tasks(request):
                 "task_id": task.id,
                 "task_name": task.task_name,
                 "status": task.status,
-                "upload_time": timezone.localtime(task.upload_time),
-                "completion_time": timezone.localtime(task.completion_time),
+                "upload_time": timezone.localtime(task.upload_time) if task.upload_time else None,
+                "completion_time": timezone.localtime(task.completion_time) if task.completion_time else None,
                 "organization": task.organization.name if task.organization else None,
             } for task in tasks
         ]
