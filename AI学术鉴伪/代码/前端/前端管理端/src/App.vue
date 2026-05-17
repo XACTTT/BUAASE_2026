@@ -277,20 +277,18 @@ const goToLogin = () => {
 }
 
 const handleLogout = async () => {
-  try {
-    //localStorage.clear()
-    let refresh = localStorage.getItem("1-refresh")
-    const response = await user.logout({ refresh })
-    localStorage.removeItem("1-refresh")
-    localStorage.removeItem("1-token")
-    isLoggedIn.value = false
-    localStorage.setItem("1-isLoggedIn", "false")
-    userStore.clearUserInfo() // 清除用户信息
-    snackbar.showMessage('退出成功', 'success')
-    router.push('/login')
-  } catch (error: any) {
-    snackbar.showMessage('请联系管理员', 'error')
-  }
+  const refresh = localStorage.getItem("1-refresh")
+  localStorage.removeItem("1-refresh")
+  localStorage.removeItem("1-token")
+  isLoggedIn.value = false
+  localStorage.setItem("1-isLoggedIn", "false")
+  userStore.clearUserInfo() // 清除用户信息
+  snackbar.showMessage('退出成功', 'success')
+  router.push('/login')
+
+  user.logout({ refresh }).catch(() => {
+    snackbar.showMessage('已退出(本地)，服务端未确认', 'warning')
+  })
 }
 
 const toggleTheme = () => {

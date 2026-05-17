@@ -1204,7 +1204,7 @@ def get_user_tasks(request):
             'detect_type': _resolve_task_detect_type(task),
             'task_type': task.task_type,
             'container_id': task.container_id,
-            'upload_time': timezone.localtime(task.upload_time).strftime('%Y-%m-%d %H:%M:%S'),
+            'upload_time': timezone.localtime(task.upload_time).strftime('%Y-%m-%d %H:%M:%S') if task.upload_time else None,
             'status': task.status,
             'failure_reason': task.failure_reason,
             'completion_time': timezone.localtime(task.completion_time).strftime('%Y-%m-%d %H:%M:%S') if task.completion_time else None

@@ -369,8 +369,8 @@ def get_task_summary_lzy(request):
             "task_id": task.id,
             "task_name": task.task_name,
             "status": task.status,
-            "upload_time": timezone.localtime(task.upload_time),
-            "completion_time": timezone.localtime(task.completion_time),
+            "upload_time": timezone.localtime(task.upload_time).strftime('%Y-%m-%d %H:%M:%S') if task.upload_time else None,
+            "completion_time": timezone.localtime(task.completion_time).strftime('%Y-%m-%d %H:%M:%S') if task.completion_time else None,
         })
 
     return Response({
@@ -397,8 +397,8 @@ def get_detection_task_status(request, task_id):
             "task_id": detection_task.id,
             "task_name": detection_task.task_name,
             "status": detection_task.status,
-            "upload_time": timezone.localtime(detection_task.upload_time),
-            "completion_time": timezone.localtime(detection_task.completion_time),
+            "upload_time": timezone.localtime(detection_task.upload_time).strftime('%Y-%m-%d %H:%M:%S') if detection_task.upload_time else None,
+            "completion_time": timezone.localtime(detection_task.completion_time).strftime('%Y-%m-%d %H:%M:%S') if detection_task.completion_time else None,
             "detection_results": []
         }
 
@@ -408,7 +408,7 @@ def get_detection_task_status(request, task_id):
                 "status": result.status,
                 "is_fake": result.is_fake,
                 "confidence_score": result.confidence_score,
-                "detection_time": timezone.localtime(result.detection_time),
+                "detection_time": timezone.localtime(result.detection_time).strftime('%Y-%m-%d %H:%M:%S') if result.detection_time else None,
             })
 
         return Response(task_status)
@@ -433,8 +433,8 @@ def get_all_user_tasks(request):
                 "task_id": task.id,
                 "task_name": task.task_name,
                 "status": task.status,
-                "upload_time": timezone.localtime(task.upload_time),
-                "completion_time": timezone.localtime(task.completion_time),
+                "upload_time": timezone.localtime(task.upload_time).strftime('%Y-%m-%d %H:%M:%S') if task.upload_time else None,
+                "completion_time": timezone.localtime(task.completion_time).strftime('%Y-%m-%d %H:%M:%S') if task.completion_time else None,
             })
 
         return Response({
