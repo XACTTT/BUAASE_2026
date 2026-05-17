@@ -2,6 +2,7 @@ import atexit
 import base64
 import json
 import pickle
+import socket
 from pathlib import Path
 
 import paramiko
@@ -65,16 +66,23 @@ def remote_call(hostname, username, port, password, config=None):
     command = build_remote_command(config)
     stdin_stream, stdout_stream, stderr_stream = ssh_client.exec_command(command)
 
+    # 设置 30 分钟超时
+    stdout_stream.channel.settimeout(1800.0)
+
     success_detected = False
-    while True:
-        line = stdout_stream.readline()
-        if not line:
-            break
-        line = line.strip()
-        print("远程输出:", line)
-        if config["remote_ready_marker"].lower() in line.lower():
-            success_detected = True
-            break
+    try:
+        while True:
+            line = stdout_stream.readline()
+            if not line:
+                break
+            line = line.strip()
+            print("远程输出:", line)
+            if config["remote_ready_marker"].lower() in line.lower():
+                success_detected = True
+                break
+    except socket.timeout:
+        ssh_client.close()
+        raise RuntimeError("远程AI脚本执行超时或死锁 (超过30分钟)")
 
     if not success_detected:
         err = stderr_stream.read().decode()
@@ -89,18 +97,25 @@ def remote_call(hostname, username, port, password, config=None):
 def remote_monitor(stdout_stream, stderr_stream, config=None):
     config = config or REMOTE_AI_CONFIG
     result_detected = False
-    while True:
-        line = stdout_stream.readline()
-        if not line:
-            err = stderr_stream.read().decode()
-            if err:
-                raise RuntimeError(f"远程执行错误:{err}")
-            break
-        line = line.strip()
-        print("远程输出:", line)
-        if config["remote_result_marker"].lower() in line.lower():
-            result_detected = True
-            break
+
+    # 设置 30 分钟超时
+    stdout_stream.channel.settimeout(1800.0)
+
+    try:
+        while True:
+            line = stdout_stream.readline()
+            if not line:
+                err = stderr_stream.read().decode()
+                if err:
+                    raise RuntimeError(f"远程执行错误:{err}")
+                break
+            line = line.strip()
+            print("远程输出:", line)
+            if config["remote_result_marker"].lower() in line.lower():
+                result_detected = True
+                break
+    except socket.timeout:
+        raise RuntimeError("远程AI脚本执行超时或死锁 (超过30分钟没有输出)")
 
     if not result_detected:
         err = stderr_stream.read().decode()
