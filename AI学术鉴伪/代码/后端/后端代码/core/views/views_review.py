@@ -101,39 +101,62 @@ def create_review_task_with_admin_check(request):
         return Response({'error': 'Only publishers can create review tasks'}, status=403)
 
     image_ids = request.data.get('image_ids', [])
+    text_ids = request.data.get('text_ids', [])
     reviewers = request.data.get('reviewers', [])
     reason = request.data.get('reason', 'No reason provided')
 
     # 验证参数
-    if not image_ids:
-        return Response({'error': 'image_ids is required'}, status=400)
+    if not image_ids and not text_ids:
+        return Response({'error': 'image_ids or text_ids is required'}, status=400)
     if not reviewers:
         return Response({'error': 'reviewers is required'}, status=400)
 
     try:
+        images = []
+        texts = []
+        
         # 获取图片对象
-        images = ImageUpload.objects.filter(id__in=image_ids)
-        if len(images) != len(image_ids):
-            return Response({'error': 'Some image IDs do not exist'}, status=404)
+        if image_ids:
+            images = ImageUpload.objects.filter(id__in=image_ids)
+            if len(images) != len(image_ids):
+                return Response({'error': 'Some image IDs do not exist'}, status=404)
+                
+        # 获取文本对象
+        if text_ids:
+            from core.models import ReviewTextResource
+            texts = ReviewTextResource.objects.filter(id__in=text_ids)
+            if len(texts) != len(text_ids):
+                return Response({'error': 'Some text IDs do not exist'}, status=404)
 
         # 获取审核员对象
         reviewer_users = User.objects.filter(organization=user.organization, id__in=reviewers, role='reviewer')
         if len(reviewer_users) != len(reviewers):
             return Response({'error': 'Some reviewer IDs do not exist or are not reviewers'}, status=404)
 
-        detection_result = images[0].detection_results.first()
-        if not detection_result:
-            return Response({'error': 'No detection result found for the provided images'}, status=404)
+        detection_result = None
+        text_detection_result = None
+        
+        if images:
+            detection_result = images[0].detection_results.first()
+        if texts:
+            text_detection_result = texts[0].detection_results.first()
+
+        if not detection_result and not text_detection_result:
+            return Response({'error': 'No detection result found for the provided resources'}, status=404)
 
         # 创建审核请求，状态设为pending
         review_request = ReviewRequest.objects.create(
             detection_result=detection_result,
+            text_detection_result=text_detection_result,
             user=request.user,
             reason=reason,
             organization=user.organization,
         )
 
-        review_request.imgs.add(*images)
+        if images:
+            review_request.imgs.add(*images)
+        if texts:
+            review_request.text_resources.add(*texts)
         # 添加审核人员
         for reviewer in reviewer_users:
             review_request.reviewers.add(reviewer)
@@ -213,6 +236,59 @@ def get_img_review_all(request):
                 'username': reviewer.username,
                 'avatar': _safe_avatar_url(reviewer),
                 'result': image_review.result  # 0/1 表示人工审核的结果是真还是假
+            })
+
+    return Response({
+        'reviewers_results': reviewers_results
+    })
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_text_review_all(request):
+    """
+    用于publisher获取指定ReviewRequest的可指定文本的**整体**审核结果
+    """
+    user_id = request.user.id
+    user = User.objects.get(id=user_id)
+    if user.role != 'publisher':
+        return Response({'error': 'Only publishers can view task details'}, status=403)
+
+    review_request_id = request.query_params.get('review_request_id', '')
+    text_id = request.query_params.get('text_id', '')
+
+    if not review_request_id:
+        return Response({'error': 'review_request_id is required'}, status=400)
+    if not text_id:
+        return Response({'error': 'text_id is required'}, status=400)
+
+    try:
+        review_request = ReviewRequest.objects.get(id=review_request_id)
+    except ReviewRequest.DoesNotExist:
+        return Response({'error': 'ReviewRequest not found'}, status=404)
+
+    manual_reviews = ManualReview.objects.filter(
+        review_request=review_request,
+        status='completed',
+        text_resources__id=text_id
+    ).distinct()
+
+    reviewers_results = []
+
+    for manual_review in manual_reviews:
+        reviewer = manual_review.reviewer
+        from core.models import TextReview
+        text_reviews = TextReview.objects.filter(
+            manual_review=manual_review,
+            text_resource_id=text_id
+        )
+
+        for tr in text_reviews:
+            reviewers_results.append({
+                'id': reviewer.id,
+                'username': reviewer.username,
+                'avatar': _safe_avatar_url(reviewer),
+                'result': tr.result
             })
 
     return Response({
@@ -309,6 +385,48 @@ def get_image_review(request):
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+def get_text_review(request):
+    """
+    用于publisher获取指定ReviewRequest的可指定文本的**单个详细**审核结果
+    """
+    user_id = request.user.id
+    user = User.objects.get(id=user_id)
+    if user.role != 'publisher':
+        return Response({'error': 'Only publishers can view task details'}, status=403)
+
+    review_request_id = request.query_params.get('review_request_id', '')
+    text_id = request.query_params.get('text_id', '')
+    reviewer_id = request.query_params.get('reviewer_id', '')
+
+    if not review_request_id or not text_id or not reviewer_id:
+        return Response({'error': 'Missing parameters'}, status=400)
+
+    try:
+        review_request = ReviewRequest.objects.get(id=review_request_id)
+        manual_review = ManualReview.objects.get(
+            review_request=review_request,
+            reviewer_id=reviewer_id,
+            text_resources__id=text_id
+        )
+        from core.models import TextReview
+        text_review = TextReview.objects.get(
+            manual_review=manual_review,
+            text_resource_id=text_id
+        )
+    except (ReviewRequest.DoesNotExist, ManualReview.DoesNotExist, TextReview.DoesNotExist):
+        return Response({'error': 'Resource not found'}, status=404)
+
+    return Response({
+        'overall_comment': text_review.overall_comment,
+        'paragraph_reviews': text_review.paragraph_reviews,
+        'template_review_score': text_review.template_review_score,
+        'template_review_comment': text_review.template_review_comment,
+        'result': text_review.result
+    })
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
 def get_request_completion_status(request, task_id):
     user_id = request.user.id
     user = User.objects.get(id=user_id)
@@ -320,9 +438,22 @@ def get_request_completion_status(request, task_id):
     except DetectionTask.DoesNotExist:
         return Response({'error': 'Task not found'}, status=404)
 
-    review_requests = detection_task.detection_results.first().review_requests.all()
-    total_reviewers = review_requests.count()
-    completed_reviewers = review_requests.filter(status='completed').count()
+    review_requests = []
+    
+    # 获取所有图片和文本检测结果关联的审查请求
+    if detection_task.detect_type == 'image' or detection_task.detect_type == 'multi':
+        for result in detection_task.detection_results.all():
+            review_requests.extend(list(result.review_requests.all()))
+            
+    if detection_task.detect_type != 'image':
+        for result in detection_task.text_detection_results.all():
+            review_requests.extend(list(result.review_requests.all()))
+            
+    # 去重
+    review_requests = list(set(review_requests))
+    
+    total_reviewers = len(review_requests)
+    completed_reviewers = sum(1 for r in review_requests if r.status1 == 'completed')
 
     completion_percentage = (completed_reviewers / total_reviewers) * 100 if total_reviewers > 0 else 0
 
@@ -348,11 +479,17 @@ def get_request_detail(request, reviewRequest_id):
 
     # 获取关联的DetectionResult对象
     detection_result = review_request.detection_result
-    if not detection_result:
+    text_detection_result = review_request.text_detection_result
+    
+    if not detection_result and not text_detection_result:
         return Response({'error': 'No detection result found for the review request'}, status=404)
 
     # 获取关联的DetectionTask对象
-    detection_task = detection_result.detection_task
+    if detection_result:
+        detection_task = detection_result.detection_task
+    else:
+        detection_task = text_detection_result.detection_task
+        
     if not detection_task:
         return Response({'error': 'No detection task found for the review request'}, status=404)
 
@@ -364,14 +501,33 @@ def get_request_detail(request, reviewRequest_id):
             'img_id': img.id,
             'img_url': img.image.url,
         })
+        
+    # 获取文本信息
+    texts = []
+    for text in review_request.text_resources.all():
+        texts.append({
+            'text_id': text.id,
+            'raw_text': text.raw_text[:200] + '...' if len(text.raw_text) > 200 else text.raw_text,
+            'source_type': text.source_type,
+        })
 
     # 获取AI检测结果
-    ai_detection_result = {
-        'is_fake': detection_result.is_fake,
-        'confidence_score': detection_result.confidence_score,
-        'detection_time': detection_result.detection_time.strftime('%Y-%m-%d %H:%M:%S')
-        if detection_result.detection_time else None
-    }
+    ai_detection_result = {}
+    if detection_result:
+        ai_detection_result = {
+            'is_fake': detection_result.is_fake,
+            'confidence_score': detection_result.confidence_score,
+            'detection_time': detection_result.detection_time.strftime('%Y-%m-%d %H:%M:%S')
+            if detection_result.detection_time else None
+        }
+    elif review_request.text_detection_result:
+        tdr = review_request.text_detection_result
+        ai_detection_result = {
+            'is_fake': tdr.is_fake,
+            'confidence_score': tdr.confidence_score,
+            'detection_time': tdr.detection_time.strftime('%Y-%m-%d %H:%M:%S')
+            if tdr.detection_time else None
+        }
 
     # 获取审核员的检测结果
     manual_reviews = ManualReview.objects.filter(review_request=review_request)
@@ -392,6 +548,7 @@ def get_request_detail(request, reviewRequest_id):
 
     return Response({
         'images': images,
+        'texts': texts,
         'ai_detection_result': ai_detection_result,
         'status': status,
         # 'reviewers_results': reviewers_results
@@ -480,11 +637,15 @@ def get_reviewer_request_detail(request, reviewRequest_id):
 
     # 获取关联的DetectionResult对象
     detection_result = review_request.detection_result
-    if not detection_result:
+    text_detection_result = review_request.text_detection_result
+    if not detection_result and not text_detection_result:
         return Response({'error': 'No detection result found for the review request'}, status=404)
 
     # 获取关联的DetectionTask对象
-    detection_task = detection_result.detection_task
+    if detection_result:
+        detection_task = detection_result.detection_task
+    else:
+        detection_task = text_detection_result.detection_task
     if not detection_task:
         return Response({'error': 'No detection task found for the review request'}, status=404)
 
@@ -492,17 +653,32 @@ def get_reviewer_request_detail(request, reviewRequest_id):
     image_uploads = review_request.imgs.all()
     image_ids = [img.id for img in image_uploads]
     image_urls = [img.image.url for img in image_uploads]
+    
+    # 获取文本列表
+    text_resources = review_request.text_resources.all()
+    text_ids = [text.id for text in text_resources]
+    text_previews = [text.raw_text[:200] + '...' if len(text.raw_text) > 200 else text.raw_text for text in text_resources]
 
     # 获取AI检测结果
-    ai_detection_result = {
-        'is_fake': detection_result.is_fake,
-        'confidence_score': detection_result.confidence_score,
-        'detection_time': detection_result.detection_time.strftime('%Y-%m-%d %H:%M:%S')
-    }
+    ai_detection_result = {}
+    if detection_result:
+        ai_detection_result = {
+            'is_fake': detection_result.is_fake,
+            'confidence_score': detection_result.confidence_score,
+            'detection_time': detection_result.detection_time.strftime('%Y-%m-%d %H:%M:%S') if detection_result.detection_time else None
+        }
+    elif text_detection_result:
+        ai_detection_result = {
+            'is_fake': text_detection_result.is_fake,
+            'confidence_score': text_detection_result.confidence_score,
+            'detection_time': text_detection_result.detection_time.strftime('%Y-%m-%d %H:%M:%S') if text_detection_result.detection_time else None
+        }
 
     return Response({
         'image_ids': image_ids,
         'image_urls': image_urls,
+        'text_ids': text_ids,
+        'text_previews': text_previews,
         'ai_detection_result': ai_detection_result,
         'status': review_request.status1,
         'status2': review_request.status2,
@@ -606,24 +782,38 @@ def get_review_detail(request, manual_review_id):
 
     # 获取关联的DetectionResult对象
     detection_result = review_request.detection_result
-
-    # 获取关联的DetectionTask对象
-    detection_task = detection_result.detection_task
+    text_detection_result = review_request.text_detection_result
 
     # 获取图片ID列表
     image_ids = [image_upload.id for image_upload in manual_review.imgs.all()]
 
     # 获取图片URL列表
     image_urls = [image_upload.image.url for image_upload in manual_review.imgs.all()]
+    
+    # 获取文本信息
+    texts = []
+    for text in manual_review.text_resources.all():
+        texts.append({
+            'text_id': text.id,
+            'raw_text': text.raw_text[:200] + '...' if len(text.raw_text) > 200 else text.raw_text,
+        })
 
     # 获取AI检测结果
-    ai_detection_result = {
-        'is_fake': detection_result.is_fake,
-        'confidence_score': detection_result.confidence_score,
-        'detection_time': detection_result.detection_time.strftime('%Y-%m-%d %H:%M:%S')
-    }
+    ai_detection_result = {}
+    if detection_result:
+        ai_detection_result = {
+            'is_fake': detection_result.is_fake,
+            'confidence_score': detection_result.confidence_score,
+            'detection_time': detection_result.detection_time.strftime('%Y-%m-%d %H:%M:%S') if detection_result.detection_time else None
+        }
+    elif text_detection_result:
+        ai_detection_result = {
+            'is_fake': text_detection_result.is_fake,
+            'confidence_score': text_detection_result.confidence_score,
+            'detection_time': text_detection_result.detection_time.strftime('%Y-%m-%d %H:%M:%S') if text_detection_result.detection_time else None
+        }
 
-    # 获取审核员的检测结果
+    # 获取审核员的图片检测结果
     reviewers_results = []
     for image_review in manual_review.img_reviews.all():
         scores = [
@@ -654,10 +844,22 @@ def get_review_detail(request, manual_review_id):
             'reasons': reasons,
             'result': result
         })
+        
+    # 获取审核员的文本检测结果
+    text_reviewers_results = []
+    for text_review in manual_review.text_reviews.all():
+        text_reviewers_results.append({
+            'text_id': text_review.text_resource.id,
+            'overall_comment': text_review.overall_comment,
+            'result': text_review.result
+        })
 
     return Response({
         'image_urls': image_urls,
+        'texts': texts,
         'ai_detection_result': ai_detection_result,
+        'reviewers_results': reviewers_results,
+        'text_reviewers_results': text_reviewers_results,
         'count': len(image_ids),
         'reviewers_results': reviewers_results
     })
