@@ -100,6 +100,21 @@ const renderPieChart = (typeStats: any[]) => {
 
   const isDark = themeStore.theme === 'dark'
   const textColor = isDark ? '#fff' : '#333'
+  
+  const typeMap: Record<string, string> = {
+    login: '用户登录',
+    logout: '用户登出',
+    upload: '上传文件',
+    ai_detect: 'AI检测',
+    paper_detect: '论文文本检测',
+    review_detect: '评审文本检测',
+    audit_submit: '发起审核',
+    audit_op: '执行审核',
+    entity_create: '实体创建',
+    entity_delete: '实体删除',
+    entity_update: '实体更新',
+    mark_anomaly: '异常标记'
+  }
 
   const option: echarts.EChartsOption = {
     title: { text: '操作类型占比', left: 'center', textStyle: { color: textColor, fontSize: 14 } },
@@ -107,7 +122,7 @@ const renderPieChart = (typeStats: any[]) => {
     series: [{
       type: 'pie',
       radius: ['40%', '70%'],
-      data: typeStats.map(i => ({ name: i.operation_type, value: i.count })),
+      data: typeStats.map(i => ({ name: typeMap[i.operation_type] || i.operation_type, value: i.count })),
       emphasis: {
         itemStyle: { shadowBlur: 10, shadowOffsetX: 0, shadowColor: 'rgba(0, 0, 0, 0.5)' }
       }
