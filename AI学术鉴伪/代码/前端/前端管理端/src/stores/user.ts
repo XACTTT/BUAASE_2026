@@ -14,7 +14,7 @@ interface UserState {
   organization_name: string;
 }
 
-const API_BASE_URL = import.meta.env.VITE_API_URL;
+const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 const DEFAULT_AVATAR = '/default-avatar.svg';
 
 function resolveAvatarUrl(avatar?: string | null): string {

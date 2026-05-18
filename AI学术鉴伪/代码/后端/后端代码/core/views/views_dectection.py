@@ -861,6 +861,21 @@ def list_task_results(request, task_id):
         "results": result_list,
     })
 
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def get_task_llm_analysis(request, task_id):
+    """
+    GET /api/tasks/<task_id>/llm-analysis/
+    返回任务级的大模型分析结果
+    """
+    task = get_object_or_404(DetectionTask, id=task_id, user=request.user)
+    extra_payload = task.extra_payload or {}
+    return Response({
+        "task_id": task.id,
+        "llm_analysis": extra_payload.get("llm_analysis"),
+    })
+
 # 增加两个接口，分别返回造假的图片，和正常的图片；判别方式是detection_result.is_fake
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])

@@ -220,6 +220,8 @@ const formatStatus = (value?: string) => {
       return '排队中'
     case 'in_progress':
       return '进行中'
+    case 'analyzing':
+      return '大模型分析中'
     case 'completed':
       return '已完成'
     case 'partially_completed':

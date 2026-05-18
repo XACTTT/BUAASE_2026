@@ -371,6 +371,7 @@ class DetectionTask(models.Model):
     STATUS_CHOICES = [
         ('pending', '待处理'),
         ('in_progress', '进行中'),
+        ('analyzing', '大模型分析中'),
         ('completed', '已完成'),
         ('partially_completed', '部分完成'),
         ('failed', '失败'),

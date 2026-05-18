@@ -1,3 +1,5 @@
+import json
+
 from django.db import transaction
 from django.utils import timezone
 
@@ -5,12 +7,31 @@ from core.models import (
     DetectionTask,
     FileManagement,
     ImageUpload,
+    LLMAnalysisRun,
+    OrganizationModelConfig,
     ReviewTextResource,
     StructuredDetectionResult,
 )
 from core.services.content_extraction_service import ContentExtractionService
 from core.services.material_validation_service import MaterialValidationService
 from core.services.structured_ai_bridge import StructuredAIDetectionBridge
+from core.services.llm_service import build_chat_completion_payload, call_openai_compatible_chat
+
+
+STAGE_PROMPT_TEMPLATES = {
+    'paper': (
+        '你是学术鉴伪分析助手。请结合论文正文与元数据，输出结构化 JSON。'
+        '字段包含：summary、risk_level、evidence、suspicious_patterns、recommendations、confidence。'
+    ),
+    'review': (
+        '你是学术鉴伪分析助手。请分析评审意见文本的可疑性与一致性，输出结构化 JSON。'
+        '字段包含：summary、risk_level、signals、consistency_issues、recommendations、confidence。'
+    ),
+    'multi_material': (
+        '你是学术鉴伪分析助手。请综合论文、评审与图像等多材料信息，输出结构化 JSON。'
+        '字段包含：summary、risk_level、cross_checks、mismatches、recommendations、confidence。'
+    ),
+}
 
 
 class StructuredDetectionService:
@@ -195,6 +216,106 @@ class StructuredDetectionService:
         raise ValueError('UNSUPPORTED_DETECT_TYPE')
 
     @staticmethod
+    def _resolve_llm_config(task: DetectionTask):
+        if not task.organization_id:
+            return None
+
+        return OrganizationModelConfig.objects.filter(
+            organization_id=task.organization_id,
+            enabled=True,
+            provider_model__is_active=True,
+            provider_model__source__status='active',
+        ).select_related('provider_model', 'provider_model__source').order_by('-updated_at').first()
+
+    @staticmethod
+    def _build_llm_prompt(task: DetectionTask):
+        if task.detect_type == 'paper':
+            return STAGE_PROMPT_TEMPLATES['paper']
+        if task.detect_type == 'review':
+            return STAGE_PROMPT_TEMPLATES['review']
+        if task.detect_type == 'multi':
+            return STAGE_PROMPT_TEMPLATES['multi_material']
+        return None
+
+    @staticmethod
+    def _run_llm_analysis(task: DetectionTask, result_payload, ai_response):
+        config = StructuredDetectionService._resolve_llm_config(task)
+        if config is None:
+            return None
+
+        provider_model = config.provider_model
+        source = provider_model.source
+        prompt = StructuredDetectionService._build_llm_prompt(task)
+        if not prompt:
+            return None
+
+        input_payload = {
+            'task_id': task.id,
+            'task_name': task.task_name,
+            'detect_type': task.detect_type,
+            'result_payload': result_payload,
+            'ai_response': ai_response,
+        }
+
+        messages = [
+            {'role': 'system', 'content': prompt},
+            {'role': 'user', 'content': f"input_payload:\n{json.dumps(input_payload, ensure_ascii=False, indent=2)}"},
+        ]
+
+        payload = build_chat_completion_payload(
+            model=provider_model.model_id,
+            messages=messages,
+            temperature=float(config.temperature),
+            top_p=float(config.top_p),
+            max_tokens=int(config.max_tokens),
+        )
+
+        run_record = LLMAnalysisRun.objects.create(
+            task=task,
+            model_config=config,
+            stage=task.detect_type,
+            prompt=prompt,
+            messages=messages,
+            input_payload=input_payload,
+            status='pending',
+            created_by=task.user,
+        )
+
+        try:
+            result = call_openai_compatible_chat(
+                base_url=source.base_url,
+                api_key=source.api_key,
+                payload=payload,
+                timeout=int(source.timeout or 30),
+            )
+        except (OSError, ValueError) as exc:
+            run_record.status = 'failed'
+            run_record.error_message = str(exc)
+            run_record.save(update_fields=['status', 'error_message', 'updated_at'])
+            return None
+
+        content = None
+        try:
+            content = result['choices'][0]['message']['content']
+        except (KeyError, IndexError, TypeError):
+            content = None
+
+        parsed = None
+        if isinstance(content, str):
+            try:
+                parsed = json.loads(content)
+            except json.JSONDecodeError:
+                parsed = None
+
+        run_record.status = 'success'
+        run_record.output_text = content
+        if isinstance(parsed, dict):
+            run_record.output_json = parsed
+        run_record.save(update_fields=['status', 'output_text', 'output_json', 'updated_at'])
+
+        return parsed if isinstance(parsed, dict) else {'raw_text': content}
+
+    @staticmethod
     @transaction.atomic
     def store_result(task: DetectionTask, result_payload, ai_response):
         overall = result_payload.get('overall') or {}
@@ -227,6 +348,14 @@ class StructuredDetectionService:
         ai_request = StructuredDetectionService.build_ai_request(task, snapshot)
         ai_response = StructuredAIDetectionBridge.submit(ai_request)
         result_payload = StructuredDetectionService.normalize_result_payload(task, snapshot, ai_response)
+
+        # 标记"大模型分析中"
+        task.status = 'analyzing'
+        task.save(update_fields=['status'])
+
+        llm_result = StructuredDetectionService._run_llm_analysis(task, result_payload, ai_response)
+        if llm_result is not None:
+            result_payload['llm_analysis'] = llm_result
         StructuredDetectionService.store_result(task, result_payload, ai_response)
         return result_payload
 

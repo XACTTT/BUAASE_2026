@@ -66,7 +66,7 @@
               {{ getStatus(item.status) }}
             </v-chip>
             <!-- 进度条与ETA信息 -->
-            <div v-if="item.status === 'in_progress' || item.status === 'pending'" style="width: 100%; min-width: 140px;">
+            <div v-if="['pending', 'in_progress', 'analyzing'].includes(item.status)" style="width: 100%; min-width: 140px;">
               <v-progress-linear
                 :model-value="item.progress || 0"
                 :color="item.progress === 100 ? 'success' : 'primary'"
@@ -156,7 +156,7 @@ interface Task {
   detect_type?: string
   upload_time: string
   completion_time: string
-  status: 'pending' | 'in_progress' | 'completed' | 'failed' | 'partially_completed'
+  status: 'pending' | 'in_progress' | 'analyzing' | 'completed' | 'failed' | 'partially_completed'
   progress?: number
   eta?: number
   message?: string
@@ -389,8 +389,14 @@ const getStatus = (status: string) => {
       return '排队中'
     case 'in_progress':
       return '进行中'
+    case 'analyzing':
+      return '大模型分析中'
     case 'completed':
       return '已完成'
+    case 'partially_completed':
+      return '部分完成'
+    case 'failed':
+      return '失败'
     default:
       return '未知'
   }
@@ -402,8 +408,14 @@ const getStatusColor = (status: string) => {
       return 'yellow'
     case 'in_progress':
       return 'info'
+    case 'analyzing':
+      return 'warning'
     case 'completed':
       return 'success'
+    case 'partially_completed':
+      return 'warning'
+    case 'failed':
+      return 'error'
     default:
       return 'grey'
   }

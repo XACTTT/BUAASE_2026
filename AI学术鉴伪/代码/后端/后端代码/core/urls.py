@@ -83,6 +83,7 @@ urlpatterns = [
     path("tasks_image/<int:image_id>/report/", download_image_report, name="download-image-report"),
     path("tasks_image/<int:image_id>/getdr/", image2dr, name="image2dr"),
     path("tasks/<int:task_id>/results/",   list_task_results,        name="task-results"),
+    path("tasks/<int:task_id>/llm-analysis/", get_task_llm_analysis, name="task-llm-analysis"),
     path("tasks/<int:task_id>/structured-result/", structured_task_result, name="task-structured-result"),
     path("tasks/<int:task_id>/text_results/", get_task_text_results, name="task-text-results"), # 新增：任务维度文本检测结果列表
     path("results/<int:result_id>/",       detection_result_detail,  name="result-detail"),

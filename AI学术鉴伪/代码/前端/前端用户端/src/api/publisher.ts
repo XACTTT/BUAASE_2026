@@ -72,6 +72,10 @@ export default {
     return http.get(`/results/${data}/`)
   },
 
+  getTaskLlmAnalysis(data: any) {
+    return http.get(`/tasks/${data}/llm-analysis/`)
+  },
+
   downloadReport(data: any) {
     return http.get(`/tasks/${data}/report/`, {
       responseType: 'blob'

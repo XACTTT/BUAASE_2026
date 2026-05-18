@@ -35,7 +35,13 @@ router.isReady().then(() => {
 })
 
 router.beforeEach((to, from, next) => {
-  if (!isLoggedIn.value) {
+  const hasToken = !!localStorage.getItem('1-token')
+  const isAuthenticated = isLoggedIn.value && hasToken
+
+  if (!isAuthenticated) {
+    isLoggedIn.value = false
+    localStorage.setItem('1-isLoggedIn', 'false')
+
     if (to.path === '/login') {
       next()
     } else {
