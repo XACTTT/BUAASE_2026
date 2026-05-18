@@ -467,10 +467,8 @@ const applyFilters = () => {
 // 操作按钮处理函数
 const handleNext = (item: Task) => {
   const type = item.task_type || item.detect_type
-  router.push({
-    path: `/step/${item.task_id}`,
-    query: type ? { type } : undefined,
-  })
+  const query = type ? `?type=${type}` : ''
+  router.push(`/step/${item.task_id}${query}`)
 }
 
 //处理删除

@@ -20,16 +20,67 @@ from core.services.llm_service import build_chat_completion_payload, call_openai
 
 STAGE_PROMPT_TEMPLATES = {
     'paper': (
-        '你是学术鉴伪分析助手。请结合论文正文与元数据，输出结构化 JSON。'
-        '字段包含：summary、risk_level、evidence、suspicious_patterns、recommendations、confidence。'
+        '你是论文学术鉴伪专家，专精于检测学术论文中的造假、剽窃与不当行为。'
+        '你将收到论文的结构化分析数据，包含整体判定、材料摘要、各维度检测结果、'
+        '证据链以及AI服务器的原始响应。\n\n'
+        '请重点分析以下维度：\n'
+        '1. 文本原创性：是否存在AI生成文本的典型特征（重复句式、逻辑断裂、术语堆砌）\n'
+        '2. 图文一致性：图片描述与实际图片内容是否吻合，图片是否来自其他论文\n'
+        '3. 数据可信度：统计数据是否合理，图表是否有拼接/篡改痕迹\n'
+        '4. 引用异常：参考文献是否虚构、是否与论述内容无关\n'
+        '5. 结构完整性：论文章节是否完整，方法部分是否可复现\n'
+        '\n\n'
+        '请输出严格符合以下JSON Schema的结果：\n'
+        '{\n'
+        '  "summary": "综合判定摘要，2-4句话概括整体造假风险评估",\n'
+        '  "risk_level": "high/medium/low",\n'
+        '  "confidence": 0.0-1.0,\n'
+        '  "suspicious_patterns": ["发现的可疑模式，每条80字以内"],\n'
+        '  "evidence": ["关键证据项，每条引用具体数据支撑"],\n'
+        '  "recommendations": ["建议的人工复核方向和进一步检测措施"]\n'
+        '}'
     ),
     'review': (
-        '你是学术鉴伪分析助手。请分析评审意见文本的可疑性与一致性，输出结构化 JSON。'
-        '字段包含：summary、risk_level、signals、consistency_issues、recommendations、confidence。'
+        '你是学术审稿意见鉴伪专家，专精于检测同行评审中的造假、模板复用与利益冲突。'
+        '你将收到评审意见的结构化分析数据，包含整体判定、材料摘要、各维度检测结果、'
+        '证据链以及AI服务器的原始响应。\n\n'
+        '请重点分析以下维度：\n'
+        '1. 模板检测：评审意见是否为AI批量生成或模板套用（句式高度雷同、缺乏具体细节）\n'
+        '2. 内容一致性：评审意见与论文实际内容是否吻合，是否存在泛泛而谈\n'
+        '3. 评分合理性：评分与评语是否一致，是否存在虚高或恶意低分\n'
+        '4. 时间异常：评审周期是否异常短，多个评审是否集中提交\n'
+        '5. 作者-审稿人关联：是否存在审稿人与作者的潜在利益关联\n'
+        '\n\n'
+        '请输出严格符合以下JSON Schema的结果：\n'
+        '{\n'
+        '  "summary": "综合判定摘要，2-4句话概括整体可信度评估",\n'
+        '  "risk_level": "high/medium/low",\n'
+        '  "confidence": 0.0-1.0,\n'
+        '  "signals": ["检测到的异常信号与可疑模式，每条80字以内"],\n'
+        '  "consistency_issues": ["发现的一致性问题，每条引用具体证据"],\n'
+        '  "recommendations": ["建议的人工复核方向和进一步调查措施"]\n'
+        '}'
     ),
     'multi_material': (
-        '你是学术鉴伪分析助手。请综合论文、评审与图像等多材料信息，输出结构化 JSON。'
-        '字段包含：summary、risk_level、cross_checks、mismatches、recommendations、confidence。'
+        '你是多材料学术鉴伪综合专家，专精于跨材料交叉验证，综合分析论文、'
+        '评审意见、图像等多源信息。你将收到各材料的检测结果、交叉分析数据和'
+        'AI服务器的原始响应。\n\n'
+        '请重点进行交叉验证：\n'
+        '1. 跨材料一致性：论文内容与评审意见是否匹配，作者单位与评审人是否关联\n'
+        '2. 图文矛盾：论文描述与图像内容是否存在明显矛盾\n'
+        '3. 时间线异常：论文提交、修改、评审的时间线是否合理\n'
+        '4. 多材料造假关联：是否多个材料出现同一类型的造假特征\n'
+        '5. 整体风险画像：综合各维度给出总体造假可能性评估\n'
+        '\n\n'
+        '请输出严格符合以下JSON Schema的结果：\n'
+        '{\n'
+        '  "summary": "综合判定摘要，2-4句话概括跨材料交叉验证结论",\n'
+        '  "risk_level": "high/medium/low",\n'
+        '  "confidence": 0.0-1.0,\n'
+        '  "cross_checks": ["跨材料交叉验证发现，每条引用具体矛盾或关联"],\n'
+        '  "mismatches": ["发现的多材料不匹配项，每条80字以内"],\n'
+        '  "recommendations": ["建议的人工复核方向和进一步调查措施"]\n'
+        '}'
     ),
 }
 
@@ -302,8 +353,18 @@ class StructuredDetectionService:
 
         parsed = None
         if isinstance(content, str):
+            # 清洗 markdown 代码块包裹
+            cleaned = content.strip()
+            if cleaned.startswith('```'):
+                lines = cleaned.splitlines()
+                # 去掉首行 ```json 和末行的 ```
+                if len(lines) >= 2:
+                    lines = lines[1:]
+                if lines and lines[-1].strip() == '```':
+                    lines = lines[:-1]
+                cleaned = '\n'.join(lines)
             try:
-                parsed = json.loads(content)
+                parsed = json.loads(cleaned)
             except json.JSONDecodeError:
                 parsed = None
 
@@ -352,6 +413,15 @@ class StructuredDetectionService:
         # 标记"大模型分析中"
         task.status = 'analyzing'
         task.save(update_fields=['status'])
+
+        # 发送进度通知 (lazy import 避免循环依赖)
+        from core.tasks_new import send_task_progress_update
+        send_task_progress_update(
+            task_id=task.id,
+            status='analyzing',
+            progress=85,
+            message='正在进行大模型综合智能分析...'
+        )
 
         llm_result = StructuredDetectionService._run_llm_analysis(task, result_payload, ai_response)
         if llm_result is not None:

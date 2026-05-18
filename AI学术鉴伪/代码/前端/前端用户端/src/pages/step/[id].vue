@@ -120,6 +120,42 @@
                 </v-card-text>
               </v-card>
             </v-col>
+
+            <v-col cols="12" v-if="llmAnalysis">
+              <v-card elevation="2" rounded="lg" class="mb-6">
+                <v-card-title class="text-h6">
+                  大模型综合分析
+                  <v-chip size="small" class="ml-2" :color="llmAnalysis.risk_level === 'high' ? 'error' : llmAnalysis.risk_level === 'medium' ? 'warning' : 'success'">
+                    {{ llmAnalysis.risk_level || '未知' }}
+                  </v-chip>
+                </v-card-title>
+                <v-card-text>
+                  <v-row v-if="llmAnalysisItems.length">
+                    <v-col
+                      v-for="item in llmAnalysisItems"
+                      :key="item.label"
+                      cols="12"
+                      :md="item.isArray ? 12 : 6"
+                    >
+                      <v-card variant="outlined" class="mb-2">
+                        <v-card-text>
+                          <div class="text-caption text-medium-emphasis mb-1">{{ item.label }}</div>
+                          <template v-if="item.isArray">
+                            <ul class="pl-4 mb-0">
+                              <li v-for="(entry, idx) in item.value" :key="idx">{{ entry }}</li>
+                            </ul>
+                          </template>
+                          <template v-else>
+                            <div>{{ item.value }}</div>
+                          </template>
+                        </v-card-text>
+                      </v-card>
+                    </v-col>
+                  </v-row>
+                  <pre v-else class="structured-pre">{{ llmAnalysisRaw }}</pre>
+                </v-card-text>
+              </v-card>
+            </v-col>
           </v-row>
         </v-container>
       </template>
@@ -162,7 +198,7 @@ const isImageTask = computed(() => {
   return taskMeta.value?.detect_type === 'image'
 })
 const materialSummary = computed(() => {
-  const summary = taskMeta.value?.material_summary
+  const summary = taskMeta.value?.material_summary || taskMeta.value?.result?.material_summary
   return summary && typeof summary === 'object' ? summary : null
 })
 const materialSummaryItems = computed(() => {
@@ -172,7 +208,10 @@ const materialSummaryItems = computed(() => {
   }
 
   const labelMap: Record<string, string> = {
+    paper_file_count: '论文文件数',
     image_count: '图片总数',
+    review_file_count: '评审文件数',
+    review_text_count: '评审文本数',
     text_count: '文本总数',
     completed_count: '已完成',
     fake_count: '疑似异常',
@@ -190,7 +229,49 @@ const evidenceText = computed(() => {
   if (!evidence || typeof evidence !== 'object') {
     return ''
   }
-  return JSON.stringify(evidence, null, 2)
+  try {
+    const text = JSON.stringify(evidence, null, 2)
+    return text.length > 50000 ? text.slice(0, 50000) + '\n... [已截断，完整数据见后端]' : text
+  } catch {
+    return '[证据数据无法序列化]'
+  }
+})
+
+const llmAnalysis = computed(() => {
+  return taskMeta.value?.result?.llm_analysis ?? null
+})
+
+const llmAnalysisRaw = computed(() => {
+  const analysis = llmAnalysis.value
+  if (!analysis) return ''
+  try {
+    return JSON.stringify(analysis, null, 2)
+  } catch {
+    return String(analysis)
+  }
+})
+
+const llmAnalysisItems = computed(() => {
+  const analysis = llmAnalysis.value
+  if (!analysis || typeof analysis !== 'object') return []
+  const labelMap: Record<string, string> = {
+    summary: '综合摘要',
+    risk_level: '风险等级',
+    confidence: '置信度',
+    recommendations: '建议',
+    evidence: '证据',
+    suspicious_patterns: '可疑模式',
+    signals: '信号指标',
+    consistency_issues: '一致性问题',
+    raw_text: '原始输出',
+  }
+  return Object.entries(analysis)
+    .filter(([, v]) => v !== null && v !== undefined)
+    .map(([key, value]) => ({
+      label: labelMap[key] || key,
+      value,
+      isArray: Array.isArray(value),
+    }))
 })
 
 const formatTaskType = (value?: string) => {
@@ -234,8 +315,9 @@ const formatStatus = (value?: string) => {
 }
 
 const formatMaybeNumber = (value: unknown) => {
+  if (value === null || value === undefined) return ''
   const num = Number(value)
-  return Number.isFinite(num) ? num.toFixed(4) : String(value ?? '')
+  return Number.isFinite(num) ? num.toFixed(4) : String(value)
 }
 
 // 组件挂载时获取任务数据

@@ -109,11 +109,26 @@ def send_task_completion_notification(user, task_id):
 
 
 IMAGE_LLM_PROMPT = (
-    '你是图像鉴伪分析助手。你将看到每张待检测图片的原始图像、ELA误差分析图、'
-    '以及各检测方法的mask图，同时会收到结构化的检测数据'
-    '（is_fake、confidence_score、exif标记、子方法概率等）。'
-    '请基于视觉检查与结构化数据，输出JSON：'
-    'summary、risk_level、manipulation_signals、mask_hints、recommendations、confidence。'
+    '你是学术图像鉴伪专家，专精于检测学术论文中的图像伪造与篡改。'
+    '你将收到每张待检测图片的原始图像、ELA误差分析图、以及各检测方法的mask热力图，'
+    '同时附带结构化的检测数据（篡改判定、置信度、EXIF标记、子方法概率等）。'
+    '\n\n'
+    '请综合分析视觉证据与结构化数据，关注以下造假手段：\n'
+    '1. 图像拼接/复制移动：mask图中出现规则形状高亮区域\n'
+    '2. AI生成/Deepfake：ELA图呈均匀噪声分布，纹理不自然\n'
+    '3. Photoshop篡改：EXIF中检测到Adobe痕迹，ELA异常集中在编辑区域\n'
+    '4. 数据图表造假：图表中数据点异常对齐、误差棒缺失或不合理\n'
+    '5. 重复使用：不同图片间存在相同区域或完全重复\n'
+    '\n\n'
+    '请输出严格符合以下JSON Schema的结果：\n'
+    '{\n'
+    '  "summary": "综合判定摘要，2-4句话概括整体情况和关键发现",\n'
+    '  "risk_level": "high/medium/low",\n'
+    '  "confidence": 0.0-1.0,\n'
+    '  "manipulation_signals": ["具体的造假信号，每条50字以内"],\n'
+    '  "mask_hints": ["对各mask图中可疑区域的解读"],\n'
+    '  "recommendations": ["建议的人工复核方向或进一步检测措施"]\n'
+    '}'
 )
 
 
@@ -760,14 +775,32 @@ def run_structured_detection_task(self, task_pk: int):
     task.status = 'in_progress'
     task.failure_reason = None
     task.save(update_fields=['status', 'failure_reason'])
+    send_task_progress_update(
+        task_id=task_pk,
+        status='in_progress',
+        progress=30,
+        message='正在进行结构化检测分析...'
+    )
 
     try:
         StructuredDetectionService.execute_task(task)
     except StructuredAITransientError as exc:
         StructuredDetectionService.mark_failed(task, str(exc))
+        send_task_progress_update(
+            task_id=task_pk,
+            status='failed',
+            progress=0,
+            message=f'检测失败: {exc}'
+        )
         raise self.retry(exc=exc)
     except Exception as exc:
         StructuredDetectionService.mark_failed(task, str(exc))
+        send_task_progress_update(
+            task_id=task_pk,
+            status='failed',
+            progress=0,
+            message=f'检测失败: {exc}'
+        )
         return
 
     send_task_completion_notification(task.user, task_pk)
