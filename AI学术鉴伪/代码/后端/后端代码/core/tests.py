@@ -420,13 +420,28 @@ class ResourceManagementApiTests(TestCase):
         self.assertEqual(contents_resp.data['total'], 2)
         self.assertEqual(contents_resp.data['contents'][0]['text'], 'first block')
 
-    @patch('core.services.structured_ai_bridge.StructuredAIDetectionBridge.submit')
+    @patch('core.services.bert_text_ai_bridge.BertTextAIDetectionBridge.submit_batch')
     @patch('core.views.views_dectection.run_structured_detection_task.apply_async')
-    def test_submit_paper_detection_and_fetch_structured_result(self, mocked_apply_async, mocked_submit):
-        mocked_submit.return_value = {
-            'overall': {'is_fake': True, 'confidence_score': 0.91, 'risk_level': 'high'},
-            'dimensions': [{'name': 'aigc_generation', 'score': 0.91}],
-            'summary': 'remote ai finished',
+    def test_submit_paper_detection_and_fetch_structured_result(self, mocked_apply_async, mocked_submit_batch):
+        mocked_submit_batch.return_value = {
+            'batch_results': [
+                {
+                    'item_id': 'paper_0_0',
+                    'is_aigc': True,
+                    'label_name': 'aigc',
+                    'confidence_score': 0.91,
+                    'probabilities': {'human': 0.09, 'aigc': 0.91},
+                },
+            ],
+            'aggregate': {
+                'aigc_ratio': 1.0,
+                'mean_aigc_probability': 0.91,
+                'mean_confidence': 0.91,
+                'max_confidence': 0.91,
+                'min_confidence': 0.91,
+            },
+            'model_dir': '/tmp/test',
+            'lang': 'chinese',
         }
         upload_resp = self.client.post(
             '/api/upload/',
