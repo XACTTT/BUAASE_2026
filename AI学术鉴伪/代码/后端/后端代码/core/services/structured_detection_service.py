@@ -1,3 +1,5 @@
+import json
+
 from django.db import transaction
 from django.utils import timezone
 
@@ -5,12 +7,82 @@ from core.models import (
     DetectionTask,
     FileManagement,
     ImageUpload,
+    LLMAnalysisRun,
+    OrganizationModelConfig,
     ReviewTextResource,
     StructuredDetectionResult,
 )
 from core.services.content_extraction_service import ContentExtractionService
 from core.services.material_validation_service import MaterialValidationService
 from core.services.structured_ai_bridge import StructuredAIDetectionBridge
+from core.services.llm_service import build_chat_completion_payload, call_openai_compatible_chat
+
+
+STAGE_PROMPT_TEMPLATES = {
+    'paper': (
+        '你是论文学术鉴伪专家，专精于检测学术论文中的造假、剽窃与不当行为。'
+        '你将收到论文的结构化分析数据，包含整体判定、材料摘要、各维度检测结果、'
+        '证据链以及AI服务器的原始响应。\n\n'
+        '请重点分析以下维度：\n'
+        '1. 文本原创性：是否存在AI生成文本的典型特征（重复句式、逻辑断裂、术语堆砌）\n'
+        '2. 图文一致性：图片描述与实际图片内容是否吻合，图片是否来自其他论文\n'
+        '3. 数据可信度：统计数据是否合理，图表是否有拼接/篡改痕迹\n'
+        '4. 引用异常：参考文献是否虚构、是否与论述内容无关\n'
+        '5. 结构完整性：论文章节是否完整，方法部分是否可复现\n'
+        '\n\n'
+        '请输出严格符合以下JSON Schema的结果：\n'
+        '{\n'
+        '  "summary": "综合判定摘要，2-4句话概括整体造假风险评估",\n'
+        '  "risk_level": "high/medium/low",\n'
+        '  "confidence": 0.0-1.0,\n'
+        '  "suspicious_patterns": ["发现的可疑模式，每条80字以内"],\n'
+        '  "evidence": ["关键证据项，每条引用具体数据支撑"],\n'
+        '  "recommendations": ["建议的人工复核方向和进一步检测措施"]\n'
+        '}'
+    ),
+    'review': (
+        '你是学术审稿意见鉴伪专家，专精于检测同行评审中的造假、模板复用与利益冲突。'
+        '你将收到评审意见的结构化分析数据，包含整体判定、材料摘要、各维度检测结果、'
+        '证据链以及AI服务器的原始响应。\n\n'
+        '请重点分析以下维度：\n'
+        '1. 模板检测：评审意见是否为AI批量生成或模板套用（句式高度雷同、缺乏具体细节）\n'
+        '2. 内容一致性：评审意见与论文实际内容是否吻合，是否存在泛泛而谈\n'
+        '3. 评分合理性：评分与评语是否一致，是否存在虚高或恶意低分\n'
+        '4. 时间异常：评审周期是否异常短，多个评审是否集中提交\n'
+        '5. 作者-审稿人关联：是否存在审稿人与作者的潜在利益关联\n'
+        '\n\n'
+        '请输出严格符合以下JSON Schema的结果：\n'
+        '{\n'
+        '  "summary": "综合判定摘要，2-4句话概括整体可信度评估",\n'
+        '  "risk_level": "high/medium/low",\n'
+        '  "confidence": 0.0-1.0,\n'
+        '  "signals": ["检测到的异常信号与可疑模式，每条80字以内"],\n'
+        '  "consistency_issues": ["发现的一致性问题，每条引用具体证据"],\n'
+        '  "recommendations": ["建议的人工复核方向和进一步调查措施"]\n'
+        '}'
+    ),
+    'multi_material': (
+        '你是多材料学术鉴伪综合专家，专精于跨材料交叉验证，综合分析论文、'
+        '评审意见、图像等多源信息。你将收到各材料的检测结果、交叉分析数据和'
+        'AI服务器的原始响应。\n\n'
+        '请重点进行交叉验证：\n'
+        '1. 跨材料一致性：论文内容与评审意见是否匹配，作者单位与评审人是否关联\n'
+        '2. 图文矛盾：论文描述与图像内容是否存在明显矛盾\n'
+        '3. 时间线异常：论文提交、修改、评审的时间线是否合理\n'
+        '4. 多材料造假关联：是否多个材料出现同一类型的造假特征\n'
+        '5. 整体风险画像：综合各维度给出总体造假可能性评估\n'
+        '\n\n'
+        '请输出严格符合以下JSON Schema的结果：\n'
+        '{\n'
+        '  "summary": "综合判定摘要，2-4句话概括跨材料交叉验证结论",\n'
+        '  "risk_level": "high/medium/low",\n'
+        '  "confidence": 0.0-1.0,\n'
+        '  "cross_checks": ["跨材料交叉验证发现，每条引用具体矛盾或关联"],\n'
+        '  "mismatches": ["发现的多材料不匹配项，每条80字以内"],\n'
+        '  "recommendations": ["建议的人工复核方向和进一步调查措施"]\n'
+        '}'
+    ),
+}
 
 
 class StructuredDetectionService:
@@ -195,6 +267,116 @@ class StructuredDetectionService:
         raise ValueError('UNSUPPORTED_DETECT_TYPE')
 
     @staticmethod
+    def _resolve_llm_config(task: DetectionTask):
+        if not task.organization_id:
+            return None
+
+        return OrganizationModelConfig.objects.filter(
+            organization_id=task.organization_id,
+            enabled=True,
+            provider_model__is_active=True,
+            provider_model__source__status='active',
+        ).select_related('provider_model', 'provider_model__source').order_by('-updated_at').first()
+
+    @staticmethod
+    def _build_llm_prompt(task: DetectionTask):
+        if task.detect_type == 'paper':
+            return STAGE_PROMPT_TEMPLATES['paper']
+        if task.detect_type == 'review':
+            return STAGE_PROMPT_TEMPLATES['review']
+        if task.detect_type == 'multi':
+            return STAGE_PROMPT_TEMPLATES['multi_material']
+        return None
+
+    @staticmethod
+    def _run_llm_analysis(task: DetectionTask, result_payload, ai_response):
+        config = StructuredDetectionService._resolve_llm_config(task)
+        if config is None:
+            return None
+
+        provider_model = config.provider_model
+        source = provider_model.source
+        prompt = StructuredDetectionService._build_llm_prompt(task)
+        if not prompt:
+            return None
+
+        input_payload = {
+            'task_id': task.id,
+            'task_name': task.task_name,
+            'detect_type': task.detect_type,
+            'result_payload': result_payload,
+            'ai_response': ai_response,
+        }
+
+        messages = [
+            {'role': 'system', 'content': prompt},
+            {'role': 'user', 'content': f"input_payload:\n{json.dumps(input_payload, ensure_ascii=False, indent=2)}"},
+        ]
+
+        payload = build_chat_completion_payload(
+            model=provider_model.model_id,
+            messages=messages,
+            temperature=float(config.temperature),
+            top_p=float(config.top_p),
+            max_tokens=int(config.max_tokens),
+        )
+
+        run_record = LLMAnalysisRun.objects.create(
+            task=task,
+            model_config=config,
+            stage=task.detect_type,
+            prompt=prompt,
+            messages=messages,
+            input_payload=input_payload,
+            status='pending',
+            created_by=task.user,
+        )
+
+        try:
+            result = call_openai_compatible_chat(
+                base_url=source.base_url,
+                api_key=source.api_key,
+                payload=payload,
+                timeout=int(source.timeout or 30),
+            )
+        except (OSError, ValueError) as exc:
+            run_record.status = 'failed'
+            run_record.error_message = str(exc)
+            run_record.save(update_fields=['status', 'error_message', 'updated_at'])
+            return None
+
+        content = None
+        try:
+            content = result['choices'][0]['message']['content']
+        except (KeyError, IndexError, TypeError):
+            content = None
+
+        parsed = None
+        if isinstance(content, str):
+            # 清洗 markdown 代码块包裹
+            cleaned = content.strip()
+            if cleaned.startswith('```'):
+                lines = cleaned.splitlines()
+                # 去掉首行 ```json 和末行的 ```
+                if len(lines) >= 2:
+                    lines = lines[1:]
+                if lines and lines[-1].strip() == '```':
+                    lines = lines[:-1]
+                cleaned = '\n'.join(lines)
+            try:
+                parsed = json.loads(cleaned)
+            except json.JSONDecodeError:
+                parsed = None
+
+        run_record.status = 'success'
+        run_record.output_text = content
+        if isinstance(parsed, dict):
+            run_record.output_json = parsed
+        run_record.save(update_fields=['status', 'output_text', 'output_json', 'updated_at'])
+
+        return parsed if isinstance(parsed, dict) else {'raw_text': content}
+
+    @staticmethod
     @transaction.atomic
     def store_result(task: DetectionTask, result_payload, ai_response):
         overall = result_payload.get('overall') or {}
@@ -227,6 +409,23 @@ class StructuredDetectionService:
         ai_request = StructuredDetectionService.build_ai_request(task, snapshot)
         ai_response = StructuredAIDetectionBridge.submit(ai_request)
         result_payload = StructuredDetectionService.normalize_result_payload(task, snapshot, ai_response)
+
+        # 标记"大模型分析中"
+        task.status = 'analyzing'
+        task.save(update_fields=['status'])
+
+        # 发送进度通知 (lazy import 避免循环依赖)
+        from core.tasks_new import send_task_progress_update
+        send_task_progress_update(
+            task_id=task.id,
+            status='analyzing',
+            progress=85,
+            message='正在进行大模型综合智能分析...'
+        )
+
+        llm_result = StructuredDetectionService._run_llm_analysis(task, result_payload, ai_response)
+        if llm_result is not None:
+            result_payload['llm_analysis'] = llm_result
         StructuredDetectionService.store_result(task, result_payload, ai_response)
         return result_payload
 

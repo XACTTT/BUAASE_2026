@@ -75,11 +75,11 @@ export default defineConfig({
       '/api': {
         target: 'http://82.156.232.106',
         changeOrigin: true,
-        // rewrite: (path) => path.replace(/^\/api/, ''),
+        rewrite: (path) => path.replace(/^\/api/, ''),
       },
     },
     hmr: {
-      overlay: false,
+      overlay: true,
     },
   },
   css: {

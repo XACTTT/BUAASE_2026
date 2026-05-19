@@ -941,22 +941,13 @@ const handleNext = async () => {
         return
       }
 
-      if (selectedModule.value === 'paper' || selectedModule.value === 'review') {
-        const textPayload: Record<string, any> = {
-          file_ids: normalizedFileIds,
-          task_name: currentTaskName.value || 'New Text Detection Task',
-          task_type: selectedModule.value === 'paper' ? 'paper_text' : 'review_text'
-        }
-        await publisher.submitTextDetection(textPayload)
-      } else {
-        const payload: Record<string, any> = {
-          file_ids: normalizedFileIds,
-          task_name: currentTaskName.value,
-          mode: selectedVersion.value,
-          detect_type: selectedModule.value
-        }
-        await publisher.submitDetection(payload)
+      const payload: Record<string, any> = {
+        file_ids: normalizedFileIds,
+        task_name: currentTaskName.value,
+        mode: selectedVersion.value,
+        detect_type: selectedModule.value
       }
+      await publisher.submitDetection(payload)
 
       router.push(`/history`)
     } catch (error: any) {

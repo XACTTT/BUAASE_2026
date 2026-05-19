@@ -206,6 +206,15 @@
 
               <v-window v-model="activeTab" class="mt-4">
                 <v-window-item value="analysis">
+                  <div v-if="taskLlmAnalysisText" class="mb-6">
+                    <div class="text-h6 mb-2">任务级分析</div>
+                    <v-card variant="outlined">
+                      <v-card-text>
+                        <pre class="analysis-pre">{{ taskLlmAnalysisText }}</pre>
+                      </v-card-text>
+                    </v-card>
+                  </div>
+
                   <div class="d-flex align-center justify-space-between mb-4">
                     <div class="text-h6">大模型意见</div>
                     <v-btn v-if="activeOverlay" size="small" variant="outlined" color="primary" prepend-icon="mdi-eye"
@@ -348,6 +357,8 @@ const isDarkMode = computed(() => theme.global.current.value.dark)
 const activeTab = ref('analysis')
 const llm = ref('')
 const llm_image = ref('')
+const taskLlmAnalysis = ref<any>(null)
+const taskLlmAnalysisText = computed(() => formatLlmAnalysis(taskLlmAnalysis.value))
 const ela = ref()
 const urn = ref<SubMethod[]>([])
 const exif = ref()
@@ -457,6 +468,9 @@ onMounted(async () => {
     const response = await (await publisher.getReviewers({ publisher_id: userStore.id }))
     allPeople.value = Array.isArray(response.data.reviewers) ? response.data.reviewers : []
 
+    const taskAnalysisResponse = await publisher.getTaskLlmAnalysis(props.task_id)
+    taskLlmAnalysis.value = taskAnalysisResponse.data?.llm_analysis ?? null
+
     detectionResult.value.fakeImages = (await publisher.getFakeImage({ task_id: props.task_id, include_image: 1 })).data.results
     detectionResult.value.realImages = (await publisher.getNormalImage({ task_id: props.task_id, include_image: 1 })).data.results
     detectionResult.value.fakeCount = detectionResult.value.fakeImages.length
@@ -467,6 +481,16 @@ onMounted(async () => {
     allPeople.value = []
   }
 })
+
+function formatLlmAnalysis(value: unknown) {
+  if (!value) return ''
+  if (typeof value === 'string') return value
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
+  }
+}
 
 const showImageDetail = ref(false)
 const selectedImage = ref<Image | null>(null)
@@ -747,5 +771,13 @@ watch(activeTab, () => {
   display: flex;
   justify-content: center;
   align-items: center;
+}
+
+.analysis-pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  font-family: "Courier New", Courier, monospace;
+  font-size: 0.9rem;
 }
 </style>
