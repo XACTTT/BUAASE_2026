@@ -5,7 +5,10 @@
       "Bash(where python3 *)",
       "Bash(where py *)",
       "Read(//c/Users/XXXact/AppData/Local/Programs/Python/**)",
-      "Bash(git -C \"c:\\\\Users\\\\XXXact\\\\BUAASE_2026\" diff --stat)"
+      "Bash(git -C \"c:\\\\Users\\\\XXXact\\\\BUAASE_2026\" diff --stat)",
+      "Bash(git -C \"c:\\\\Users\\\\XXXact\\\\BUAASE_2026\" log --oneline -10)",
+      "Bash(git -C \"c:\\\\Users\\\\XXXact\\\\BUAASE_2026\" show 2a2ee59 --stat)",
+      "Bash(git -C \"c:\\\\Users\\\\XXXact\\\\BUAASE_2026\" show 2a2ee59 -- \"AI学术鉴伪/代码/后端/后端代码/core/views/views_dectection.py\")"
     ]
   }
 }

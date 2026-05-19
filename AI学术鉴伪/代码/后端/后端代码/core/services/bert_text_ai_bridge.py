@@ -331,36 +331,31 @@ class BertTextAIDetectionBridge:
 
     @classmethod
     def submit_batch(cls, texts: list[dict], language: str | None = None, max_length: int | None = None):
-        payload = {
-            "request_id": f"bert-batch-{int(time.time() * 1000)}",
-            "pipeline": "bert",
-            "payload": {
-                "lang": cls._normalize_language(language),
-                "texts": texts,
+        batch_results = []
+        for item in texts:
+            item_lang = item.get('language') or language
+            result = cls.submit_text(
+                text=item['text'],
+                language=item_lang,
+                max_length=max_length,
+            )
+            result['item_id'] = item.get('id')
+            batch_results.append(result)
+
+        n = len(batch_results)
+        scores = [r.get('confidence_score', 0) for r in batch_results]
+        aigc_probs = [r.get('probabilities', {}).get('aigc', 0) for r in batch_results]
+
+        return {
+            'batch_results': batch_results,
+            'item_count': n,
+            'aggregate': {
+                'aigc_ratio': sum(1 for r in batch_results if r.get('is_aigc')) / n if n else 0,
+                'mean_aigc_probability': sum(aigc_probs) / n if n else 0.0,
+                'mean_confidence': sum(scores) / n if n else 0.0,
+                'max_confidence': max(scores) if scores else 0.0,
+                'min_confidence': min(scores) if scores else 0.0,
             },
+            'model_dir': batch_results[0].get('model_dir') if batch_results else None,
+            'lang': cls._normalize_language(language),
         }
-        if max_length:
-            payload["payload"]["max_length"] = int(max_length)
-
-        config = cls._config()
-        last_exc = None
-        attempts = max(1, config["submit_retry"] + 1)
-        mode = config["mode"]
-
-        for attempt in range(1, attempts + 1):
-            try:
-                if mode == "ssh":
-                    return cls._submit_remote(payload, config)
-                if mode == "auto":
-                    if cls._can_use_local_mode(config):
-                        return cls._submit_local(payload, config)
-                    return cls._submit_remote(payload, config)
-                return cls._submit_local(payload, config)
-            except BertTextAITransientError as exc:
-                last_exc = exc
-                if attempt >= attempts:
-                    break
-
-        if last_exc:
-            raise last_exc
-        raise BertTextAITransientError("bert text batch submit failed for unknown transient reason")
