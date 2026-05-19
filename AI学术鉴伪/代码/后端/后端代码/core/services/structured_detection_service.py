@@ -411,7 +411,7 @@ class StructuredDetectionService:
         return None
 
     @staticmethod
-    def _run_llm_analysis(task: DetectionTask, result_payload, ai_response):
+    def _run_llm_analysis(task: DetectionTask, result_payload, ai_response, text_items=None):
         config = StructuredDetectionService._resolve_llm_config(task)
         if config is None:
             return None
@@ -429,6 +429,8 @@ class StructuredDetectionService:
             'result_payload': result_payload,
             'ai_response': ai_response,
         }
+        if text_items:
+            input_payload['original_texts'] = text_items
 
         messages = [
             {'role': 'system', 'content': prompt},
@@ -550,7 +552,7 @@ class StructuredDetectionService:
             message='正在进行大模型综合智能分析...'
         )
 
-        llm_result = StructuredDetectionService._run_llm_analysis(task, result_payload, ai_response)
+        llm_result = StructuredDetectionService._run_llm_analysis(task, result_payload, ai_response, text_items)
         if llm_result is not None:
             result_payload['llm_analysis'] = llm_result
         StructuredDetectionService.store_result(task, result_payload, ai_response)
