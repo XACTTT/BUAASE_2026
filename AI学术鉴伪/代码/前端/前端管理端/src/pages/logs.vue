@@ -453,6 +453,8 @@ const operationTypeOptions = [
   { title: '用户登出', value: 'logout' },
   { title: '上传文件', value: 'upload' },
   { title: 'AI检测', value: 'ai_detect' },
+  { title: '论文文本检测', value: 'paper_detect' },
+  { title: '评审文本检测', value: 'review_detect' },
   { title: '发起审核', value: 'audit_submit' },
   { title: '执行审核', value: 'audit_op' },
   { title: '实体创建', value: 'entity_create' },
@@ -667,6 +669,8 @@ const getOperationTypeColor = (type: string) => {
       return 'info'
     case 'ai_detect':
     case 'detection':
+    case 'paper_detect':
+    case 'review_detect':
       return 'success'
     case 'audit_submit':
     case 'review_request':

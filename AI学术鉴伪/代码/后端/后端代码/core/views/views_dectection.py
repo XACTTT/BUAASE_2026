@@ -219,11 +219,13 @@ def _submit_structured_detection(request, user, mode, task_name, cmd_block_size,
     if quota_error:
         return quota_error
 
+    task_type_map = {'paper': 'paper_text', 'review': 'review_text', 'multi': 'multi_material'}
     detection_task = DetectionTask.objects.create(
         organization=user.organization,
         user=user,
         container=container,
         task_name=task_name,
+        task_type=task_type_map.get(detect_type, detect_type),
         status='pending',
         detect_type=detect_type,
         cmd_block_size=cmd_block_size,
@@ -862,6 +864,21 @@ def list_task_results(request, task_id):
         "results": result_list,
     })
 
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def get_task_llm_analysis(request, task_id):
+    """
+    GET /api/tasks/<task_id>/llm-analysis/
+    返回任务级的大模型分析结果
+    """
+    task = get_object_or_404(DetectionTask, id=task_id, user=request.user)
+    extra_payload = task.extra_payload or {}
+    return Response({
+        "task_id": task.id,
+        "llm_analysis": extra_payload.get("llm_analysis"),
+    })
+
 # 增加两个接口，分别返回造假的图片，和正常的图片；判别方式是detection_result.is_fake
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
@@ -1046,35 +1063,24 @@ def detection_result_by_image(request, image_id):
 def structured_task_result(request, task_id):
     task = get_object_or_404(DetectionTask, id=task_id, user=request.user)
 
-    if task.task_type in {'paper_text', 'review_text'}:
-        text_results = TextDetectionResult.objects.filter(detection_task=task).order_by('id')
-        completed_results = text_results.filter(status='completed').count()
-        fake_results = text_results.filter(is_fake=True).count()
+    # 优先检查结构化检测结果 — paper/review/multi 走 _submit_structured_detection 的任务
+    structured_result = StructuredDetectionResult.objects.filter(detection_task=task).first()
+    if structured_result is not None:
+        payload = structured_result.result_payload if structured_result else {}
         return Response(
             {
                 'task_id': task.id,
                 'task_name': task.task_name,
-                'detect_type': _resolve_task_detect_type(task),
+                'detect_type': task.detect_type,
                 'task_type': task.task_type,
                 'status': task.status,
                 'failure_reason': task.failure_reason,
-                'material_summary': {
-                    'text_count': text_results.count(),
-                    'completed_count': completed_results,
-                    'fake_count': fake_results,
-                },
-                'results': [
-                    {
-                        'result_id': result.id,
-                        'resource_id': result.text_resource_id,
-                        'text_type': _resolve_text_result_type(result.text_resource, task),
-                        'status': result.status,
-                        'is_fake': result.is_fake,
-                        'confidence_score': result.confidence_score,
-                        'detection_time': timezone.localtime(result.detection_time) if result.detection_time else None,
-                    }
-                    for result in text_results.select_related('text_resource')
-                ],
+                'container_id': task.container_id,
+                'result': payload,
+                'summary': structured_result.summary if structured_result else None,
+                'confidence_score': structured_result.confidence_score if structured_result else None,
+                'overall_is_fake': structured_result.overall_is_fake if structured_result else None,
+                'ai_response': structured_result.ai_response if structured_result else {},
             }
         )
 
@@ -1097,8 +1103,26 @@ def structured_task_result(request, task_id):
             }
         )
 
-    structured_result = StructuredDetectionResult.objects.filter(detection_task=task).first()
-    payload = structured_result.result_payload if structured_result else {}
+    # 结构化任务尚未完成（还没有 StructuredDetectionResult 记录）
+    if task.detect_type in ('paper', 'review', 'multi', 'multi_material'):
+        return Response(
+            {
+                'task_id': task.id,
+                'task_name': task.task_name,
+                'detect_type': task.detect_type,
+                'task_type': task.task_type,
+                'status': task.status,
+                'failure_reason': task.failure_reason,
+                'container_id': task.container_id,
+                'result': {},
+                'summary': None,
+                'confidence_score': None,
+                'overall_is_fake': None,
+                'ai_response': {},
+            }
+        )
+
+    # 兜底
     return Response(
         {
             'task_id': task.id,
@@ -1107,12 +1131,6 @@ def structured_task_result(request, task_id):
             'task_type': task.task_type,
             'status': task.status,
             'failure_reason': task.failure_reason,
-            'container_id': task.container_id,
-            'result': payload,
-            'summary': structured_result.summary if structured_result else None,
-            'confidence_score': structured_result.confidence_score if structured_result else None,
-            'overall_is_fake': structured_result.overall_is_fake if structured_result else None,
-            'ai_response': structured_result.ai_response if structured_result else {},
         }
     )
 
@@ -1205,7 +1223,7 @@ def get_user_tasks(request):
             'detect_type': _resolve_task_detect_type(task),
             'task_type': task.task_type,
             'container_id': task.container_id,
-            'upload_time': timezone.localtime(task.upload_time).strftime('%Y-%m-%d %H:%M:%S'),
+            'upload_time': timezone.localtime(task.upload_time).strftime('%Y-%m-%d %H:%M:%S') if task.upload_time else None,
             'status': task.status,
             'failure_reason': task.failure_reason,
             'completion_time': timezone.localtime(task.completion_time).strftime('%Y-%m-%d %H:%M:%S') if task.completion_time else None

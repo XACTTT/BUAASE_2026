@@ -83,6 +83,7 @@ urlpatterns = [
     path("tasks_image/<int:image_id>/report/", download_image_report, name="download-image-report"),
     path("tasks_image/<int:image_id>/getdr/", image2dr, name="image2dr"),
     path("tasks/<int:task_id>/results/",   list_task_results,        name="task-results"),
+    path("tasks/<int:task_id>/llm-analysis/", get_task_llm_analysis, name="task-llm-analysis"),
     path("tasks/<int:task_id>/structured-result/", structured_task_result, name="task-structured-result"),
     path("tasks/<int:task_id>/text_results/", get_task_text_results, name="task-text-results"), # 新增：任务维度文本检测结果列表
     path("results/<int:result_id>/",       detection_result_detail,  name="result-detail"),
@@ -101,6 +102,8 @@ urlpatterns = [
     path('get_publisher_review_tasks/', views_review.get_publisher_review_tasks, name='get_publisher_review_tasks'),
     path('get_img_review_all/', views_review.get_img_review_all, name='get_img_review_all'),  # 新增路由
     path('get_image_review/', views_review.get_image_review, name='get_image_review'),  # 新增路由/api/get_image_review/?review_request_id=&img_id=&reviewer_id=
+    path('get_text_review_all/', views_review.get_text_review_all, name='get_text_review_all'),
+    path('get_text_review/', views_review.get_text_review, name='get_text_review'),
     path('get_review_detail/<int:manual_review_id>/', views_review.get_review_detail, name='get_review_detail'),  # 新增路由
     path('post_review/<int:manual_review_id>/', views_review.post_review, name='post_review'),  # 新增路由
     path('publisher-dectectiontask-access/', views_review.if_publisher_can_access_dectection_task, name='if_publisher_can_access_dectection_task'),

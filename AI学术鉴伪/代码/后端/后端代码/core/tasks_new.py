@@ -11,6 +11,10 @@
 """
 from __future__ import annotations
 
+import base64
+import json
+import mimetypes
+import os
 import time
 from pathlib import Path
 from typing import List, Dict, Any
@@ -28,6 +32,8 @@ from core.models import (
     DetectionResult,      # 主结果表
     SubDetectionResult,   # 子检测方法结果表
     DetectionTask,        # 整体任务表
+    LLMAnalysisRun,
+    OrganizationModelConfig,
     TextDetectionResult,  # 文本检测结果表
     ReviewTextResource,   # 文本资源表
 )
@@ -43,6 +49,7 @@ from core.services.fast_detect_gpt_ai_bridge import (
 )
 from core.services.structured_ai_bridge import StructuredAITransientError
 from core.services.structured_detection_service import StructuredDetectionService
+from core.services.llm_service import build_chat_completion_payload, call_openai_compatible_chat
 from core.utils.log_utils import log_action
 from .utils.report_generator import generate_detection_task_report
 from .utils.image_saver import save_ndarray_as_image
@@ -104,6 +111,202 @@ def send_task_completion_notification(user, task_id):
             'notification': notification_data  # 使用 JSON 格式传递字段
         }
     )
+
+
+IMAGE_LLM_PROMPT = (
+    '你是学术图像鉴伪专家，专精于检测学术论文中的图像伪造与篡改。'
+    '你将收到每张待检测图片的原始图像、ELA误差分析图、以及各检测方法的mask热力图，'
+    '同时附带结构化的检测数据（篡改判定、置信度、EXIF标记、子方法概率等）。'
+    '\n\n'
+    '请综合分析视觉证据与结构化数据，关注以下造假手段：\n'
+    '1. 图像拼接/复制移动：mask图中出现规则形状高亮区域\n'
+    '2. AI生成/Deepfake：ELA图呈均匀噪声分布，纹理不自然\n'
+    '3. Photoshop篡改：EXIF中检测到Adobe痕迹，ELA异常集中在编辑区域\n'
+    '4. 数据图表造假：图表中数据点异常对齐、误差棒缺失或不合理\n'
+    '5. 重复使用：不同图片间存在相同区域或完全重复\n'
+    '\n\n'
+    '请输出严格符合以下JSON Schema的结果：\n'
+    '{\n'
+    '  "summary": "综合判定摘要，2-4句话概括整体情况和关键发现",\n'
+    '  "risk_level": "high/medium/low",\n'
+    '  "confidence": 0.0-1.0,\n'
+    '  "manipulation_signals": ["具体的造假信号，每条50字以内"],\n'
+    '  "mask_hints": ["对各mask图中可疑区域的解读"],\n'
+    '  "recommendations": ["建议的人工复核方向或进一步检测措施"]\n'
+    '}'
+)
+
+
+def _resolve_llm_config(task: DetectionTask):
+    if not task.organization_id:
+        return None
+
+    return OrganizationModelConfig.objects.filter(
+        organization_id=task.organization_id,
+        enabled=True,
+        provider_model__is_active=True,
+        provider_model__source__status='active',
+    ).select_related('provider_model', 'provider_model__source').order_by('-updated_at').first()
+
+
+def _encode_image_data_url(path: str | None) -> str | None:
+    if not path or not os.path.exists(path):
+        return None
+    try:
+        with open(path, 'rb') as handle:
+            raw = handle.read()
+        mime, _ = mimetypes.guess_type(path)
+        if not mime or mime == 'application/octet-stream':
+            mime = 'image/png'
+        return f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
+    except OSError:
+        return None
+
+
+def _build_image_llm_summary(task: DetectionTask, failed_count: int) -> dict:
+    results = []
+    queryset = (
+        DetectionResult.objects.filter(detection_task=task)
+        .select_related('image_upload')
+        .prefetch_related('sub_results')
+        .order_by('image_upload_id')
+    )
+
+    for dr in queryset:
+        sub_methods = []
+        for sub in dr.sub_results.all():
+            sub_methods.append({
+                'method': sub.method,
+                'probability': float(sub.probability) if sub.probability is not None else None,
+            })
+
+        results.append({
+            'image_id': dr.image_upload_id,
+            'is_fake': dr.is_fake,
+            'confidence_score': dr.confidence_score,
+            'exif_photoshop': dr.exif_photoshop,
+            'exif_time_modified': dr.exif_time_modified,
+            'llm_judgment': dr.llm_judgment,
+            'sub_methods': sub_methods,
+        })
+
+    return {
+        'task_id': task.id,
+        'task_name': task.task_name,
+        'detect_type': task.detect_type,
+        'summary': {
+            'image_count': len(results),
+            'failed_count': failed_count,
+            'fake_count': sum(1 for item in results if item.get('is_fake')),
+        },
+        'results': results,
+    }
+
+
+def _run_llm_analysis_for_image_task(task: DetectionTask, failed_count: int):
+    config = _resolve_llm_config(task)
+    if config is None:
+        return None
+
+    provider_model = config.provider_model
+    source = provider_model.source
+    summary = _build_image_llm_summary(task, failed_count)
+
+    user_content = [
+        {
+            'type': 'text',
+            'text': f"input_payload:\n{json.dumps(summary, ensure_ascii=False, indent=2)}",
+        },
+    ]
+
+    queryset = (
+        DetectionResult.objects.filter(detection_task=task)
+        .select_related('image_upload')
+        .prefetch_related('sub_results')
+        .order_by('image_upload_id')
+    )
+
+    for dr in queryset:
+        prefix = f'[image_id={dr.image_upload_id}]' if dr.image_upload_id else ''
+
+        orig = _encode_image_data_url(dr.image_upload.image.path if dr.image_upload else None)
+        if orig:
+            user_content.append({'type': 'text', 'text': f'{prefix} 原始图像：'})
+            user_content.append({'type': 'image_url', 'image_url': {'url': orig}})
+
+        ela = _encode_image_data_url(dr.ela_image.path if dr.ela_image else None)
+        if ela:
+            user_content.append({'type': 'text', 'text': f'{prefix} ELA误差分析图：'})
+            user_content.append({'type': 'image_url', 'image_url': {'url': ela}})
+
+        for sub in dr.sub_results.all():
+            prob = sub.probability
+            if sub.mask_image and prob is not None and float(prob) > 0.1:
+                mask = _encode_image_data_url(sub.mask_image.path)
+                if mask:
+                    user_content.append({
+                        'type': 'text',
+                        'text': f'{prefix} {sub.method} mask（概率 {float(prob):.4f}）：',
+                    })
+                    user_content.append({'type': 'image_url', 'image_url': {'url': mask}})
+
+    messages = [
+        {'role': 'system', 'content': IMAGE_LLM_PROMPT},
+        {'role': 'user', 'content': user_content},
+    ]
+
+    payload = build_chat_completion_payload(
+        model=provider_model.model_id,
+        messages=messages,
+        temperature=float(config.temperature),
+        top_p=float(config.top_p),
+        max_tokens=int(config.max_tokens),
+    )
+
+    run_record = LLMAnalysisRun.objects.create(
+        task=task,
+        model_config=config,
+        stage='image',
+        prompt=IMAGE_LLM_PROMPT,
+        messages=messages,
+        input_payload=summary,
+        status='pending',
+        created_by=task.user,
+    )
+
+    try:
+        result = call_openai_compatible_chat(
+            base_url=source.base_url,
+            api_key=source.api_key,
+            payload=payload,
+            timeout=int(source.timeout or 30),
+        )
+    except (OSError, ValueError) as exc:
+        run_record.status = 'failed'
+        run_record.error_message = str(exc)
+        run_record.save(update_fields=['status', 'error_message', 'updated_at'])
+        return None
+
+    content = None
+    try:
+        content = result['choices'][0]['message']['content']
+    except (KeyError, IndexError, TypeError):
+        content = None
+
+    parsed = None
+    if isinstance(content, str):
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError:
+            parsed = None
+
+    run_record.status = 'success'
+    run_record.output_text = content
+    if isinstance(parsed, dict):
+        run_record.output_json = parsed
+    run_record.save(update_fields=['status', 'output_text', 'output_json', 'updated_at'])
+
+    return parsed if isinstance(parsed, dict) else {'raw_text': content}
 
 # 若使用 redis-lock 之类库，也可以导入 lock 来替代 queue=\'ai\' 的单并发做法
 # from redis_lock import Lock
@@ -331,20 +534,36 @@ def finalize_task(_chord_results: list | None, task_pk: int, image_num: int, _=N
         # 说明还有图片未完成，直接返回即可
         return
 
-    # 全部完成(或部分失败) – 原子操作
+    failed_count = DetectionResult.objects.filter(detection_task=task, status="failed").count()
+
+    # 判断最终状态
+    if failed_count == image_num:
+        final_status = "failed"
+    elif failed_count > 0:
+        final_status = "partially_completed"
+    else:
+        final_status = "completed"
+
+    # ── Phase 1：标记"大模型分析中"，发进度通知 ──
+    DetectionTask.objects.filter(pk=task_pk).update(status="analyzing")
+    send_task_progress_update(
+        task_id=task_pk,
+        status="analyzing",
+        progress=90,
+        message="正在进行大模型综合智能分析..."
+    )
+
+    # ── Phase 2：调用大模型 ──
+    llm_result = _run_llm_analysis_for_image_task(task, failed_count)
+    if llm_result is not None:
+        extra_payload = task.extra_payload or {}
+        extra_payload['llm_analysis'] = llm_result
+        DetectionTask.objects.filter(pk=task.pk).update(extra_payload=extra_payload)
+
+    # ── Phase 3：标记最终状态 & 生成报告 ──
     with transaction.atomic():
-        # 获取悲观锁，防止并发写入导致状态覆盖
         task = DetectionTask.objects.select_for_update().get(pk=task_pk)
-        
-        # 判断整体状态：如果有任意失败则为部分成功或失败
-        failed_count = DetectionResult.objects.filter(detection_task=task, status="failed").count()
-        if failed_count == image_num:
-            task.status = "failed"
-        elif failed_count > 0:
-            task.status = "partially_completed"
-        else:
-            task.status = "completed"
-            
+        task.status = final_status
         task.completion_time = timezone.now()
         task.save(update_fields=["status", "completion_time"])
         generate_detection_task_report(task)
@@ -354,14 +573,14 @@ def finalize_task(_chord_results: list | None, task_pk: int, image_num: int, _=N
         operation_type='ai_detect',
         target_type='DetectionTask',
         target_id=task.id,
-        result='success' if task.status == "completed" else "partial_success" if task.status == "partially_completed" else "failure",
-        detail={'message': f'Task finalized with status: {task.status}', 'failed_count': failed_count}
+        result='success' if final_status == "completed" else "partial_success" if final_status == "partially_completed" else "failure",
+        detail={'message': f'Task finalized with status: {final_status}', 'failed_count': failed_count}
     )
 
     send_task_progress_update(
-        task_id=task_pk, 
-        status=task.status, 
-        progress=100, 
+        task_id=task_pk,
+        status=final_status,
+        progress=100,
         message=f"检测任务完成" if failed_count == 0 else f"任务完成，{failed_count} 张图片处理失败"
     )
     send_task_completion_notification(task.user, task_pk)
@@ -683,14 +902,32 @@ def run_structured_detection_task(self, task_pk: int):
     task.status = 'in_progress'
     task.failure_reason = None
     task.save(update_fields=['status', 'failure_reason'])
+    send_task_progress_update(
+        task_id=task_pk,
+        status='in_progress',
+        progress=30,
+        message='正在进行结构化检测分析...'
+    )
 
     try:
         StructuredDetectionService.execute_task(task)
     except StructuredAITransientError as exc:
         StructuredDetectionService.mark_failed(task, str(exc))
+        send_task_progress_update(
+            task_id=task_pk,
+            status='failed',
+            progress=0,
+            message=f'检测失败: {exc}'
+        )
         raise self.retry(exc=exc)
     except Exception as exc:
         StructuredDetectionService.mark_failed(task, str(exc))
+        send_task_progress_update(
+            task_id=task_pk,
+            status='failed',
+            progress=0,
+            message=f'检测失败: {exc}'
+        )
         return
 
     send_task_completion_notification(task.user, task_pk)

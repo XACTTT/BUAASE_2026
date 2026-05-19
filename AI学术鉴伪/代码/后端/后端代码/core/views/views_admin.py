@@ -1493,8 +1493,8 @@ def get_all_user_tasks(request):
                 "task_id": task.id,
                 "task_name": task.task_name,
                 "status": task.status,
-                "upload_time": timezone.localtime(task.upload_time),
-                "completion_time": timezone.localtime(task.completion_time),
+                "upload_time": timezone.localtime(task.upload_time) if task.upload_time else None,
+                "completion_time": timezone.localtime(task.completion_time) if task.completion_time else None,
                 "organization": task.organization.name if task.organization else None,
             } for task in tasks
         ]
@@ -1899,6 +1899,15 @@ def get_review_request_detail_admin(request, reviewRequest_id):
                 "url": serialize_value(img.image, request) if img.image else None,
             })
 
+        # 获取 texts 数据
+        texts = []
+        for text in review_request.text_resources.all():
+            texts.append({
+                "id": text.id,
+                "raw_text": text.raw_text[:200] + '...' if len(text.raw_text) > 200 else text.raw_text,
+                "source_type": text.source_type,
+            })
+
         # 获取 persons 数据：所有参与该请求的 reviewer（来自 ManualReview 表）
         persons = []
         for reviewer in review_request.reviewers.all():
@@ -1910,6 +1919,7 @@ def get_review_request_detail_admin(request, reviewRequest_id):
 
         return Response({
             "imgs": imgs,
+            "texts": texts,
             "persons": persons,
             "reason": review_request.reason,
             "organization": review_request.organization.name if review_request.organization else None,
@@ -1948,6 +1958,15 @@ def get_review_request_detail(request, manual_review_id):
             "url": serialize_value(img.image, request) if img.image else None,
         })
 
+    # 获取 texts 数据
+    texts = []
+    for text in manual_review.text_resources.all():
+        texts.append({
+            "id": text.id,
+            "raw_text": text.raw_text[:200] + '...' if len(text.raw_text) > 200 else text.raw_text,
+            "source_type": text.source_type,
+        })
+
     # 获取 persons 数据：所有参与该请求的 reviewer（来自 ManualReview 表）
     persons = []
     for reviewer in review_request.reviewers.all():
@@ -1960,6 +1979,7 @@ def get_review_request_detail(request, manual_review_id):
     # 构建返回数据
     response_data = {
         "imgs": imgs,
+        "texts": texts,
         "persons": persons,
         "reason": review_request.reason,
     }
@@ -1997,9 +2017,12 @@ def handle_review_request(request, reviewRequest_id):
         review_request.status2 = 'refused'
     elif choice == 1:
         review_request.status2 = 'accepted'
+        
+        from core.models import TextReview
 
-        # 获取所有图片
+        # 获取所有图片和文本资源
         images = review_request.imgs.all()
+        texts = review_request.text_resources.all()
 
         # 遍历所有审阅人
         for reviewer in review_request.reviewers.all():
@@ -2010,8 +2033,9 @@ def handle_review_request(request, reviewRequest_id):
                 status='undo'  # 默认状态
             )
 
-            # 设置 imgs 多对多关系
+            # 设置 imgs 和 text_resources 多对多关系
             manual_review.imgs.set(images)
+            manual_review.text_resources.set(texts)
 
             # 为每张图创建 ImageReview 并添加进 img_reviews
             image_reviews = []
@@ -2025,6 +2049,14 @@ def handle_review_request(request, reviewRequest_id):
 
             # 将所有 ImageReview 添加到 img_reviews 多对多字段
             manual_review.img_reviews.add(*image_reviews)
+            
+            # 为每篇文本创建 TextReview
+            for text in texts:
+                TextReview.objects.create(
+                    manual_review=manual_review,
+                    text_resource=text,
+                    result=None
+                )
 
             # wyt shit here
             send_notification(
@@ -2072,6 +2104,7 @@ def delete_review_request(request, review_request_id):
         manual_reviews = ManualReview.objects.filter(review_request=review_request)
         for manual_review in manual_reviews:
             manual_review.img_reviews.all().delete()  # 删除关联的 ImageReview
+            manual_review.text_reviews.all().delete() # 删除关联的 TextReview
             manual_review.delete()  # 删除 ManualReview
 
         # 删除 ReviewRequest

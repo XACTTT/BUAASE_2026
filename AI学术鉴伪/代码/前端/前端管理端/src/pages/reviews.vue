@@ -194,7 +194,7 @@
             <v-divider></v-divider>
 
             <div v-if="reviewDetails" class="d-flex flex-column gap-4">
-              <div class="d-flex flex-column gap-2">
+              <div v-if="reviewDetails.imgs && reviewDetails.imgs.length > 0" class="d-flex flex-column gap-2">
                 <div class="text-subtitle-1 font-weight-bold">相关图片</div>
                 <div class="d-flex flex-wrap gap-2">
                   <v-img
@@ -206,6 +206,16 @@
                     cover
                     class="rounded-lg"
                   ></v-img>
+                </div>
+              </div>
+
+              <div v-if="reviewDetails.texts && reviewDetails.texts.length > 0" class="d-flex flex-column gap-2">
+                <div class="text-subtitle-1 font-weight-bold">相关文本</div>
+                <div class="d-flex flex-column gap-2">
+                  <v-card v-for="text in reviewDetails.texts" :key="text.id" variant="outlined" class="pa-3 bg-grey-lighten-4">
+                    <div class="text-caption text-medium-emphasis mb-1">来源: {{ text.source_type }}</div>
+                    <div class="text-body-2">{{ text.raw_text }}</div>
+                  </v-card>
                 </div>
               </div>
 
@@ -332,6 +342,7 @@ const showReviewDialog = ref(false)
 const selectedRequest = ref<ReviewRequest | null>(null)
 const reviewDetails = ref<{
   imgs: Array<{ id: number, url: string }>
+  texts?: Array<{ id: number, raw_text: string, source_type: string }>
   persons: Array<{ id: number, username: string, avatar: string }>
   reason: string
 } | null>(null)
