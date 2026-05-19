@@ -21,9 +21,11 @@ from core.models import (
     TextDetectionResult,
 )
 from core.services.bert_text_ai_bridge import BertTextAIDetectionBridge
+from core.services.fast_detect_gpt_ai_bridge import FastDetectGPTAIDetectionBridge
 from core.tasks_new import (
     finalize_text_task,
     process_single_text_result,
+    process_single_fast_detect_gpt_result,
     process_text_detection_task,
     run_structured_detection_task,
 )
@@ -385,6 +387,137 @@ class ResourceManagementApiTests(TestCase):
         self.assertEqual(payload['payload']['answer'], 'test review text')
         self.assertNotIn('text', payload['payload'])
         self.assertEqual(payload['payload']['max_length'], 128)
+
+    def test_fast_detect_gpt_bridge_builds_fast_detect_payload(self):
+        payload = FastDetectGPTAIDetectionBridge._build_request_payload('test review text', max_length=256)
+
+        self.assertEqual(payload['pipeline'], 'fast_detect_gpt')
+        self.assertEqual(payload['payload']['text'], 'test review text')
+        self.assertEqual(payload['payload']['max_length'], 256)
+
+    @patch('core.tasks_new.FastDetectGPTAIDetectionBridge.submit_text')
+    def test_process_single_fast_detect_gpt_result_stores_result(self, mocked_submit_text):
+        review_container = ResourceContainer.objects.create(
+            organization=self.organization,
+            owner=self.user,
+            container_type='review',
+            title='Review Container',
+        )
+        review_text = ReviewTextResource.objects.create(
+            container=review_container,
+            source_type='paste',
+            language='zh',
+            raw_text='这是一段需要检测的评审文本',
+            normalized_text='这是一段需要检测的评审文本',
+            token_count=1,
+            parse_status='parsed',
+        )
+        task = DetectionTask.objects.create(
+            organization=self.organization,
+            user=self.user,
+            task_name='review-text-check',
+            task_type='review_text',
+            status='in_progress',
+        )
+        result = TextDetectionResult.objects.create(
+            detection_task=task,
+            text_resource=review_text,
+            status='in_progress',
+        )
+        mocked_submit_text.return_value = {
+            'is_aigc': False,
+            'label_name': 'human',
+            'confidence_score': 0.91,
+            'probabilities': {
+                'human': 0.91,
+                'aigc': 0.09,
+            },
+            'input_summary': {
+                'text_length': 12,
+            },
+        }
+
+        ok = process_single_fast_detect_gpt_result(result.id, review_text.normalized_text, True)
+        self.assertTrue(ok)
+
+        result.refresh_from_db()
+        self.assertEqual(result.status, 'completed')
+        self.assertFalse(result.is_fake)
+        self.assertEqual(result.confidence_score, 0.91)
+        self.assertIn('FastDetectGPT', result.template_analysis_reason)
+
+    @override_settings(
+        CELERY_TASK_ALWAYS_EAGER=True,
+        CELERY_TASK_EAGER_PROPAGATES=True,
+        CHANNEL_LAYERS={'default': {'BACKEND': 'channels.layers.InMemoryChannelLayer'}},
+    )
+    @patch('core.tasks_new.FastDetectGPTAIDetectionBridge.submit_text')
+    def test_submit_text_detection_fast_detect_gpt_e2e_with_celery(self, mocked_submit_text):
+        mocked_submit_text.return_value = {
+            'project_root': '/mnt/data/ccy/Bert/fast-detect-gpt',
+            'python': '/mnt/data14/ccy/pip_packs/miniconda3/envs/fast-detect-gpt/bin/python',
+            'sampling_model_name': 'falcon-7b',
+            'scoring_model_name': 'falcon-7b',
+            'is_aigc': False,
+            'label': 0,
+            'label_name': 'human',
+            'confidence_score': 0.9071478391683363,
+            'probabilities': {
+                'human': 0.9071478391683363,
+                'aigc': 0.09285216083166364,
+            },
+            'fast_detect_gpt': {
+                'criterion': -2.279296875,
+                'token_count': 23,
+                'max_length': 256,
+                'load_in_8bit': False,
+                'load_in_4bit': False,
+            },
+            'input_summary': {
+                'question_length': 0,
+                'text_length': 138,
+            },
+        }
+        review_container = ResourceContainer.objects.create(
+            organization=self.organization,
+            owner=self.user,
+            container_type='review',
+            title='Review Container',
+        )
+        review_text = ReviewTextResource.objects.create(
+            container=review_container,
+            source_type='paste',
+            language='en',
+            raw_text='This paragraph uses polished, highly uniform academic phrasing.',
+            normalized_text='This paragraph uses polished, highly uniform academic phrasing.',
+            token_count=8,
+            parse_status='parsed',
+        )
+
+        response = self.client.post(
+            '/api/detection/submit_text/',
+            {
+                'task_name': 'fast-detect-gpt-review-check',
+                'task_type': 'review_text',
+                'resource_ids': [review_text.id],
+                'detection_mode': 'fast_detect_gpt',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        task = DetectionTask.objects.get(id=response.data['task_id'])
+        text_result = TextDetectionResult.objects.get(detection_task=task, text_resource=review_text)
+
+        mocked_submit_text.assert_called_once_with(text=review_text.normalized_text)
+        task.refresh_from_db()
+        text_result.refresh_from_db()
+        self.assertEqual(task.status, 'completed')
+        self.assertEqual(text_result.status, 'completed')
+        self.assertFalse(text_result.is_fake)
+        self.assertEqual(text_result.confidence_score, 0.9071478391683363)
+        self.assertEqual(text_result.template_tendency_score, 0.9071478391683363)
+        self.assertIn('FastDetectGPT', text_result.template_analysis_reason)
 
     def test_material_validation_pass_and_fail(self):
         container = ResourceContainer.objects.create(

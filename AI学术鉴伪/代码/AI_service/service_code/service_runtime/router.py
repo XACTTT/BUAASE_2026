@@ -15,6 +15,8 @@ PIPELINE_ALIASES = {
     "bert_text": "bert_text",
     "text": "bert_text",
     "text_aigc": "bert_text",
+    "fast_detect_gpt": "fast_detect_gpt",
+    "fast-detect-gpt": "fast_detect_gpt",
 }
 
 
@@ -49,6 +51,9 @@ def _infer_pipeline(request_data: Dict[str, Any]) -> str:
     if any(key in payload for key in ("text", "answer", "question")):
         return "bert_text"
 
+    if any(key in payload for key in ("fast_detect_gpt", "sampling_model_name", "scoring_model_name")):
+        return "fast_detect_gpt"
+
     raise ValueError("unable to infer pipeline from request payload")
 
 
@@ -74,6 +79,10 @@ def dispatch_request(request_data: Dict[str, Any], *, request_path: Path) -> Dic
         from .bert_text_handler import run_bert_text_pipeline
 
         result = run_bert_text_pipeline(request_data)
+    elif pipeline == "fast_detect_gpt":
+        from .fast_detect_gpt_handler import run_fast_detect_gpt_pipeline_entry
+
+        result = run_fast_detect_gpt_pipeline_entry(request_data)
     else:
         raise ValueError(f"unsupported pipeline: {pipeline}")
 
@@ -83,4 +92,3 @@ def dispatch_request(request_data: Dict[str, Any], *, request_path: Path) -> Dic
         "pipeline": pipeline,
         "result": result,
     }
-

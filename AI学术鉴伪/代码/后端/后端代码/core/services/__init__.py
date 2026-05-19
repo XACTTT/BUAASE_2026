@@ -3,3 +3,9 @@ from .resource_container_service import ResourceContainerService
 from .file_ingest_service import FileIngestService
 from .review_text_service import ReviewTextService
 from .material_validation_service import MaterialValidationService
+from .fast_detect_gpt_ai_bridge import (
+    FastDetectGPTAIDetectionBridge,
+    FastDetectGPTAIError,
+    FastDetectGPTAIPermanentError,
+    FastDetectGPTAITransientError,
+)

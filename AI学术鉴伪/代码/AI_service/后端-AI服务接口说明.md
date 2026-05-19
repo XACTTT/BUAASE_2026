@@ -294,3 +294,27 @@ ai service result
 6. 读取下一行 base64
 7. 解码并解析 JSON
 8. 返回业务层
+
+## 10. Fast-DetectGPT 调用方式
+
+后端新增调用入口：
+
+```python
+from core.services.fast_detect_gpt_ai_bridge import FastDetectGPTAIDetectionBridge
+
+result = FastDetectGPTAIDetectionBridge.submit_text(text="待检测文本")
+```
+
+如果你要走文本任务队列：
+
+```python
+process_text_detection_task.apply_async(
+    args=[[text_result_id_1, text_result_id_2], task_id, False, "fast_detect_gpt"],
+    queue="ai",
+)
+```
+
+其中：
+
+- 第 4 个参数 `detection_mode` 传 `"fast_detect_gpt"`
+- 不传时默认还是 `"bert_text"`

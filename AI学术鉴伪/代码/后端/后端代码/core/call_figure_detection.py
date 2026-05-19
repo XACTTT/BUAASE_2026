@@ -164,6 +164,11 @@ def remote_monitor(stdout_stream, stderr_stream, config=None):
 
         return pickle.loads(base64.b64decode(encoded))
 
+    if pipeline == "fast_detect_gpt":
+        if not isinstance(result, dict):
+            raise RuntimeError("远程 fast_detect_gpt pipeline 返回结果缺少 result 对象")
+        return result
+
     raise RuntimeError(f"远程返回了非图片 pipeline 结果: {pipeline}")
 
 

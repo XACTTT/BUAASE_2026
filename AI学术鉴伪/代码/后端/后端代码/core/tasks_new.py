@@ -36,6 +36,11 @@ from core.services.bert_text_ai_bridge import (
     BertTextAITransientError,
     BertTextAIDetectionBridge,
 )
+from core.services.fast_detect_gpt_ai_bridge import (
+    FastDetectGPTAIPermanentError,
+    FastDetectGPTAITransientError,
+    FastDetectGPTAIDetectionBridge,
+)
 from core.services.structured_ai_bridge import StructuredAITransientError
 from core.services.structured_detection_service import StructuredDetectionService
 from core.utils.log_utils import log_action
@@ -367,7 +372,13 @@ def finalize_task(_chord_results: list | None, task_pk: int, image_num: int, _=N
 # ───────────────────────────────────────────────────────────────────────────────
 
 @shared_task(queue="ai", bind=True, acks_late=True, max_retries=3, default_retry_delay=15)
-def process_text_detection_task(self, text_result_ids: List[int], task_pk: int, is_review: bool = False) -> None:
+def process_text_detection_task(
+    self,
+    text_result_ids: List[int],
+    task_pk: int,
+    is_review: bool = False,
+    detection_mode: str = "bert_text",
+) -> None:
     """处理全篇论文或 Review 的检测（通常调用外部 LLM API 或特定的文本鉴伪算法）"""
     t0 = time.time()
     
@@ -397,6 +408,9 @@ def process_text_detection_task(self, text_result_ids: List[int], task_pk: int, 
     )
     
     # 2. 分发单个文本的处理任务
+    if detection_mode not in {"bert_text", "fast_detect_gpt"}:
+        detection_mode = "bert_text"
+
     subtasks = []
     for tr in tr_qs:
         # 提取需要检测的文本内容
@@ -404,9 +418,14 @@ def process_text_detection_task(self, text_result_ids: List[int], task_pk: int, 
         if tr.text_resource.normalized_text:
             text_content = tr.text_resource.normalized_text
             
-        subtasks.append(
-            process_single_text_result.s(tr.id, text_content, is_review).set(queue="ai")
-        )
+        if detection_mode == "fast_detect_gpt":
+            subtasks.append(
+                process_single_fast_detect_gpt_result.s(tr.id, text_content, is_review).set(queue="ai")
+            )
+        else:
+            subtasks.append(
+                process_single_text_result.s(tr.id, text_content, is_review).set(queue="ai")
+            )
         
     # 3. fan-in: 全部结束后触发文本专属的 finalize
     chord(
@@ -490,6 +509,114 @@ def process_single_text_result(tr_pk: int, text_content: str, is_review: bool) -
             target_id=tr.id,
             result='failure',
             error_msg=f"Text Subtask failed: {str(e)}",
+            detail={'traceback': traceback.format_exc()}
+        )
+        tr.status = "failed"
+        tr.save(update_fields=["status"])
+        return False
+
+
+def _build_fast_detect_gpt_reason(ai_result: Dict[str, Any], is_review: bool) -> str:
+    label_name = ai_result.get("label_name") or ("aigc" if ai_result.get("is_aigc") else "human")
+    score = float(ai_result.get("confidence_score") or 0.0)
+    probabilities = ai_result.get("probabilities") or {}
+    aigc_prob = float(probabilities.get("aigc") or 0.0)
+    human_prob = float(probabilities.get("human") or 0.0)
+
+    if is_review:
+        if ai_result.get("is_aigc"):
+            return (
+                f"FastDetectGPT 判定该评审文本存在较强 AI 生成倾向，"
+                f"标签为 {label_name}，置信度 {score:.4f}，AIGC 概率 {aigc_prob:.4f}。"
+            )
+        return (
+            f"FastDetectGPT 判定该评审文本更接近人工撰写，"
+            f"标签为 {label_name}，置信度 {score:.4f}，人工概率 {human_prob:.4f}。"
+        )
+
+    if ai_result.get("is_aigc"):
+        return (
+            f"FastDetectGPT 判定该文本存在 AI 生成倾向，"
+            f"标签为 {label_name}，置信度 {score:.4f}，AIGC 概率 {aigc_prob:.4f}。"
+        )
+    return (
+        f"FastDetectGPT 判定该文本更接近人工撰写，"
+        f"标签为 {label_name}，置信度 {score:.4f}，人工概率 {human_prob:.4f}。"
+    )
+
+
+@shared_task(queue="ai", acks_late=True)
+def process_single_fast_detect_gpt_result(tr_pk: int, text_content: str, is_review: bool) -> bool:
+    """单个文本的 fast_detect_gpt 调用与数据库写回。"""
+    tr = TextDetectionResult.objects.select_related("detection_task", "text_resource").get(pk=tr_pk)
+
+    try:
+        ai_result = FastDetectGPTAIDetectionBridge.submit_text(
+            text=text_content,
+        )
+
+        is_fake = bool(ai_result.get("is_aigc"))
+        overall_score = float(ai_result.get("confidence_score") or 0.0)
+        probabilities = ai_result.get("probabilities") or {}
+        reason = _build_fast_detect_gpt_reason(ai_result, is_review=is_review)
+
+        tr.is_fake = is_fake
+        tr.confidence_score = overall_score
+
+        if not is_review:
+            tr.ai_generated_paragraphs = [
+                {
+                    "paragraph_index": 1,
+                    "text": text_content[:200],
+                    "ai_probability": float(probabilities.get("aigc", overall_score) or 0.0),
+                    "label_name": ai_result.get("label_name"),
+                    "reason": reason,
+                    "input_summary": ai_result.get("input_summary") or {},
+                }
+            ]
+            tr.factual_fake_reason = reason
+            tr.template_tendency_score = None
+            tr.template_analysis_reason = None
+        else:
+            tr.ai_generated_paragraphs = None
+            tr.factual_fake_reason = None
+            tr.template_tendency_score = overall_score
+            tr.template_analysis_reason = reason
+
+        tr.detection_time = timezone.now()
+        tr.status = "completed"
+        tr.save(update_fields=[
+            "is_fake", "confidence_score", "ai_generated_paragraphs",
+            "factual_fake_reason", "template_tendency_score", "template_analysis_reason",
+            "detection_time", "status"
+        ])
+        return True
+
+    except FastDetectGPTAITransientError as e:
+        import traceback
+        _record_text_task_failure(tr.detection_task, str(e))
+        log_action(
+            user=tr.detection_task.user,
+            operation_type='review_detect' if is_review else 'paper_detect',
+            target_type='TextDetectionResult',
+            target_id=tr.id,
+            result='failure',
+            error_msg=f"FastDetectGPT transient failure: {str(e)}",
+            detail={'traceback': traceback.format_exc()}
+        )
+        tr.status = "failed"
+        tr.save(update_fields=["status"])
+        return False
+    except (FastDetectGPTAIPermanentError, Exception) as e:
+        import traceback
+        _record_text_task_failure(tr.detection_task, str(e))
+        log_action(
+            user=tr.detection_task.user,
+            operation_type='review_detect' if is_review else 'paper_detect',
+            target_type='TextDetectionResult',
+            target_id=tr.id,
+            result='failure',
+            error_msg=f"FastDetectGPT subtask failed: {str(e)}",
             detail={'traceback': traceback.format_exc()}
         )
         tr.status = "failed"

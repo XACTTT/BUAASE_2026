@@ -623,7 +623,8 @@ def submit_text_detection(request):
         args=[
             [tdr.id for tdr in text_detection_results],
             detection_task.pk,
-            is_review
+            is_review,
+            request.data.get('detection_mode', 'fast_detect_gpt'),
         ],
         queue='ai'
     )
