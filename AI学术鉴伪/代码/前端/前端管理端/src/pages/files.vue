@@ -467,11 +467,16 @@ const filters = ref<{
 })
 
 const subjectOptions = [
-  { title: '生物', value: 'Biology' },
-  { title: '医学', value: 'Medicine' },
-  { title: '化学', value: 'Chemistry' },
-  { title: '图形学', value: 'Graphics' },
-  { title: '其他', value: 'Other' }
+  { title: '计算机科学', value: 'computer_science' },
+  { title: '人工智能', value: 'artificial_intelligence' },
+  { title: '数学', value: 'mathematics' },
+  { title: '物理学', value: 'physics' },
+  { title: '化学', value: 'chemistry' },
+  { title: '生物学', value: 'biology' },
+  { title: '医学', value: 'medicine' },
+  { title: '工程学', value: 'engineering' },
+  { title: '图形学', value: 'graphics' },
+  { title: '其他', value: 'other' }
 ]
 
 const timeRangeOptions = [
@@ -907,15 +912,25 @@ onMounted(async () => {
 
 const getSubjectColor = (subject: string) => {
   switch (subject) {
-    case 'Biology':
+    case 'biology':
       return 'success'
-    case 'Medicine':
+    case 'medicine':
       return 'info'
-    case 'Chemistry':
+    case 'chemistry':
       return 'warning'
-    case 'Graphics':
+    case 'graphics':
       return 'primary'
-    case 'Other':
+    case 'computer_science':
+      return 'indigo'
+    case 'artificial_intelligence':
+      return 'deep-purple'
+    case 'mathematics':
+      return 'teal'
+    case 'physics':
+      return 'blue-grey'
+    case 'engineering':
+      return 'brown'
+    case 'other':
       return 'grey'
     default:
       return 'grey'
@@ -924,15 +939,25 @@ const getSubjectColor = (subject: string) => {
 
 const getSubjectName = (subject: string) => {
   switch (subject) {
-    case 'Biology':
-      return '生物'
-    case 'Medicine':
+    case 'biology':
+      return '生物学'
+    case 'medicine':
       return '医学'
-    case 'Chemistry':
+    case 'chemistry':
       return '化学'
-    case 'Graphics':
+    case 'graphics':
       return '图形学'
-    case 'Other':
+    case 'computer_science':
+      return '计算机科学'
+    case 'artificial_intelligence':
+      return '人工智能'
+    case 'mathematics':
+      return '数学'
+    case 'physics':
+      return '物理学'
+    case 'engineering':
+      return '工程学'
+    case 'other':
       return '其他'
     default:
       return subject

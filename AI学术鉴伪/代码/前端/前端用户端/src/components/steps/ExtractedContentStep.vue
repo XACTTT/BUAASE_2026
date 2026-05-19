@@ -245,11 +245,16 @@ const previewCardStyle = computed(() => {
 const moduleIcon = computed(() => (props.contentType === 'paper' ? 'mdi-file-document-outline' : 'mdi-file-search-outline'))
 
 const mappedTag = [
-  { title: '医学', value: 'Medicine' },
-  { title: '生物', value: 'Biology' },
-  { title: '化学', value: 'Chemistry' },
-  { title: '图形学', value: 'Graphics' },
-  { title: '其他', value: 'Other' }
+  { title: '计算机科学', value: 'computer_science' },
+  { title: '人工智能', value: 'artificial_intelligence' },
+  { title: '数学', value: 'mathematics' },
+  { title: '物理学', value: 'physics' },
+  { title: '化学', value: 'chemistry' },
+  { title: '生物学', value: 'biology' },
+  { title: '医学', value: 'medicine' },
+  { title: '工程学', value: 'engineering' },
+  { title: '图形学', value: 'graphics' },
+  { title: '其他', value: 'other' }
 ]
 
 const emitTaskName = () => {
