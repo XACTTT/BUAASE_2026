@@ -328,3 +328,39 @@ class BertTextAIDetectionBridge:
         if last_exc:
             raise last_exc
         raise BertTextAITransientError("bert text submit failed for unknown transient reason")
+
+    @classmethod
+    def submit_batch(cls, texts: list[dict], language: str | None = None, max_length: int | None = None):
+        payload = {
+            "request_id": f"bert-batch-{int(time.time() * 1000)}",
+            "pipeline": "bert",
+            "payload": {
+                "lang": cls._normalize_language(language),
+                "texts": texts,
+            },
+        }
+        if max_length:
+            payload["payload"]["max_length"] = int(max_length)
+
+        config = cls._config()
+        last_exc = None
+        attempts = max(1, config["submit_retry"] + 1)
+        mode = config["mode"]
+
+        for attempt in range(1, attempts + 1):
+            try:
+                if mode == "ssh":
+                    return cls._submit_remote(payload, config)
+                if mode == "auto":
+                    if cls._can_use_local_mode(config):
+                        return cls._submit_local(payload, config)
+                    return cls._submit_remote(payload, config)
+                return cls._submit_local(payload, config)
+            except BertTextAITransientError as exc:
+                last_exc = exc
+                if attempt >= attempts:
+                    break
+
+        if last_exc:
+            raise last_exc
+        raise BertTextAITransientError("bert text batch submit failed for unknown transient reason")

@@ -42,7 +42,6 @@ from core.services.bert_text_ai_bridge import (
     BertTextAITransientError,
     BertTextAIDetectionBridge,
 )
-from core.services.structured_ai_bridge import StructuredAITransientError
 from core.services.structured_detection_service import StructuredDetectionService
 from core.services.llm_service import build_chat_completion_payload, call_openai_compatible_chat
 from core.utils.log_utils import log_action
@@ -784,7 +783,7 @@ def run_structured_detection_task(self, task_pk: int):
 
     try:
         StructuredDetectionService.execute_task(task)
-    except StructuredAITransientError as exc:
+    except BertTextAITransientError as exc:
         StructuredDetectionService.mark_failed(task, str(exc))
         send_task_progress_update(
             task_id=task_pk,

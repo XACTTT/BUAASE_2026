@@ -1,7 +1,11 @@
 {
   "permissions": {
     "allow": [
-      "Bash(git pull *)"
+      "Bash(git pull *)",
+      "Bash(where python3 *)",
+      "Bash(where py *)",
+      "Read(//c/Users/XXXact/AppData/Local/Programs/Python/**)",
+      "Bash(git -C \"c:\\\\Users\\\\XXXact\\\\BUAASE_2026\" diff --stat)"
     ]
   }
 }

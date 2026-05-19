@@ -14,7 +14,7 @@ from core.models import (
 )
 from core.services.content_extraction_service import ContentExtractionService
 from core.services.material_validation_service import MaterialValidationService
-from core.services.structured_ai_bridge import StructuredAIDetectionBridge
+from core.services.bert_text_ai_bridge import BertTextAIDetectionBridge
 from core.services.llm_service import build_chat_completion_payload, call_openai_compatible_chat
 
 
@@ -191,19 +191,141 @@ class StructuredDetectionService:
         raise ValueError('UNSUPPORTED_DETECT_TYPE')
 
     @staticmethod
-    def build_ai_request(task: DetectionTask, snapshot):
+    def _extract_text_items_from_snapshot(snapshot, detect_type):
+        items = []
+        if detect_type in ('paper', 'multi'):
+            for file_idx, paper_file in enumerate(snapshot.get('paper_files', [])):
+                for sec_idx, section in enumerate(paper_file.get('sections', [])):
+                    text = (section.get('text') or '').strip()
+                    if text:
+                        items.append({
+                            'id': f"{detect_type}_paper_{file_idx}_{sec_idx}",
+                            'text': text,
+                            'language': 'chinese',
+                        })
+        if detect_type in ('review', 'multi'):
+            for file_idx, review_file in enumerate(snapshot.get('review_files', [])):
+                for sec_idx, section in enumerate(review_file.get('sections', [])):
+                    text = (section.get('text') or '').strip()
+                    if text:
+                        items.append({
+                            'id': f"{detect_type}_review_file_{file_idx}_{sec_idx}",
+                            'text': text,
+                            'language': 'chinese',
+                        })
+            for text_idx, review_text in enumerate(snapshot.get('review_texts', [])):
+                text = (review_text.get('normalized_text') or review_text.get('raw_text') or '').strip()
+                if text:
+                    items.append({
+                        'id': f"{detect_type}_review_text_{text_idx}",
+                        'text': text,
+                        'language': review_text.get('language', 'chinese'),
+                    })
+        return items
+
+    @staticmethod
+    def _score_consistency(scores):
+        if not scores or len(scores) < 2:
+            return 1.0
+        mean = sum(scores) / len(scores)
+        if mean == 0:
+            return 1.0
+        variance = sum((s - mean) ** 2 for s in scores) / len(scores)
+        return max(0.0, min(1.0, 1.0 - (variance ** 0.5) / mean))
+
+    @staticmethod
+    def _aggregate_bert_batch(batch_response, detect_type, snapshot):
+        batch_results = batch_response.get('batch_results', [])
+        aggregate = batch_response.get('aggregate', {})
+        n = len(batch_results)
+        scores = [r.get('confidence_score', 0) for r in batch_results]
+        aigc_probs = [r.get('probabilities', {}).get('aigc', 0) for r in batch_results]
+        aigc_count = sum(1 for r in batch_results if r.get('is_aigc'))
+        avg_aigc = aggregate.get('mean_aigc_probability', sum(aigc_probs) / n if n else 0)
+        risk_level = 'high' if avg_aigc >= 0.75 else 'medium' if avg_aigc >= 0.45 else 'low'
+        is_fake = avg_aigc >= 0.60
+
+        per_section = [
+            {
+                'item_id': r.get('item_id'),
+                'is_aigc': r.get('is_aigc'),
+                'label_name': r.get('label_name'),
+                'confidence_score': r.get('confidence_score'),
+                'probabilities': r.get('probabilities'),
+            }
+            for r in batch_results
+        ]
+
+        consistency = StructuredDetectionService._score_consistency(scores)
+
+        if detect_type == 'paper':
+            dimensions = [
+                {'name': 'aigc_generation', 'score': round(avg_aigc, 4),
+                 'summary': 'BERT AIGC probability aggregated across all paper sections'},
+                {'name': 'section_consistency', 'score': round(consistency, 4),
+                 'summary': 'Cross-section prediction consistency'},
+                {'name': 'aigc_section_ratio', 'score': round(aigc_count / n, 4) if n else 0,
+                 'summary': f'{aigc_count}/{n} sections classified as AIGC'},
+                {'name': 'max_section_risk', 'score': round(max(scores) if scores else 0, 4),
+                 'summary': 'Highest single-section AIGC confidence'},
+            ]
+            material_summary = {
+                'paper_file_count': len(snapshot.get('paper_files', [])),
+                'image_count': len(snapshot.get('images', [])),
+                'section_count': n,
+            }
+        elif detect_type == 'review':
+            dimensions = [
+                {'name': 'aigc_generation', 'score': round(avg_aigc, 4),
+                 'summary': 'BERT AIGC probability aggregated across all review texts'},
+                {'name': 'template_tendency', 'score': round(aggregate.get('mean_confidence', 0), 4),
+                 'summary': 'Model confidence as proxy for template/boilerplate detection'},
+                {'name': 'cross_text_consistency', 'score': round(consistency, 4),
+                 'summary': 'Consistency of predictions across review sources'},
+                {'name': 'peak_risk', 'score': round(max(scores) if scores else 0, 4),
+                 'summary': 'Highest single-text AIGC risk'},
+            ]
+            material_summary = {
+                'review_file_count': len(snapshot.get('review_files', [])),
+                'review_text_count': len(snapshot.get('review_texts', [])),
+                'section_count': n,
+            }
+        else:
+            dimensions = [
+                {'name': 'aigc_generation', 'score': round(avg_aigc, 4),
+                 'summary': 'BERT AIGC probability across all materials'},
+                {'name': 'cross_material_consistency', 'score': round(consistency, 4),
+                 'summary': 'Consistency across paper and review text predictions'},
+                {'name': 'aigc_ratio', 'score': round(aigc_count / n, 4) if n else 0,
+                 'summary': f'{aigc_count}/{n} text blocks classified as AIGC'},
+                {'name': 'max_risk', 'score': round(max(scores) if scores else 0, 4),
+                 'summary': 'Highest single-block AIGC risk'},
+            ]
+            material_summary = {
+                'paper_file_count': len(snapshot.get('paper_files', [])),
+                'review_file_count': len(snapshot.get('review_files', [])),
+                'review_text_count': len(snapshot.get('review_texts', [])),
+                'image_count': len(snapshot.get('images', [])),
+                'section_count': n,
+            }
+
         return {
-            'task_id': task.id,
-            'task_name': task.task_name,
-            'detect_type': task.detect_type,
-            'mode': task.extra_payload.get('mode'),
-            'config': {
-                'cmd_block_size': task.cmd_block_size,
-                'urn_k': task.urn_k,
-                'if_use_llm': task.if_use_llm,
+            'overall': {
+                'is_fake': is_fake,
+                'confidence_score': round(avg_aigc, 4),
+                'risk_level': risk_level,
             },
-            'container_id': task.container_id,
-            'payload': snapshot,
+            'summary': f'BERT text classification completed across {n} text sections',
+            'material_summary': material_summary,
+            'dimensions': dimensions,
+            'evidence': {
+                'model_dir': batch_response.get('model_dir'),
+                'lang': batch_response.get('lang'),
+                'section_count': n,
+                'aigc_section_count': aigc_count,
+                'aggregate': aggregate,
+                'per_section': per_section,
+            },
         }
 
     @staticmethod
@@ -406,8 +528,13 @@ class StructuredDetectionService:
             if not validation.get('valid'):
                 raise ValueError(validation.get('message') or '多材料校验失败')
 
-        ai_request = StructuredDetectionService.build_ai_request(task, snapshot)
-        ai_response = StructuredAIDetectionBridge.submit(ai_request)
+        text_items = StructuredDetectionService._extract_text_items_from_snapshot(snapshot, task.detect_type)
+        if not text_items:
+            raise ValueError(f'No extractable text found for detect_type={task.detect_type}')
+        batch_response = BertTextAIDetectionBridge.submit_batch(text_items)
+        ai_response = StructuredDetectionService._aggregate_bert_batch(
+            batch_response, task.detect_type, snapshot
+        )
         result_payload = StructuredDetectionService.normalize_result_payload(task, snapshot, ai_response)
 
         # 标记"大模型分析中"
