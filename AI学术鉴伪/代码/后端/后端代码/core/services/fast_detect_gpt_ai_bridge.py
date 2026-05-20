@@ -195,3 +195,49 @@ class FastDetectGPTAIDetectionBridge:
         if last_exc:
             raise last_exc
         raise FastDetectGPTAITransientError("fast_detect_gpt submit failed for unknown transient reason")
+
+    @classmethod
+    def submit_batch(
+        cls,
+        texts: list[dict],
+        question: str | None = None,
+        max_length: int | None = None,
+    ):
+        batch_results = []
+        for item in texts:
+            if not isinstance(item, dict):
+                raise ValueError("each batch item must be an object")
+
+            text = str(item.get("text") or "").strip()
+            if not text:
+                raise ValueError("each batch item requires text")
+
+            item_question = item.get("question") or question
+            item_max_length = item.get("max_length")
+            result = cls.submit_text(
+                text=text,
+                question=item_question,
+                max_length=int(item_max_length) if item_max_length is not None else max_length,
+            )
+            result["item_id"] = item.get("id")
+            batch_results.append(result)
+
+        n = len(batch_results)
+        scores = [r.get("confidence_score", 0) for r in batch_results]
+        aigc_probs = [r.get("probabilities", {}).get("aigc", 0) for r in batch_results]
+        human_probs = [r.get("probabilities", {}).get("human", 0) for r in batch_results]
+
+        return {
+            "batch_results": batch_results,
+            "item_count": n,
+            "aggregate": {
+                "aigc_ratio": sum(1 for r in batch_results if r.get("is_aigc")) / n if n else 0,
+                "mean_aigc_probability": sum(aigc_probs) / n if n else 0.0,
+                "mean_human_probability": sum(human_probs) / n if n else 0.0,
+                "mean_confidence": sum(scores) / n if n else 0.0,
+                "max_confidence": max(scores) if scores else 0.0,
+                "min_confidence": min(scores) if scores else 0.0,
+            },
+            "model_name": batch_results[0].get("sampling_model_name") if batch_results else None,
+            "project_root": batch_results[0].get("project_root") if batch_results else None,
+        }
