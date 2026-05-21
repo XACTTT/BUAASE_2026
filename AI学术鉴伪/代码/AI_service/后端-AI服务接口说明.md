@@ -184,6 +184,67 @@ ai service result
 - `question + answer`：问答对输入
 - `lang`：当前建议使用 `chinese`
 
+### 6.3 多段落单次请求模式
+
+当后端希望在一次请求中提交整篇文档的全部段落时，推荐直接在同一个 `request.json`
+中放入 `payload.items` 数组，由 AI 服务端统一完成批量推理并一次性返回结果。
+
+`bert` 示例：
+
+```json
+{
+  "request_id": "bert-demo-batch-001",
+  "pipeline": "bert",
+  "payload": {
+    "lang": "chinese",
+    "max_length": 256,
+    "items": [
+      {
+        "item_id": "paragraph-1",
+        "paragraph_index": 1,
+        "answer": "第一段待检测文本"
+      },
+      {
+        "item_id": "paragraph-2",
+        "paragraph_index": 2,
+        "answer": "第二段待检测文本"
+      }
+    ]
+  }
+}
+```
+
+`fast_detect_gpt` 示例：
+
+```json
+{
+  "request_id": "fast-detect-gpt-demo-batch-001",
+  "pipeline": "fast_detect_gpt",
+  "payload": {
+    "max_length": 256,
+    "items": [
+      {
+        "item_id": "paragraph-1",
+        "paragraph_index": 1,
+        "text": "第一段待检测文本"
+      },
+      {
+        "item_id": "paragraph-2",
+        "paragraph_index": 2,
+        "text": "第二段待检测文本"
+      }
+    ]
+  }
+}
+```
+
+说明：
+
+- 一个请求文件对应一篇文档的一次批量检测任务
+- 不再要求后端为每个段落分别生成请求文件
+- `item_id` 建议由后端显式传入，便于结果回填
+- 请求体中不再使用 `batch_size`、`batch_mode` 等批处理控制键
+
 ## 7. 统一返回格式
 
 服务返回的是 base64 编码后的 JSON。解码后格式如下：

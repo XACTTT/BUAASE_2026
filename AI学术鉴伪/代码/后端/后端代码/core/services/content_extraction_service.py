@@ -20,12 +20,19 @@ class ContentExtractionService:
 
     @staticmethod
     def _split_text_blocks(text: str, fallback_title: str):
-        normalized = ContentExtractionService._normalize_text(text)
-        if not normalized:
+        raw_text = (text or '').replace('\r\n', '\n').replace('\r', '\n').strip()
+        if not raw_text:
             return []
 
-        paragraphs = [chunk.strip() for chunk in re.split(r'\n{2,}', normalized) if chunk.strip()]
+        paragraphs = [
+            ContentExtractionService._normalize_text(chunk)
+            for chunk in re.split(r'\n\s*\n+', raw_text)
+            if chunk.strip()
+        ]
         if not paragraphs:
+            normalized = ContentExtractionService._normalize_text(raw_text)
+            if not normalized:
+                return []
             return [{
                 'title': fallback_title,
                 'text': normalized,
@@ -58,15 +65,34 @@ class ContentExtractionService:
         sections = []
         with fitz.open(full_path) as pdf_document:
             for page_idx in range(pdf_document.page_count):
-                text = pdf_document.load_page(page_idx).get_text('text').strip()
-                if not text:
+                page = pdf_document.load_page(page_idx)
+                blocks = page.get_text('blocks')
+                text_blocks = []
+                for block in sorted(blocks, key=lambda item: (item[1], item[0])):
+                    if len(block) >= 7 and block[6] != 0:
+                        continue
+                    text = ContentExtractionService._normalize_text(str(block[4] or ''))
+                    if text:
+                        text_blocks.append(text)
+
+                if text_blocks:
+                    for block_idx, text in enumerate(text_blocks):
+                        sections.append({
+                            'title': f'第{page_idx + 1}页-段落{block_idx + 1}',
+                            'text': text,
+                            'source': 'pdf_extracted',
+                            'page_number': page_idx + 1,
+                        })
                     continue
-                sections.append({
-                    'title': f'第{page_idx + 1}页',
-                    'text': ContentExtractionService._normalize_text(text),
-                    'source': 'pdf_extracted',
-                    'page_number': page_idx + 1,
-                })
+
+                page_text = page.get_text('text').strip()
+                if page_text:
+                    sections.append({
+                        'title': f'第{page_idx + 1}页',
+                        'text': ContentExtractionService._normalize_text(page_text),
+                        'source': 'pdf_extracted',
+                        'page_number': page_idx + 1,
+                    })
         return sections
 
     @staticmethod

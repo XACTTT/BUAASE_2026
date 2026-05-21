@@ -87,12 +87,53 @@ class BertTextAIDetectionBridge:
         return payload
 
     @staticmethod
+    def _build_batch_request_payload(texts: list[dict], language: str | None = None, max_length: int | None = None):
+        items = []
+        for index, item in enumerate(texts):
+            if not isinstance(item, dict):
+                raise ValueError("each batch item must be an object")
+
+            text = str(item.get("text") or "").strip()
+            if not text:
+                raise ValueError("each batch item requires text")
+
+            item_payload = {
+                "item_id": item.get("id") or f"item-{index + 1}",
+                "answer": text,
+            }
+            question = item.get("question")
+            if question:
+                item_payload["question"] = str(question).strip()
+            items.append(item_payload)
+
+        payload = {
+            "request_id": f"bert-text-batch-{int(time.time() * 1000)}",
+            "pipeline": "bert",
+            "payload": {
+                "lang": BertTextAIDetectionBridge._resolve_batch_language(texts, language),
+                "items": items,
+            },
+        }
+        if max_length:
+            payload["payload"]["max_length"] = int(max_length)
+        return payload
+
+    @staticmethod
     def _normalize_language(language: str | None) -> str:
         raw = (language or "").strip().lower()
         if raw in {"zh", "zh-cn", "zh_hans", "chinese", "cn"}:
             return "chinese"
-        if raw:
-            return raw
+        if raw in {"en", "en-us", "en-gb", "english"}:
+            return "English"
+        return "chinese"
+
+    @classmethod
+    def _resolve_batch_language(cls, texts: list[dict], language: str | None = None) -> str:
+        if language:
+            return cls._normalize_language(language)
+        for item in texts:
+            if isinstance(item, dict) and item.get("language"):
+                return cls._normalize_language(item.get("language"))
         return "chinese"
 
     @staticmethod
@@ -303,10 +344,60 @@ class BertTextAIDetectionBridge:
             raise BertTextAIPermanentError("bert text result payload must be an object")
         return result
 
+    @staticmethod
+    def _normalize_batch_result_item(item: dict):
+        return {
+            "item_id": item.get("item_id"),
+            "item_index": item.get("item_index"),
+            "is_aigc": item.get("is_aigc"),
+            "label": item.get("label"),
+            "label_name": item.get("label_name"),
+            "confidence_score": item.get("confidence_score"),
+            "probabilities": item.get("probabilities") or {},
+            "input_summary": item.get("input_summary") or {},
+        }
+
     @classmethod
-    def submit_text(cls, text: str, language: str | None = None, max_length: int | None = None):
-        request_payload = cls._build_request_payload(text=text, language=language, max_length=max_length)
-        config = cls._config()
+    def _normalize_batch_response(cls, result: dict):
+        if isinstance(result.get("batch_results"), list):
+            return result
+
+        items = result.get("items")
+        if not isinstance(items, list):
+            raise BertTextAIPermanentError("bert text batch result must include batch_results or items")
+
+        batch_results = [cls._normalize_batch_result_item(item) for item in items if isinstance(item, dict)]
+        n = len(batch_results)
+        scores = [r.get("confidence_score", 0) or 0 for r in batch_results]
+        aigc_probs = [r.get("probabilities", {}).get("aigc", 0) or 0 for r in batch_results]
+        summary = result.get("summary") or {}
+
+        aggregate = {
+            "aigc_ratio": (
+                float(summary.get("aigc_count", 0)) / float(summary.get("item_count", n))
+                if summary.get("item_count", n)
+                else (sum(1 for r in batch_results if r.get("is_aigc")) / n if n else 0.0)
+            ),
+            "mean_aigc_probability": sum(aigc_probs) / n if n else 0.0,
+            "mean_confidence": sum(scores) / n if n else 0.0,
+            "max_confidence": max(scores) if scores else 0.0,
+            "min_confidence": min(scores) if scores else 0.0,
+        }
+
+        normalized = {
+            "batch_results": batch_results,
+            "item_count": int(summary.get("item_count", n) or n),
+            "aggregate": aggregate,
+            "model_dir": result.get("model_dir"),
+            "base_model_dir": result.get("base_model_dir"),
+            "lang": result.get("lang"),
+        }
+        if summary:
+            normalized["summary"] = summary
+        return normalized
+
+    @classmethod
+    def _submit_request(cls, request_payload, config):
         last_exc = None
         attempts = max(1, config["submit_retry"] + 1)
         mode = config["mode"]
@@ -330,32 +421,18 @@ class BertTextAIDetectionBridge:
         raise BertTextAITransientError("bert text submit failed for unknown transient reason")
 
     @classmethod
+    def submit_text(cls, text: str, language: str | None = None, max_length: int | None = None):
+        request_payload = cls._build_request_payload(text=text, language=language, max_length=max_length)
+        config = cls._config()
+        return cls._submit_request(request_payload, config)
+
+    @classmethod
     def submit_batch(cls, texts: list[dict], language: str | None = None, max_length: int | None = None):
-        batch_results = []
-        for item in texts:
-            item_lang = item.get('language') or language
-            result = cls.submit_text(
-                text=item['text'],
-                language=item_lang,
-                max_length=max_length,
-            )
-            result['item_id'] = item.get('id')
-            batch_results.append(result)
-
-        n = len(batch_results)
-        scores = [r.get('confidence_score', 0) for r in batch_results]
-        aigc_probs = [r.get('probabilities', {}).get('aigc', 0) for r in batch_results]
-
-        return {
-            'batch_results': batch_results,
-            'item_count': n,
-            'aggregate': {
-                'aigc_ratio': sum(1 for r in batch_results if r.get('is_aigc')) / n if n else 0,
-                'mean_aigc_probability': sum(aigc_probs) / n if n else 0.0,
-                'mean_confidence': sum(scores) / n if n else 0.0,
-                'max_confidence': max(scores) if scores else 0.0,
-                'min_confidence': min(scores) if scores else 0.0,
-            },
-            'model_dir': batch_results[0].get('model_dir') if batch_results else None,
-            'lang': cls._normalize_language(language),
-        }
+        request_payload = cls._build_batch_request_payload(
+            texts=texts,
+            language=language,
+            max_length=max_length,
+        )
+        config = cls._config()
+        result = cls._submit_request(request_payload, config)
+        return cls._normalize_batch_response(result)

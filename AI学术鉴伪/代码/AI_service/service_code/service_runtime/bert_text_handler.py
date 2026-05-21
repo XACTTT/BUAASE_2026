@@ -142,6 +142,78 @@ def _extract_text_inputs(payload: Dict[str, Any]) -> tuple[str | None, str]:
     raise ValueError("bert_text pipeline requires payload.answer or payload.text")
 
 
+def _extract_batch_items(payload: Dict[str, Any]) -> list[Dict[str, Any]] | None:
+    items = payload.get("items")
+    if items is None:
+        return None
+    if not isinstance(items, list) or not items:
+        raise ValueError("bert_text pipeline requires payload.items to be a non-empty array")
+    normalized = []
+    for index, raw_item in enumerate(items):
+        if not isinstance(raw_item, dict):
+            raise ValueError("payload.items entries must be objects")
+        question, answer = _extract_text_inputs(raw_item)
+        normalized.append(
+            {
+                "item_id": raw_item.get("item_id") or raw_item.get("id") or f"item-{index + 1}",
+                "question": question,
+                "answer": answer,
+                "paragraph_index": raw_item.get("paragraph_index"),
+            }
+        )
+    return normalized
+
+
+def _build_single_result(
+    *,
+    model_dir: Path,
+    base_model_dir: Path,
+    lang: str,
+    pair_mode: bool,
+    question: str | None,
+    answer: str,
+    max_length: int,
+    probs: list[float],
+) -> Dict[str, Any]:
+    pred_label = int(max(range(len(probs)), key=lambda idx: probs[idx])) if probs else 0
+    pred_score = float(probs[pred_label]) if probs else 0.0
+    human_prob = float(probs[0]) if len(probs) > 0 else 0.0
+    aigc_prob = float(probs[1]) if len(probs) > 1 else 0.0
+
+    return {
+        "model_dir": str(model_dir),
+        "base_model_dir": str(base_model_dir),
+        "lang": lang,
+        "is_aigc": pred_label == 1,
+        "label": pred_label,
+        "label_name": "aigc" if pred_label == 1 else "human",
+        "confidence_score": pred_score,
+        "probabilities": {
+            "human": human_prob,
+            "aigc": aigc_prob,
+        },
+        "input_summary": {
+            "pair_mode": pair_mode and question is not None,
+            "question_length": len(question) if question else 0,
+            "text_length": len(answer),
+            "max_length": max_length,
+        },
+    }
+
+
+def _aggregate_batch_results(batch_results: list[Dict[str, Any]]) -> Dict[str, float]:
+    n = len(batch_results)
+    scores = [float(item.get("confidence_score") or 0.0) for item in batch_results]
+    aigc_probs = [float((item.get("probabilities") or {}).get("aigc") or 0.0) for item in batch_results]
+    return {
+        "aigc_ratio": sum(1 for item in batch_results if item.get("is_aigc")) / n if n else 0.0,
+        "mean_aigc_probability": sum(aigc_probs) / n if n else 0.0,
+        "mean_confidence": sum(scores) / n if n else 0.0,
+        "max_confidence": max(scores) if scores else 0.0,
+        "min_confidence": min(scores) if scores else 0.0,
+    }
+
+
 def run_bert_text_pipeline(request_data: Dict[str, Any]) -> Dict[str, Any]:
     payload = request_data.get("payload") or {}
     if not isinstance(payload, dict):
@@ -179,11 +251,51 @@ def run_bert_text_pipeline(request_data: Dict[str, Any]) -> Dict[str, Any]:
     model.to(device)
     model.eval()
 
-    question, answer = _extract_text_inputs(payload)
-    if pair_mode and question:
+    batch_items = _extract_batch_items(payload)
+    if batch_items is None:
+        question, answer = _extract_text_inputs(payload)
+        if pair_mode and question:
+            encoded = tokenizer(
+                question,
+                answer,
+                max_length=max_length,
+                truncation=True,
+                padding="max_length",
+                return_tensors="pt",
+            )
+        else:
+            encoded = tokenizer(
+                answer,
+                max_length=max_length,
+                truncation=True,
+                padding="max_length",
+                return_tensors="pt",
+            )
+
+        encoded = {k: v.to(device) for k, v in encoded.items()}
+        with torch.no_grad():
+            logits = model(**encoded).logits
+            probs = torch.softmax(logits, dim=-1)[0].detach().cpu().tolist()
+
+        return _build_single_result(
+            model_dir=model_dir,
+            base_model_dir=base_model_dir,
+            lang=lang,
+            pair_mode=pair_mode,
+            question=question,
+            answer=answer,
+            max_length=max_length,
+            probs=probs,
+        )
+
+    answers = [item["answer"] for item in batch_items]
+    questions = [item["question"] or "" for item in batch_items]
+    use_pair_mode = pair_mode and any(item["question"] for item in batch_items)
+
+    if use_pair_mode:
         encoded = tokenizer(
-            question,
-            answer,
+            questions,
+            answers,
             max_length=max_length,
             truncation=True,
             padding="max_length",
@@ -191,39 +303,43 @@ def run_bert_text_pipeline(request_data: Dict[str, Any]) -> Dict[str, Any]:
         )
     else:
         encoded = tokenizer(
-            answer,
+            answers,
             max_length=max_length,
             truncation=True,
             padding="max_length",
             return_tensors="pt",
         )
 
+    internal_batch_size = max(1, int(os.getenv("BERT_TEXT_INTERNAL_BATCH_SIZE", "32")))
+    batch_results: list[Dict[str, Any]] = []
     encoded = {k: v.to(device) for k, v in encoded.items()}
     with torch.no_grad():
-        logits = model(**encoded).logits
-        probs = torch.softmax(logits, dim=-1)[0].detach().cpu().tolist()
-
-    pred_label = int(torch.argmax(logits, dim=-1).item())
-    pred_score = float(probs[pred_label])
-    human_prob = float(probs[0]) if len(probs) > 0 else 0.0
-    aigc_prob = float(probs[1]) if len(probs) > 1 else 0.0
+        for start in range(0, len(batch_items), internal_batch_size):
+            end = start + internal_batch_size
+            chunk = {k: v[start:end] for k, v in encoded.items()}
+            logits = model(**chunk).logits
+            probs_chunk = torch.softmax(logits, dim=-1).detach().cpu().tolist()
+            for item, probs in zip(batch_items[start:end], probs_chunk):
+                result = _build_single_result(
+                    model_dir=model_dir,
+                    base_model_dir=base_model_dir,
+                    lang=lang,
+                    pair_mode=use_pair_mode,
+                    question=item["question"],
+                    answer=item["answer"],
+                    max_length=max_length,
+                    probs=probs,
+                )
+                result["item_id"] = item["item_id"]
+                if item["paragraph_index"] is not None:
+                    result["paragraph_index"] = item["paragraph_index"]
+                batch_results.append(result)
 
     return {
+        "batch_results": batch_results,
+        "item_count": len(batch_results),
+        "aggregate": _aggregate_batch_results(batch_results),
         "model_dir": str(model_dir),
         "base_model_dir": str(base_model_dir),
         "lang": lang,
-        "is_aigc": pred_label == 1,
-        "label": pred_label,
-        "label_name": "aigc" if pred_label == 1 else "human",
-        "confidence_score": pred_score,
-        "probabilities": {
-            "human": human_prob,
-            "aigc": aigc_prob,
-        },
-        "input_summary": {
-            "pair_mode": pair_mode and question is not None,
-            "question_length": len(question) if question else 0,
-            "text_length": len(answer),
-            "max_length": max_length,
-        },
     }

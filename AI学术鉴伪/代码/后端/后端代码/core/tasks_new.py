@@ -15,6 +15,7 @@ import base64
 import json
 import mimetypes
 import os
+import re
 import time
 from pathlib import Path
 from typing import List, Dict, Any
@@ -654,43 +655,156 @@ def process_text_detection_task(
     print(f"[process_text_detection_task] 分发完成，用时 {time.time() - t0} s")
 
 
+def _split_text_for_paragraph_detection(text_content: str) -> list[str]:
+    raw_text = (text_content or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not raw_text:
+        return []
+
+    paragraphs = [
+        "\n".join(line.strip() for line in chunk.splitlines() if line.strip()).strip()
+        for chunk in re.split(r"\n\s*\n+", raw_text)
+        if chunk.strip()
+    ]
+    if len(paragraphs) > 1:
+        return paragraphs
+
+    lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
+    if len(lines) > 1:
+        return lines
+    return paragraphs or lines or [raw_text]
+
+
+def _build_paragraph_items(text_content: str) -> list[dict]:
+    return [
+        {
+            "id": f"paragraph-{index + 1}",
+            "text": paragraph,
+        }
+        for index, paragraph in enumerate(_split_text_for_paragraph_detection(text_content))
+    ]
+
+
+def _safe_float(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _build_paragraph_detection_entries(
+    batch_results: list[dict],
+    paragraph_items: list[dict],
+    reason_builder,
+    is_review: bool,
+) -> list[dict]:
+    item_lookup = {
+        item["id"]: {
+            "paragraph_index": index + 1,
+            "text": item["text"],
+        }
+        for index, item in enumerate(paragraph_items)
+    }
+
+    entries = []
+    for fallback_index, result in enumerate(batch_results):
+        item_id = result.get("item_id") or f"paragraph-{fallback_index + 1}"
+        item_meta = item_lookup.get(item_id, {})
+        probabilities = result.get("probabilities") or {}
+        aigc_probability = _safe_float(
+            probabilities.get("aigc"),
+            _safe_float(result.get("confidence_score")) if result.get("is_aigc") else 0.0,
+        )
+        entries.append({
+            "paragraph_index": item_meta.get("paragraph_index", fallback_index + 1),
+            "item_id": item_id,
+            "text": item_meta.get("text", ""),
+            "ai_probability": aigc_probability,
+            "human_probability": _safe_float(probabilities.get("human")),
+            "is_aigc": bool(result.get("is_aigc")),
+            "label_name": result.get("label_name"),
+            "confidence_score": _safe_float(result.get("confidence_score")),
+            "reason": reason_builder(result, is_review=is_review),
+            "input_summary": result.get("input_summary") or {},
+        })
+
+    return entries
+
+
+def _resolve_batch_detection_summary(batch_response: dict, paragraph_entries: list[dict]):
+    aggregate = batch_response.get("aggregate") or {}
+    paragraph_count = len(paragraph_entries)
+    aigc_probs = [entry.get("ai_probability", 0.0) for entry in paragraph_entries]
+    aigc_count = sum(1 for entry in paragraph_entries if entry.get("is_aigc"))
+
+    mean_aigc = _safe_float(
+        aggregate.get("mean_aigc_probability"),
+        sum(aigc_probs) / paragraph_count if paragraph_count else 0.0,
+    )
+    max_aigc = max(aigc_probs) if aigc_probs else 0.0
+    overall_score = max_aigc
+    is_fake = aigc_count > 0 or max_aigc >= 0.6
+
+    return {
+        "is_fake": is_fake,
+        "overall_score": overall_score,
+        "mean_aigc_probability": mean_aigc,
+        "max_aigc_probability": max_aigc,
+        "aigc_count": aigc_count,
+        "paragraph_count": paragraph_count,
+    }
+
+
+def _build_batch_reason(model_name: str, summary: dict, is_review: bool) -> str:
+    target = "评审文本" if is_review else "文本"
+    return (
+        f"{model_name} 已按段落完成{target}鉴伪，共检测 {summary['paragraph_count']} 个段落，"
+        f"其中 {summary['aigc_count']} 个段落存在 AI 生成倾向；"
+        f"最高段落 AIGC 概率 {summary['max_aigc_probability']:.4f}，"
+        f"平均 AIGC 概率 {summary['mean_aigc_probability']:.4f}。"
+    )
+
+
 @shared_task(queue="ai", acks_late=True)
 def process_single_text_result(tr_pk: int, text_content: str, is_review: bool) -> bool:
-    """单个文本的 Bert 文本鉴伪调用与数据库写回。"""
+    """单个文本资源的 Bert 段落级鉴伪调用与数据库写回。"""
     tr = TextDetectionResult.objects.select_related("detection_task", "text_resource").get(pk=tr_pk)
     
     try:
-        ai_result = BertTextAIDetectionBridge.submit_text(
-            text=text_content,
+        paragraph_items = _build_paragraph_items(text_content)
+        if not paragraph_items:
+            raise BertTextAIPermanentError("text content is empty")
+
+        batch_response = BertTextAIDetectionBridge.submit_batch(
+            texts=[
+                {
+                    **item,
+                    "language": tr.text_resource.language,
+                }
+                for item in paragraph_items
+            ],
             language=tr.text_resource.language,
         )
+        batch_results = batch_response.get("batch_results") or []
+        paragraph_entries = _build_paragraph_detection_entries(
+            batch_results=batch_results,
+            paragraph_items=paragraph_items,
+            reason_builder=_build_bert_reason,
+            is_review=is_review,
+        )
+        summary = _resolve_batch_detection_summary(batch_response, paragraph_entries)
+        reason = _build_batch_reason("Bert 文本鉴伪", summary, is_review=is_review)
 
-        is_fake = bool(ai_result.get("is_aigc"))
-        overall_score = float(ai_result.get("confidence_score") or 0.0)
-        probabilities = ai_result.get("probabilities") or {}
-        reason = _build_bert_reason(ai_result, is_review=is_review)
-
-        tr.is_fake = is_fake
-        tr.confidence_score = overall_score
+        tr.is_fake = summary["is_fake"]
+        tr.confidence_score = summary["overall_score"]
+        tr.ai_generated_paragraphs = paragraph_entries
 
         if not is_review:
-            tr.ai_generated_paragraphs = [
-                {
-                    "paragraph_index": 1,
-                    "text": text_content[:200],
-                    "ai_probability": float(probabilities.get("aigc", overall_score) or 0.0),
-                    "label_name": ai_result.get("label_name"),
-                    "reason": reason,
-                    "input_summary": ai_result.get("input_summary") or {},
-                }
-            ]
             tr.factual_fake_reason = reason
             tr.template_tendency_score = None
             tr.template_analysis_reason = None
         else:
-            tr.ai_generated_paragraphs = None
             tr.factual_fake_reason = None
-            tr.template_tendency_score = overall_score
+            tr.template_tendency_score = summary["overall_score"]
             tr.template_analysis_reason = reason
 
         tr.detection_time = timezone.now()
@@ -765,40 +879,38 @@ def _build_fast_detect_gpt_reason(ai_result: Dict[str, Any], is_review: bool) ->
 
 @shared_task(queue="ai", acks_late=True)
 def process_single_fast_detect_gpt_result(tr_pk: int, text_content: str, is_review: bool) -> bool:
-    """单个文本的 fast_detect_gpt 调用与数据库写回。"""
+    """单个文本资源的 fast_detect_gpt 段落级调用与数据库写回。"""
     tr = TextDetectionResult.objects.select_related("detection_task", "text_resource").get(pk=tr_pk)
 
     try:
-        ai_result = FastDetectGPTAIDetectionBridge.submit_text(
-            text=text_content,
+        paragraph_items = _build_paragraph_items(text_content)
+        if not paragraph_items:
+            raise FastDetectGPTAIPermanentError("text content is empty")
+
+        batch_response = FastDetectGPTAIDetectionBridge.submit_batch(
+            texts=paragraph_items,
         )
+        batch_results = batch_response.get("batch_results") or []
+        paragraph_entries = _build_paragraph_detection_entries(
+            batch_results=batch_results,
+            paragraph_items=paragraph_items,
+            reason_builder=_build_fast_detect_gpt_reason,
+            is_review=is_review,
+        )
+        summary = _resolve_batch_detection_summary(batch_response, paragraph_entries)
+        reason = _build_batch_reason("FastDetectGPT", summary, is_review=is_review)
 
-        is_fake = bool(ai_result.get("is_aigc"))
-        overall_score = float(ai_result.get("confidence_score") or 0.0)
-        probabilities = ai_result.get("probabilities") or {}
-        reason = _build_fast_detect_gpt_reason(ai_result, is_review=is_review)
-
-        tr.is_fake = is_fake
-        tr.confidence_score = overall_score
+        tr.is_fake = summary["is_fake"]
+        tr.confidence_score = summary["overall_score"]
+        tr.ai_generated_paragraphs = paragraph_entries
 
         if not is_review:
-            tr.ai_generated_paragraphs = [
-                {
-                    "paragraph_index": 1,
-                    "text": text_content[:200],
-                    "ai_probability": float(probabilities.get("aigc", overall_score) or 0.0),
-                    "label_name": ai_result.get("label_name"),
-                    "reason": reason,
-                    "input_summary": ai_result.get("input_summary") or {},
-                }
-            ]
             tr.factual_fake_reason = reason
             tr.template_tendency_score = None
             tr.template_analysis_reason = None
         else:
-            tr.ai_generated_paragraphs = None
             tr.factual_fake_reason = None
-            tr.template_tendency_score = overall_score
+            tr.template_tendency_score = summary["overall_score"]
             tr.template_analysis_reason = reason
 
         tr.detection_time = timezone.now()

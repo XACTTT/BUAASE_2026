@@ -2,7 +2,7 @@ import io
 import shutil
 import sys
 import tempfile
-from unittest.mock import patch
+from unittest.mock import patch, ANY
 
 from PIL import Image
 from django.contrib.auth import get_user_model
@@ -231,8 +231,8 @@ class ResourceManagementApiTests(TestCase):
         )
         mocked_apply_async.assert_called_once()
 
-    @patch('core.tasks_new.BertTextAIDetectionBridge.submit_text')
-    def test_process_single_text_result_stores_bert_result(self, mocked_submit_text):
+    @patch('core.tasks_new.BertTextAIDetectionBridge.submit_batch')
+    def test_process_single_text_result_stores_bert_result(self, mocked_submit_batch):
         review_container = ResourceContainer.objects.create(
             organization=self.organization,
             owner=self.user,
@@ -260,18 +260,28 @@ class ResourceManagementApiTests(TestCase):
             text_resource=review_text,
             status='in_progress',
         )
-        mocked_submit_text.return_value = {
-            'is_aigc': True,
-            'label_name': 'aigc',
-            'confidence_score': 0.93,
-            'probabilities': {
-                'human': 0.07,
-                'aigc': 0.93,
-            },
-            'input_summary': {
-                'pair_mode': False,
-                'text_length': 12,
-                'max_length': 256,
+        mocked_submit_batch.return_value = {
+            'batch_results': [
+                {
+                    'item_id': 'paragraph-1',
+                    'is_aigc': True,
+                    'label_name': 'aigc',
+                    'confidence_score': 0.93,
+                    'probabilities': {
+                        'human': 0.07,
+                        'aigc': 0.93,
+                    },
+                    'input_summary': {
+                        'pair_mode': False,
+                        'text_length': 12,
+                        'max_length': 256,
+                    },
+                }
+            ],
+            'item_count': 1,
+            'aggregate': {
+                'mean_aigc_probability': 0.93,
+                'mean_confidence': 0.93,
             },
         }
 
@@ -283,6 +293,8 @@ class ResourceManagementApiTests(TestCase):
         self.assertTrue(result.is_fake)
         self.assertEqual(result.confidence_score, 0.93)
         self.assertEqual(result.template_tendency_score, 0.93)
+        self.assertEqual(len(result.ai_generated_paragraphs), 1)
+        self.assertEqual(result.ai_generated_paragraphs[0]['ai_probability'], 0.93)
         self.assertIn('AIGC 概率', result.template_analysis_reason)
 
     @patch('core.tasks_new.chord')
@@ -388,6 +400,42 @@ class ResourceManagementApiTests(TestCase):
         self.assertNotIn('text', payload['payload'])
         self.assertEqual(payload['payload']['max_length'], 128)
 
+    def test_bert_bridge_single_text_payload_normalizes_english_lang(self):
+        payload = BertTextAIDetectionBridge._build_request_payload('test review text', language='en', max_length=128)
+
+        self.assertEqual(payload['pipeline'], 'bert')
+        self.assertEqual(payload['payload']['lang'], 'English')
+
+    def test_bert_bridge_batch_payload_uses_items_without_batch_flags(self):
+        payload = BertTextAIDetectionBridge._build_batch_request_payload(
+            [
+                {'id': 'p1', 'text': 'para 1'},
+                {'id': 'p2', 'text': 'para 2', 'question': 'q2'},
+            ],
+            language='zh',
+            max_length=128,
+        )
+
+        self.assertEqual(payload['pipeline'], 'bert')
+        self.assertEqual(payload['payload']['lang'], 'chinese')
+        self.assertEqual(len(payload['payload']['items']), 2)
+        self.assertEqual(payload['payload']['items'][0]['item_id'], 'p1')
+        self.assertEqual(payload['payload']['items'][0]['answer'], 'para 1')
+        self.assertEqual(payload['payload']['items'][1]['question'], 'q2')
+        self.assertNotIn('batch_size', payload['payload'])
+        self.assertNotIn('batch_mode', payload['payload'])
+
+    def test_bert_bridge_batch_payload_infers_english_lang_from_items(self):
+        payload = BertTextAIDetectionBridge._build_batch_request_payload(
+            [
+                {'id': 'p1', 'text': 'para 1', 'language': 'en'},
+            ],
+            language=None,
+            max_length=128,
+        )
+
+        self.assertEqual(payload['payload']['lang'], 'English')
+
     def test_fast_detect_gpt_bridge_builds_fast_detect_payload(self):
         payload = FastDetectGPTAIDetectionBridge._build_request_payload('test review text', max_length=256)
 
@@ -395,8 +443,103 @@ class ResourceManagementApiTests(TestCase):
         self.assertEqual(payload['payload']['text'], 'test review text')
         self.assertEqual(payload['payload']['max_length'], 256)
 
-    @patch('core.tasks_new.FastDetectGPTAIDetectionBridge.submit_text')
-    def test_process_single_fast_detect_gpt_result_stores_result(self, mocked_submit_text):
+    def test_fast_detect_gpt_bridge_batch_payload_uses_items_without_batch_flags(self):
+        payload = FastDetectGPTAIDetectionBridge._build_batch_request_payload(
+            [
+                {'id': 'p1', 'text': 'para 1'},
+                {'id': 'p2', 'text': 'para 2', 'question': 'q2'},
+            ],
+            max_length=256,
+        )
+
+        self.assertEqual(payload['pipeline'], 'fast_detect_gpt')
+        self.assertEqual(len(payload['payload']['items']), 2)
+        self.assertEqual(payload['payload']['items'][0]['item_id'], 'p1')
+        self.assertEqual(payload['payload']['items'][0]['text'], 'para 1')
+        self.assertEqual(payload['payload']['items'][1]['question'], 'q2')
+        self.assertEqual(payload['payload']['max_length'], 256)
+        self.assertNotIn('batch_size', payload['payload'])
+        self.assertNotIn('batch_mode', payload['payload'])
+
+    @patch.object(BertTextAIDetectionBridge, '_submit_request')
+    @patch.object(BertTextAIDetectionBridge, '_config')
+    def test_bert_bridge_submit_batch_uses_single_request(self, mocked_config, mocked_submit_request):
+        mocked_config.return_value = {'mode': 'ssh', 'submit_retry': 1}
+        mocked_submit_request.return_value = {
+            'batch_results': [{'item_id': 'p1', 'is_aigc': False, 'confidence_score': 0.1, 'probabilities': {'human': 0.9, 'aigc': 0.1}}],
+            'aggregate': {'mean_aigc_probability': 0.1},
+        }
+
+        result = BertTextAIDetectionBridge.submit_batch([{'id': 'p1', 'text': 'para 1'}], language='zh')
+
+        self.assertIn('batch_results', result)
+        mocked_submit_request.assert_called_once()
+
+    @patch.object(BertTextAIDetectionBridge, '_submit_request')
+    @patch.object(BertTextAIDetectionBridge, '_config')
+    def test_bert_bridge_submit_batch_normalizes_items_summary_response(self, mocked_config, mocked_submit_request):
+        mocked_config.return_value = {'mode': 'ssh', 'submit_retry': 1}
+        mocked_submit_request.return_value = {
+            'model_dir': '/tmp/model',
+            'base_model_dir': '/tmp/base-model',
+            'lang': 'chinese',
+            'summary': {
+                'item_count': 2,
+                'aigc_count': 1,
+                'human_count': 1,
+                'max_length': 256,
+            },
+            'items': [
+                {
+                    'item_index': 0,
+                    'item_id': 'p1',
+                    'is_aigc': False,
+                    'label': 0,
+                    'label_name': 'human',
+                    'confidence_score': 0.9,
+                    'probabilities': {'human': 0.9, 'aigc': 0.1},
+                    'input_summary': {'text_length': 10, 'max_length': 256},
+                },
+                {
+                    'item_index': 1,
+                    'item_id': 'p2',
+                    'is_aigc': True,
+                    'label': 1,
+                    'label_name': 'aigc',
+                    'confidence_score': 0.8,
+                    'probabilities': {'human': 0.2, 'aigc': 0.8},
+                    'input_summary': {'text_length': 12, 'max_length': 256},
+                },
+            ],
+        }
+
+        result = BertTextAIDetectionBridge.submit_batch([{'id': 'p1', 'text': 'para 1'}], language='zh')
+
+        self.assertEqual(result['item_count'], 2)
+        self.assertEqual(len(result['batch_results']), 2)
+        self.assertEqual(result['batch_results'][0]['item_id'], 'p1')
+        self.assertEqual(result['aggregate']['aigc_ratio'], 0.5)
+        self.assertAlmostEqual(result['aggregate']['mean_aigc_probability'], 0.45)
+        self.assertAlmostEqual(result['aggregate']['mean_confidence'], 0.85)
+        self.assertEqual(result['model_dir'], '/tmp/model')
+        self.assertEqual(result['lang'], 'chinese')
+
+    @patch.object(FastDetectGPTAIDetectionBridge, '_submit_request')
+    @patch.object(FastDetectGPTAIDetectionBridge, '_config')
+    def test_fast_detect_gpt_bridge_submit_batch_uses_single_request(self, mocked_config, mocked_submit_request):
+        mocked_config.return_value = {'mode': 'ssh', 'submit_retry': 1, 'max_length': 256}
+        mocked_submit_request.return_value = {
+            'batch_results': [{'item_id': 'p1', 'is_aigc': False, 'confidence_score': 0.1, 'probabilities': {'human': 0.9, 'aigc': 0.1}}],
+            'aggregate': {'mean_aigc_probability': 0.1},
+        }
+
+        result = FastDetectGPTAIDetectionBridge.submit_batch([{'id': 'p1', 'text': 'para 1'}])
+
+        self.assertIn('batch_results', result)
+        mocked_submit_request.assert_called_once()
+
+    @patch('core.tasks_new.FastDetectGPTAIDetectionBridge.submit_batch')
+    def test_process_single_fast_detect_gpt_result_stores_result(self, mocked_submit_batch):
         review_container = ResourceContainer.objects.create(
             organization=self.organization,
             owner=self.user,
@@ -424,16 +567,26 @@ class ResourceManagementApiTests(TestCase):
             text_resource=review_text,
             status='in_progress',
         )
-        mocked_submit_text.return_value = {
-            'is_aigc': False,
-            'label_name': 'human',
-            'confidence_score': 0.91,
-            'probabilities': {
-                'human': 0.91,
-                'aigc': 0.09,
-            },
-            'input_summary': {
-                'text_length': 12,
+        mocked_submit_batch.return_value = {
+            'batch_results': [
+                {
+                    'item_id': 'paragraph-1',
+                    'is_aigc': False,
+                    'label_name': 'human',
+                    'confidence_score': 0.91,
+                    'probabilities': {
+                        'human': 0.91,
+                        'aigc': 0.09,
+                    },
+                    'input_summary': {
+                        'text_length': 12,
+                    },
+                }
+            ],
+            'item_count': 1,
+            'aggregate': {
+                'mean_aigc_probability': 0.09,
+                'mean_confidence': 0.91,
             },
         }
 
@@ -443,7 +596,9 @@ class ResourceManagementApiTests(TestCase):
         result.refresh_from_db()
         self.assertEqual(result.status, 'completed')
         self.assertFalse(result.is_fake)
-        self.assertEqual(result.confidence_score, 0.91)
+        self.assertEqual(result.confidence_score, 0.09)
+        self.assertEqual(len(result.ai_generated_paragraphs), 1)
+        self.assertEqual(result.ai_generated_paragraphs[0]['ai_probability'], 0.09)
         self.assertIn('FastDetectGPT', result.template_analysis_reason)
 
     @override_settings(
@@ -451,31 +606,41 @@ class ResourceManagementApiTests(TestCase):
         CELERY_TASK_EAGER_PROPAGATES=True,
         CHANNEL_LAYERS={'default': {'BACKEND': 'channels.layers.InMemoryChannelLayer'}},
     )
-    @patch('core.tasks_new.FastDetectGPTAIDetectionBridge.submit_text')
-    def test_submit_text_detection_fast_detect_gpt_e2e_with_celery(self, mocked_submit_text):
-        mocked_submit_text.return_value = {
-            'project_root': '/mnt/data/ccy/Bert/fast-detect-gpt',
-            'python': '/mnt/data14/ccy/pip_packs/miniconda3/envs/fast-detect-gpt/bin/python',
-            'sampling_model_name': 'falcon-7b',
-            'scoring_model_name': 'falcon-7b',
-            'is_aigc': False,
-            'label': 0,
-            'label_name': 'human',
-            'confidence_score': 0.9071478391683363,
-            'probabilities': {
-                'human': 0.9071478391683363,
-                'aigc': 0.09285216083166364,
-            },
-            'fast_detect_gpt': {
-                'criterion': -2.279296875,
-                'token_count': 23,
-                'max_length': 256,
-                'load_in_8bit': False,
-                'load_in_4bit': False,
-            },
-            'input_summary': {
-                'question_length': 0,
-                'text_length': 138,
+    @patch('core.tasks_new.FastDetectGPTAIDetectionBridge.submit_batch')
+    def test_submit_text_detection_fast_detect_gpt_e2e_with_celery(self, mocked_submit_batch):
+        mocked_submit_batch.return_value = {
+            'batch_results': [
+                {
+                    'item_id': 'paragraph-1',
+                    'project_root': '/mnt/data/ccy/Bert/fast-detect-gpt',
+                    'python': '/mnt/data14/ccy/pip_packs/miniconda3/envs/fast-detect-gpt/bin/python',
+                    'sampling_model_name': 'falcon-7b',
+                    'scoring_model_name': 'falcon-7b',
+                    'is_aigc': False,
+                    'label': 0,
+                    'label_name': 'human',
+                    'confidence_score': 0.9071478391683363,
+                    'probabilities': {
+                        'human': 0.9071478391683363,
+                        'aigc': 0.09285216083166364,
+                    },
+                    'fast_detect_gpt': {
+                        'criterion': -2.279296875,
+                        'token_count': 23,
+                        'max_length': 256,
+                        'load_in_8bit': False,
+                        'load_in_4bit': False,
+                    },
+                    'input_summary': {
+                        'question_length': 0,
+                        'text_length': 138,
+                    },
+                }
+            ],
+            'item_count': 1,
+            'aggregate': {
+                'mean_aigc_probability': 0.09285216083166364,
+                'mean_confidence': 0.9071478391683363,
             },
         }
         review_container = ResourceContainer.objects.create(
@@ -509,14 +674,15 @@ class ResourceManagementApiTests(TestCase):
         task = DetectionTask.objects.get(id=response.data['task_id'])
         text_result = TextDetectionResult.objects.get(detection_task=task, text_resource=review_text)
 
-        mocked_submit_text.assert_called_once_with(text=review_text.normalized_text)
+        mocked_submit_batch.assert_called_once_with(texts=ANY)
         task.refresh_from_db()
         text_result.refresh_from_db()
         self.assertEqual(task.status, 'completed')
         self.assertEqual(text_result.status, 'completed')
         self.assertFalse(text_result.is_fake)
-        self.assertEqual(text_result.confidence_score, 0.9071478391683363)
-        self.assertEqual(text_result.template_tendency_score, 0.9071478391683363)
+        self.assertEqual(text_result.confidence_score, 0.09285216083166364)
+        self.assertEqual(text_result.template_tendency_score, 0.09285216083166364)
+        self.assertEqual(len(text_result.ai_generated_paragraphs), 1)
         self.assertIn('FastDetectGPT', text_result.template_analysis_reason)
 
     def test_material_validation_pass_and_fail(self):
