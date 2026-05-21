@@ -5,7 +5,10 @@ from __future__ import absolute_import, unicode_literals
 #
 # pymysql.install_as_MySQLdb()
 
-# 防止django启动时加载Celery
-from .celery import app as celery_app
+# 允许在未安装 Celery 的环境中运行管理命令，如 makemigrations。
+try:
+    from .celery import app as celery_app
+except ModuleNotFoundError:
+    celery_app = None
 
 __all__ = ('celery_app',)

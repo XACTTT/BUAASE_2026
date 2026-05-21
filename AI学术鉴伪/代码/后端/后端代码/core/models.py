@@ -360,7 +360,7 @@ class FileManagement(models.Model):
     parse_error = models.TextField(blank=True, null=True)
     extra_metadata = models.JSONField(default=dict, blank=True)
     upload_time = models.DateTimeField(default=timezone.localtime)
-    tag = models.CharField(max_length=20, choices=TAG_CHOICES, default='Other')
+    tag = models.CharField(max_length=30, choices=TAG_CHOICES, default='other')
 
     class Meta:
         indexes = [
