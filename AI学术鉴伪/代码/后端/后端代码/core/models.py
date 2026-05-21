@@ -302,11 +302,16 @@ class ResourceContainer(models.Model):
 
 class FileManagement(models.Model):
     TAG_CHOICES = [
-        ('Biology', 'Biology'),
-        ('Medicine', 'Medicine'),
-        ('Chemistry', 'Chemistry'),
-        ('Graphics', 'Graphics'),
-        ('Other', 'Other')
+        ('computer_science', 'Computer Science'),
+        ('artificial_intelligence', 'Artificial Intelligence'),
+        ('mathematics', 'Mathematics'),
+        ('physics', 'Physics'),
+        ('chemistry', 'Chemistry'),
+        ('biology', 'Biology'),
+        ('medicine', 'Medicine'),
+        ('engineering', 'Engineering'),
+        ('graphics', 'Graphics'),
+        ('other', 'Other')
     ]
 
     user = models.ForeignKey(User, on_delete=models.CASCADE)

@@ -92,7 +92,7 @@ def _serialize_resource(file_obj):
         'author': metadata.get('author'),
         'organization': file_obj.organization.name if file_obj.organization else None,
         'editor': metadata.get('editor'),
-        'subject': metadata.get('subject'),
+        'subject': file_obj.tag,
         'status': metadata.get('status'),
         'review_count': metadata.get('review_count', 0),
     }

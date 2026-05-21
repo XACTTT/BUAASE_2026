@@ -548,7 +548,7 @@
               </template>
 
               <template v-slot:item.subject="{ item }">
-                <v-chip size="small" color="info">
+                <v-chip size="small" :color="getSubjectColor(item.subject)">
                   {{ getSubjectName(item.subject) }}
                 </v-chip>
               </template>
@@ -734,6 +734,7 @@ const subjectOptions = [
   { title: '生物学', value: 'biology' },
   { title: '医学', value: 'medicine' },
   { title: '工程学', value: 'engineering' },
+  { title: '图形学', value: 'graphics' },
   { title: '其他', value: 'other' }
 ]
 
@@ -811,6 +812,34 @@ const filteredResources = computed(() => {
 // 选择资源类型
 const selectType = (type: string | null) => {
   selectedType.value = type
+}
+
+// 获取学科颜色
+const getSubjectColor = (subject?: string | null) => {
+  switch (subject) {
+    case 'biology':
+      return 'success'
+    case 'medicine':
+      return 'info'
+    case 'chemistry':
+      return 'warning'
+    case 'graphics':
+      return 'primary'
+    case 'computer_science':
+      return 'indigo'
+    case 'artificial_intelligence':
+      return 'deep-purple'
+    case 'mathematics':
+      return 'teal'
+    case 'physics':
+      return 'blue-grey'
+    case 'engineering':
+      return 'brown'
+    case 'other':
+      return 'grey'
+    default:
+      return 'grey'
+  }
 }
 
 // 获取学科名称
