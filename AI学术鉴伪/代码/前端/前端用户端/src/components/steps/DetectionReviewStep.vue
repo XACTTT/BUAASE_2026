@@ -362,7 +362,7 @@ const taskLlmAnalysis = ref<any>(null)
 const taskLlmAnalysisText = computed(() => formatLlmAnalysis(taskLlmAnalysis.value))
 const ela = ref()
 const urn = ref<SubMethod[]>([])
-const exif = ref()
+const exif = ref({ photoshop_edited: false, time_modified: false, detection_time: null })
 const activeOverlay = ref()
 const isOverlayVisible = ref(false)
 
