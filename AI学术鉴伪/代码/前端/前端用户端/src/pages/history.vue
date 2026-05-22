@@ -128,7 +128,6 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSnackbarStore } from '@/stores/snackbar'
 import publisher from '@/api/publisher'
-import Review_request_id from './task/[review_request_id].vue'
 
 const router = useRouter()
 const snackbar = useSnackbarStore()

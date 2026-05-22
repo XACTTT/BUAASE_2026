@@ -62,7 +62,7 @@
           </div>
         </div>
       </div>
-  
+
       <!-- 右侧登录区域 -->
       <div class="login-section">
         <div class="login-container">
@@ -76,7 +76,7 @@
               prepend-inner-icon="mdi-email"
               :rules="loginRules.email"
             ></v-text-field>
-  
+
             <v-text-field
               v-model="password"
               label="输入密码"
@@ -87,34 +87,7 @@
               prepend-inner-icon="mdi-lock"
               :rules="loginRules.password"
             ></v-text-field>
-  
-            <!-- 验证码区域 -->
-            <div class="captcha-section mb-6">
-              <v-text-field
-                v-model="captchaInput"
-                label="请输入验证码"
-                variant="outlined"
-                density="comfortable"
-                :error-messages="captchaError"
-                class="captcha-input"
-                prepend-inner-icon="mdi-shield-check"
-              >
-                <template v-slot:append>
-                  <DynamicCaptcha
-                    ref="captchaRef"
-                    @update:code="code => captchaCode = code"
-                  />
-                </template>
-              </v-text-field>
-            </div>
-  
-            <v-checkbox
-              v-model="agreement"
-              label="我已阅读《隐私政策》和《使用协议》"
-              hide-details
-              class="mb-6"
-            ></v-checkbox>
-  
+
             <v-btn
               block
               color="primary"
@@ -129,85 +102,45 @@
       </div>
     </div>
   </template>
-  
+
   <script setup lang="ts">
   import { ref, computed } from 'vue'
   import { useRouter } from 'vue-router'
-  import DynamicCaptcha from '@/components/DynamicCaptcha.vue'
   import { useSnackbarStore } from '@/stores/snackbar';
   const snackbar = useSnackbarStore();
   import user from '@/api/user'
   import { useUserStore } from '@/stores/user';
   const userStore = useUserStore();
-  
+
   const router = useRouter()
-  const captchaRef = ref()
   const email = ref('')
   const password = ref('')
-  const agreement = ref(false)
   const form = ref(null)
-  
-  // 验证码相关
-  const captchaInput = ref('')
-  const captchaCode = ref('')
-  const captchaError = ref('')
-  
-  // 表单验证规则
+
   const loginRules = {
     email: [
       (v: string) => !!v || '邮箱不能为空',
-      // (v: string) => /.+@.+\..+/.test(v) || '请输入有效的邮箱地址'
     ],
     password: [
       (v: string) => !!v || '密码不能为空',
-      // (v: string) => v.length >= 6 || '密码至少6个字符'
     ]
   }
-  
-  const validateCaptcha = () => {
-    if (!captchaInput.value) {
-      captchaError.value = '请输入验证码'
-      return false
-    }
-    if (captchaInput.value.toLowerCase() !== captchaCode.value.toLowerCase()) {
-      captchaError.value = '验证码错误'
-      captchaInput.value = ''
-      captchaRef.value?.refreshCaptcha()
-      return false
-    }
-    captchaError.value = ''
-    return true
-  }
-  
-  const isFormValid = computed(() => {
-    if (!agreement.value) return false
-    if (!captchaInput.value) return false
-    
-    // return email.value && password.value && 
-    //        /.+@.+\..+/.test(email.value) && 
-    //        password.value.length >= 6
-    return email.value && password.value 
-  })
-  
-  const handleSubmit = async () => {
-    if (!validateCaptcha()) {
-      return
-    }
-    // localStorage.setItem("isLoggedIn", "true")
-    // return
 
+  const isFormValid = computed(() => {
+    return email.value && password.value
+  })
+
+  const handleSubmit = async () => {
     const response = await user.login({
       email: email.value,
       password: password.value,
-      // role: 'admin'//TODO：admin
     }).then(async (res: { data: { access: string; refresh: string } }) => {
       localStorage.setItem("1-token", res.data.access)
       localStorage.setItem("1-refresh", res.data.refresh)
       localStorage.setItem("1-isLoggedIn", "true")
-      
-      // 获取用户信息并存储到 user store
+
       await userStore.fetchUserInfo();
-      
+
       snackbar.showMessage('登录成功', 'success')
       router.push('/')
     }).catch((error: { response?: { status: number } }) => {
@@ -218,7 +151,7 @@
           case 401:
             errorMessage = '账号/密码错误'
             break
-          default://400
+          default:
             errorMessage = '账号/密码错误'
             break
         }
@@ -227,7 +160,7 @@
     })
   }
   </script>
-  
+
   <style scoped>
   .login-page {
     display: flex;
@@ -235,7 +168,7 @@
     background-color: var(--v-theme-background);
     padding-top: 40px;
   }
-  
+
   .feature-section {
     flex: 1;
     padding: 24px 48px;
@@ -244,34 +177,34 @@
     justify-content: center;
     background-color: var(--v-theme-surface);
   }
-  
+
   .feature-content {
     max-width: 800px;
     margin-top: -20px;
   }
-  
+
   .feature-grid {
     display: grid;
     grid-template-columns: repeat(2, 1fr);
     gap: 32px;
   }
-  
+
   .feature-item {
     display: flex;
     align-items: flex-start;
     gap: 16px;
   }
-  
+
   .feature-icon {
     padding: 12px;
     background: rgba(255, 255, 255, 0.1);
     border-radius: 12px;
   }
-  
+
   .feature-text {
     flex: 1;
   }
-  
+
   .login-section {
     width: 480px;
     background-color: var(--v-theme-surface);
@@ -281,19 +214,19 @@
     padding: 32px 48px;
     margin-top: -20px;
   }
-  
+
   .login-container {
     width: 100%;
     max-width: 360px;
     background-color: var(--v-theme-surface);
   }
-  
+
   .v-btn {
     text-transform: none !important;
     background-color: var(--v-theme-primary);
     color: var(--v-theme-on-primary);
   }
-  
+
   .v-btn.v-btn--size-large {
     height: 44px;
     font-size: 16px;
@@ -301,52 +234,44 @@
     box-shadow: 0 2px 4px rgba(64, 158, 255, 0.2);
     transition: all 0.3s ease;
   }
-  
+
   .v-btn.v-btn--size-large:hover {
     background-color: var(--v-theme-primary-light);
     box-shadow: 0 4px 8px rgba(64, 158, 255, 0.3);
     transform: translateY(-1px);
   }
-  
+
   .v-btn.v-btn--size-large:active {
     background-color: var(--v-theme-primary-dark);
     transform: translateY(0);
   }
-  
-  .captcha-section {
-    width: 100%;
-  }
-  
-  .captcha-input {
-    width: 100%;
-  }
-  
+
   :deep(.v-field__append-inner) {
     padding-top: 6px;
   }
-  
+
   @media (max-width: 1024px) {
     .login-page {
       flex-direction: column;
       padding-top: 20px;
     }
-  
+
     .feature-section {
       padding: 24px;
     }
-  
+
     .feature-content {
       margin-top: 0;
     }
-  
+
     .login-section {
       width: 100%;
       margin-top: 0;
       padding: 24px;
     }
-  
+
     .feature-grid {
       grid-template-columns: 1fr;
     }
   }
-  </style> 
+  </style>
