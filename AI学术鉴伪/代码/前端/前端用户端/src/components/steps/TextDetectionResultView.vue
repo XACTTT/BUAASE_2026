@@ -5,6 +5,7 @@ import { useSnackbarStore } from '@/stores/snackbar'
 import { useUserStore } from '@/stores/user'
 import publisher from '@/api/publisher'
 import { useRouter } from 'vue-router'
+import { resolveImageUrl } from '@/utils/preview-url'
 
 interface Props {
   taskId: string
@@ -18,7 +19,6 @@ const theme = useTheme()
 const userStore = useUserStore()
 
 const isDarkMode = computed(() => theme.global.current.value.dark)
-const apiBaseUrl = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000').replace(/\/$/, '')
 
 const loading = ref(true)
 
@@ -248,9 +248,7 @@ function getProbabilityClass(probability: number): string {
 }
 
 function getImageUrl(url: string): string {
-  if (!url) return ''
-  if (/^https?:\/\//.test(url)) return url
-  return `${apiBaseUrl}${url}`
+  return resolveImageUrl(url)
 }
 
 function formatDateTime(dateTime: string): string {

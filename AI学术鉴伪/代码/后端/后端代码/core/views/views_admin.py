@@ -1958,14 +1958,29 @@ def get_review_request_detail(request, manual_review_id):
             "url": serialize_value(img.image, request) if img.image else None,
         })
 
-    # 获取 texts 数据
+    # 获取 texts 数据（包含完整文本和AI检测结果，供审核员查看）
+    from core.models import TextDetectionResult
     texts = []
     for text in manual_review.text_resources.all():
-        texts.append({
+        text_data = {
             "id": text.id,
-            "raw_text": text.raw_text[:200] + '...' if len(text.raw_text) > 200 else text.raw_text,
+            "raw_text": text.raw_text,
             "source_type": text.source_type,
-        })
+        }
+        # 获取该文本资源的AI检测结果
+        try:
+            text_det = TextDetectionResult.objects.get(text_resource=text)
+            text_data["ai_detection"] = {
+                "is_fake": text_det.is_fake,
+                "confidence_score": text_det.confidence_score,
+                "ai_generated_paragraphs": text_det.ai_generated_paragraphs,
+                "factual_fake_reason": text_det.factual_fake_reason,
+                "template_tendency_score": text_det.template_tendency_score,
+                "template_analysis_reason": text_det.template_analysis_reason,
+            }
+        except TextDetectionResult.DoesNotExist:
+            text_data["ai_detection"] = None
+        texts.append(text_data)
 
     # 获取 persons 数据：所有参与该请求的 reviewer（来自 ManualReview 表）
     persons = []

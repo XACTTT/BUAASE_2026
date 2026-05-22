@@ -4,7 +4,7 @@ from django.core.paginator import Paginator
 from rest_framework import status
 
 from ..models import ReviewRequest, ManualReview, DetectionResult, User, DetectionTask, PublisherReviewerRelationship, \
-    ManualReview, ImageReview
+    ManualReview, ImageReview, TextReview, ReviewTextResource
 from django.utils import timezone
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
@@ -102,8 +102,28 @@ def create_review_task_with_admin_check(request):
 
     image_ids = request.data.get('image_ids', [])
     text_ids = request.data.get('text_ids', [])
+    task_id = request.data.get('task_id', None)
     reviewers = request.data.get('reviewers', [])
     reason = request.data.get('reason', 'No reason provided')
+
+    # 如果提供了 task_id，自动从 DetectionTask 中解析 image_ids 和 text_ids
+    if task_id and not image_ids and not text_ids:
+        from core.models import DetectionTask, ReviewTextResource
+        try:
+            det_task = DetectionTask.objects.get(id=task_id, user=request.user)
+        except DetectionTask.DoesNotExist:
+            return Response({'error': 'DetectionTask not found'}, status=404)
+
+        # 从任务的 image_uploads 获取图片 ID
+        image_ids = list(det_task.image_uploads.values_list('id', flat=True))
+
+        # 从任务的容器获取文本资源 ID
+        if det_task.container:
+            text_ids = list(
+                ReviewTextResource.objects.filter(
+                    container=det_task.container
+                ).values_list('id', flat=True)
+            )
 
     # 验证参数
     if not image_ids and not text_ids:
@@ -939,10 +959,12 @@ def post_review(request, manual_review_id):
     # 获取请求体数据
     data = request.data
     results = data.get('result', [])
+    text_reviews_data = data.get('text_reviews', [])
 
-    if not results:
-        return Response({'error': 'result is required'}, status=400)
+    if not results and not text_reviews_data:
+        return Response({'error': 'result or text_reviews is required'}, status=400)
 
+    # 处理图片审核结果
     for item in results:
         img_id = item.get('img_id')
         scores = item.get('score', [])
@@ -1000,6 +1022,39 @@ def post_review(request, manual_review_id):
         # 更新 image_upload 的 isReview 字段
         image_upload.isReview = True
         image_upload.save(update_fields=['isReview'])
+
+    # 处理文本审核结果
+    for item in text_reviews_data:
+        text_id = item.get('text_id')
+        paragraph_reviews = item.get('paragraph_reviews', None)
+        template_review_score = item.get('template_review_score', None)
+        template_review_comment = item.get('template_review_comment', None)
+        overall_comment = item.get('overall_comment', '')
+        final_result = item.get('result')
+
+        if not text_id:
+            return Response({'error': 'text_id is required in each text_review item'}, status=400)
+        if final_result is None:
+            return Response({'error': 'result is required in each text_review item'}, status=400)
+
+        try:
+            text_resource = ReviewTextResource.objects.get(id=text_id)
+        except ReviewTextResource.DoesNotExist:
+            return Response({'error': f'Text resource with ID {text_id} not found'}, status=404)
+
+        # 创建或更新 TextReview 对象
+        TextReview.objects.update_or_create(
+            manual_review=manual_review,
+            text_resource=text_resource,
+            defaults={
+                'paragraph_reviews': paragraph_reviews,
+                'template_review_score': template_review_score,
+                'template_review_comment': template_review_comment,
+                'overall_comment': overall_comment,
+                'result': final_result,
+                'review_time': timezone.now()
+            }
+        )
 
     # 更新ManualReview状态
     manual_review.status = 'completed'

@@ -79,6 +79,10 @@ export default defineConfig({
         changeOrigin: true,
         // rewrite: (path) => path.replace(/^\/api/, ''),
       },
+      '/media': {
+        target: 'http://116.63.14.7',
+        changeOrigin: true,
+      },
     },
     hmr: {
       overlay: false,

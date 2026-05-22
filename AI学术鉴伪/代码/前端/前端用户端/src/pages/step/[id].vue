@@ -20,7 +20,10 @@
     <!-- Image detection -->
     <DetectionReviewStep v-else-if="isImageTask" :task_id="taskId" />
 
-    <!-- Text detection (paper_text, review_text, multi_material) -->
+    <!-- Multi-material detection -->
+    <MultiMaterialResultView v-else-if="isMultiMaterialTask" :task-id="taskId" :task-meta="taskMeta" />
+
+    <!-- Text detection: paper_text, review_text -->
     <TextDetectionResultView v-else :task-id="taskId" :task-meta="taskMeta" />
   </v-card>
 </template>
@@ -31,6 +34,7 @@ import { useRouter, useRoute } from 'vue-router'
 import type { RouteParams } from 'vue-router'
 import DetectionReviewStep from '@/components/steps/DetectionReviewStep.vue'
 import TextDetectionResultView from '@/components/steps/TextDetectionResultView.vue'
+import MultiMaterialResultView from '@/components/steps/MultiMaterialResultView.vue'
 import { useSnackbarStore } from '@/stores/snackbar'
 import publisher from '@/api/publisher'
 
@@ -50,6 +54,11 @@ const resolvedTaskType = computed(() => {
 const isImageTask = computed(() => {
   const t = resolvedTaskType.value
   return t === 'image' || t === 'Image'
+})
+
+const isMultiMaterialTask = computed(() => {
+  const t = resolvedTaskType.value
+  return t === 'multi_material' || t === 'multi'
 })
 
 const fetchData = async () => {

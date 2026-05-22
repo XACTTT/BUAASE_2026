@@ -51,6 +51,24 @@ export interface ResourceListResponse {
   resources: Resource[]
 }
 
+// 结构化检测结果
+export interface StructuredResult {
+  task_id: number
+  task_type: 'image' | 'paper_text' | 'review_text' | 'multi_material'
+  status: string
+  overall_is_fake?: boolean
+  confidence_score?: number
+  result?: {
+    dimensions?: { name: string; score: number; summary?: string }[]
+    evidence?: any
+    llm_analysis?: any
+    fake_images?: { result_id: string; image_url: string; image_id: string }[]
+    normal_images?: { result_id: string; image_url: string; image_id: string }[]
+  }
+  ai_response?: any
+  detection_time?: string
+}
+
 export default {
   // 获取学术资源列表
   getResources(params: ResourceListParams) {
@@ -84,5 +102,10 @@ export default {
   // 删除检测任务
   deleteDetection(taskId: number) {
     return http.delete(`/admin/detection-task/${taskId}/`)
+  },
+
+  // 获取结构化检测结果
+  getDetectionResult(taskId: number) {
+    return http.get<StructuredResult>(`/tasks/${taskId}/structured-result/`)
   }
 }

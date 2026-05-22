@@ -1,3 +1,12 @@
+/**
+ * Resolve a relative or absolute API asset path to a full URL.
+ *
+ * Handles:
+ *  - already-absolute URLs (http/https) -> return as-is
+ *  - relative paths starting with "/"    -> prepend VITE_API_URL (without trailing /api)
+ *  - relative paths without leading "/"  -> prepend VITE_API_URL + "/"
+ *  - missing VITE_API_URL               -> return path unchanged (dev proxy handles it)
+ */
 export const resolveApiAssetUrl = (path: string): string => {
   if (!path) {
     return ''
@@ -17,6 +26,24 @@ export const resolveApiAssetUrl = (path: string): string => {
     return `${normalizedBase}${path}`
   }
   return `${normalizedBase}/${path}`
+}
+
+/**
+ * Resolve an image URL and optionally append a JWT preview token.
+ *
+ * This is the single entry point all components should use for displaying
+ * images returned by the backend. It handles every URL pattern the API may
+ * return:
+ *   - Full absolute URLs with host
+ *   - Relative paths like /api/preview/image/123/
+ *   - Paths without leading slash
+ *
+ * If the resolved URL points to the /api/preview/ endpoint, the stored JWT
+ * token is appended automatically so the image can be fetched.
+ */
+export const resolveImageUrl = (url: string): string => {
+  const resolved = resolveApiAssetUrl(url)
+  return appendPreviewToken(resolved)
 }
 
 export const appendPreviewToken = (url: string): string => {
