@@ -4,8 +4,9 @@ import logging
 from PIL import Image
 import zipfile
 from django.core.files.storage import FileSystemStorage
-from ..models import FileManagement, ImageUpload, User, ResourceContainer, DetectionResult, SubDetectionResult
 from django.core.paginator import Paginator, EmptyPage
+from django.db.models import Q
+from ..models import FileManagement, ImageUpload, User, ResourceContainer, ManualReview, DetectionResult, SubDetectionResult
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated, IsAdminUser, AllowAny
 from rest_framework.response import Response
@@ -369,10 +370,51 @@ def preview_resource(request, resource_type, resource_id):
         return FileResponse(open(image_path, 'rb'), content_type='image/*')
 
     if resource_type == 'file':
+        file_management = None
         try:
             file_management = FileManagement.objects.get(id=resource_id, user=auth_user)
         except FileManagement.DoesNotExist:
-            return Response({"message": "File not found"}, status=404)
+            file_management = None
+
+        if file_management is None:
+            try:
+                candidate = FileManagement.objects.get(id=resource_id)
+            except FileManagement.DoesNotExist:
+                candidate = None
+
+            if not candidate:
+                return Response({"message": "File not found"}, status=404)
+
+            if auth_user.role != 'reviewer' or candidate.organization_id != auth_user.organization_id:
+                return Response({"message": "File not found"}, status=404)
+
+            manual_reviews = ManualReview.objects.filter(
+                reviewer=auth_user,
+                review_request__organization_id=auth_user.organization_id,
+            ).select_related('review_request', 'review_request__detection_task')
+
+            allow_access = False
+            if candidate.container_id:
+                allow_access = manual_reviews.filter(
+                    review_request__detection_task__container_id=candidate.container_id
+                ).exists()
+
+            if not allow_access:
+                for review in manual_reviews:
+                    task = getattr(review.review_request, 'detection_task', None)
+                    extra_payload = getattr(task, 'extra_payload', {}) if task else {}
+                    file_ids = extra_payload.get('file_ids') or []
+                    try:
+                        if int(candidate.id) in [int(fid) for fid in file_ids]:
+                            allow_access = True
+                            break
+                    except Exception:
+                        continue
+
+            if not allow_access:
+                return Response({"message": "File not found"}, status=404)
+
+            file_management = candidate
 
         storage_path = file_management.storage_path
         if not storage_path:

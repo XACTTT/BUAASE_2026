@@ -17,7 +17,8 @@ from datetime import datetime
 from core.models import Log, User
 from rest_framework.decorators import api_view, permission_classes
 from collections import defaultdict
-from core.models import FileManagement, ImageUpload, DetectionResult, SubDetectionResult
+from core.models import FileManagement, ImageUpload, DetectionResult, SubDetectionResult, StructuredDetectionResult, TextDetectionResult
+from core.services.structured_detection_service import StructuredDetectionService
 from rest_framework.permissions import IsAdminUser
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -1950,6 +1951,42 @@ def get_review_request_detail(request, manual_review_id):
     # 获取关联的 ReviewRequest
     review_request = manual_review.review_request
 
+    ai_detection_result = {}
+    detection_result = review_request.detection_result
+    text_detection_result = review_request.text_detection_result
+    if detection_result:
+        ai_detection_result = {
+            "is_fake": detection_result.is_fake,
+            "confidence_score": detection_result.confidence_score,
+            "detection_time": detection_result.detection_time.strftime('%Y-%m-%d %H:%M:%S')
+            if detection_result.detection_time else None,
+        }
+    elif text_detection_result:
+        ai_detection_result = {
+            "is_fake": text_detection_result.is_fake,
+            "confidence_score": text_detection_result.confidence_score,
+            "detection_time": text_detection_result.detection_time.strftime('%Y-%m-%d %H:%M:%S')
+            if text_detection_result.detection_time else None,
+        }
+    elif review_request.detection_task_id:
+        structured = StructuredDetectionResult.objects.filter(detection_task_id=review_request.detection_task_id).first()
+        overall = (structured.result_payload or {}).get('overall') if structured else None
+        ai_detection_result = {
+            "is_fake": (overall or {}).get('is_fake') if overall else None,
+            "confidence_score": (overall or {}).get('confidence_score') if overall else None,
+            "detection_time": None,
+        }
+
+    task_type = None
+    if review_request.detection_result and review_request.detection_result.detection_task:
+        task_type = review_request.detection_result.detection_task.task_type
+    elif review_request.text_detection_result and review_request.text_detection_result.detection_task:
+        task_type = review_request.text_detection_result.detection_task.task_type
+    elif manual_review.text_resources.exists():
+        task_type = 'text'
+    else:
+        task_type = 'image'
+
     # 获取 imgs 数据（来自 ManualReview 的 imgs 多对多关系）
     imgs = []
     for img in manual_review.imgs.all():
@@ -1959,28 +1996,108 @@ def get_review_request_detail(request, manual_review_id):
         })
 
     # 获取 texts 数据（包含完整文本和AI检测结果，供审核员查看）
-    from core.models import TextDetectionResult
+    structured_items = []
+    paper_files = []
+    review_files = []
+    if review_request.detection_task_id:
+        structured = StructuredDetectionResult.objects.filter(
+            detection_task_id=review_request.detection_task_id
+        ).first()
+        if structured:
+            payload = structured.result_payload or {}
+            evidence = payload.get('evidence') or {}
+            per_section = evidence.get('per_section') or []
+            item_text_lookup = {}
+            try:
+                task = review_request.detection_task
+                snapshot = StructuredDetectionService.build_input_snapshot(task)
+                paper_files = snapshot.get('paper_files') or []
+                review_files = snapshot.get('review_files') or []
+                text_items = StructuredDetectionService._extract_text_items_from_snapshot(
+                    snapshot, task.detect_type
+                )
+                item_text_lookup = {
+                    item.get('id'): item.get('text')
+                    for item in text_items
+                    if item.get('id')
+                }
+            except Exception:
+                item_text_lookup = {}
+
+            def _resolve_source_file_id(item_id):
+                if not item_id:
+                    return None
+                parts = str(item_id).split('_')
+                if len(parts) >= 4 and parts[1] == 'paper':
+                    try:
+                        file_idx = int(parts[2])
+                        return (paper_files[file_idx] or {}).get('file_id')
+                    except (IndexError, ValueError, TypeError):
+                        return None
+                if len(parts) >= 5 and parts[1] == 'review' and parts[2] == 'file':
+                    try:
+                        file_idx = int(parts[3])
+                        return (review_files[file_idx] or {}).get('file_id')
+                    except (IndexError, ValueError, TypeError):
+                        return None
+                return None
+
+            structured_items = [
+                {
+                    "item_id": entry.get("item_id"),
+                    "text": item_text_lookup.get(entry.get("item_id")),
+                    "is_aigc": entry.get("is_aigc"),
+                    "label_name": entry.get("label_name"),
+                    "confidence_score": entry.get("confidence_score"),
+                    "probabilities": entry.get("probabilities"),
+                    "source_file_id": _resolve_source_file_id(entry.get("item_id")),
+                }
+                for entry in per_section
+            ]
+
+    # 获取 texts 数据
     texts = []
-    for text in manual_review.text_resources.all():
-        text_data = {
+    for index, text in enumerate(manual_review.text_resources.all()):
+        text_result = None
+        if review_request.detection_task_id:
+            text_result = TextDetectionResult.objects.filter(
+                detection_task_id=review_request.detection_task_id,
+                text_resource_id=text.id,
+            ).order_by('-id').first()
+        if not text_result and review_request.text_detection_result_id:
+            if review_request.text_detection_result.text_resource_id == text.id:
+                text_result = review_request.text_detection_result
+
+        items = []
+        if text_result:
+            items = text_result.ai_generated_paragraphs or []
+        elif structured_items and index == 0:
+            items = structured_items
+
+        source_file_id = None
+        if paper_files:
+            source_file_id = paper_files[0].get('file_id')
+        elif review_files:
+            source_file_id = review_files[0].get('file_id')
+        elif structured_items:
+            source_file_id = structured_items[0].get('source_file_id')
+
+        texts.append({
             "id": text.id,
             "raw_text": text.raw_text,
             "source_type": text.source_type,
-        }
+            "items": items,
+            "source_file_id": source_file_id,
+            "ai_detection": {
+                "is_fake": text_result.is_fake,
+                "confidence_score": text_result.confidence_score,
+                "ai_generated_paragraphs": text_result.ai_generated_paragraphs,
+                "factual_fake_reason": text_result.factual_fake_reason,
+                "template_tendency_score": text_result.template_tendency_score,
+                "template_analysis_reason": text_result.template_analysis_reason,
+            } if text_result else None,
+        })
         # 获取该文本资源的AI检测结果
-        try:
-            text_det = TextDetectionResult.objects.get(text_resource=text)
-            text_data["ai_detection"] = {
-                "is_fake": text_det.is_fake,
-                "confidence_score": text_det.confidence_score,
-                "ai_generated_paragraphs": text_det.ai_generated_paragraphs,
-                "factual_fake_reason": text_det.factual_fake_reason,
-                "template_tendency_score": text_det.template_tendency_score,
-                "template_analysis_reason": text_det.template_analysis_reason,
-            }
-        except TextDetectionResult.DoesNotExist:
-            text_data["ai_detection"] = None
-        texts.append(text_data)
 
     # 获取 persons 数据：所有参与该请求的 reviewer（来自 ManualReview 表）
     persons = []
@@ -1997,6 +2114,8 @@ def get_review_request_detail(request, manual_review_id):
         "texts": texts,
         "persons": persons,
         "reason": review_request.reason,
+        "task_type": task_type,
+        "ai_detection_result": ai_detection_result,
     }
 
     return Response(response_data)

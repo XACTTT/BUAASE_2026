@@ -54,6 +54,10 @@ export default {
     return http.get(`/tasks/${data}/text_results/`)
   },
 
+  getContainerReviewTexts(containerId: number) {
+    return http.get(`/resource-containers/${containerId}/review-text/`)
+  },
+
   //获取单条文本记录的AI检测结果详情
   getSingleTextResult(data: any) {
     return http.get(`/detection/text/${data}/`)
@@ -120,6 +124,16 @@ export default {
   //publisher获得单张图片的单个人的详细人工审核结果
   getImageReviewDetail(data: any) {
     return http.get(`/get_image_review/?review_request_id=${data.review_request_id}&img_id=${data.img_id}&reviewer_id=${data.reviewer_id}`)
+  },
+
+  //publisher获取单个文本的所有人工审核结果
+  getTextReviewAll(data: any) {
+    return http.get(`/get_text_review_all/?review_request_id=${data.review_request_id}&text_id=${data.text_id}`)
+  },
+
+  //publisher获得单条文本的单个人的详细人工审核结果
+  getTextReviewDetail(data: any) {
+    return http.get(`/get_text_review/?review_request_id=${data.review_request_id}&text_id=${data.text_id}&reviewer_id=${data.reviewer_id}`)
   },
 
   //publisher根据imgid获取detectionid

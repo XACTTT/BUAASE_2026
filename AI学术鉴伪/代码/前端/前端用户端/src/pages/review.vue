@@ -1,13 +1,13 @@
-<template>
+﻿<template>
   <div class="review-page">
-      <!-- 标题 -->
+      <!-- 鏍囬 -->
       <v-row class="mb-6">
         <v-col>
-          <h1 class="text-h4 font-weight-bold">我的任务</h1>
+          <h1 class="text-h4 font-weight-bold">鎴戠殑浠诲姟</h1>
         </v-col>
       </v-row>
 
-      <!-- 搜索栏和筛选按钮 -->
+      <!-- 鎼滅储鏍忓拰绛涢€夋寜閽?-->
       <v-row class="mb-4">
         <v-col cols="12" sm="8" md="6">
           <v-text-field
@@ -21,7 +21,7 @@
             @keyup.enter="handleSearch"
             @click:append-inner="handleSearch"
             @click:clear="handleSearch"
-            placeholder="请输入出版社名称"
+            placeholder="璇疯緭鍏ュ嚭鐗堢ぞ鍚嶇О"
           ></v-text-field>
         </v-col>
         <v-col cols="12" sm="4" md="6" class="d-flex justify-end">
@@ -31,7 +31,7 @@
             prepend-icon="mdi-filter-variant"
             @click="showFilterDialog = true"
           >
-            筛选
+            绛涢€?
           </v-btn>
         </v-col>
       </v-row>
@@ -50,7 +50,7 @@
           <template v-slot:top>
             <div class="d-flex align-center pa-4">
               <div class="text-caption text-medium-emphasis">
-                共 {{ totalTasks }} 条记录
+                鍏?{{ totalTasks }} 鏉¤褰?
               </div>
             </div>
           </template>
@@ -97,7 +97,7 @@
         
         <div class="d-flex align-center justify-center pa-4">
           <div class="d-flex align-center">
-            <span class="text-caption mr-2">每页显示</span>
+            <span class="text-caption mr-2">姣忛〉鏄剧ず</span>
             <v-select
               v-model="pageSize"
               :items="[5, 10, 20, 50, 100]"
@@ -107,7 +107,7 @@
               style="width: 100px"
               @update:model-value="handlePageSizeChange"
             ></v-select>
-            <span class="text-caption ml-2">条</span>
+            <span class="text-caption ml-2">鏉?/span>
           </div>
           <v-pagination
             v-model="currentPage"
@@ -119,16 +119,16 @@
         </div>
       </v-card>
 
-    <!-- 筛选对话框 -->
+    <!-- 绛涢€夊璇濇 -->
     <v-dialog v-model="showFilterDialog" max-width="500">
       <v-card class="elevation-4">
-        <v-card-title class="text-h6 font-weight-bold">筛选条件</v-card-title>
+        <v-card-title class="text-h6 font-weight-bold">绛涢€夋潯浠?/v-card-title>
         <v-card-text>
           <div class="d-flex flex-column gap-4">
             <v-select
               v-model="filters.status"
               :items="statusOptions"
-              label="任务状态"
+              label="浠诲姟鐘舵€?
               clearable
               hide-details
             ></v-select>
@@ -136,7 +136,7 @@
             <v-select
               v-model="filters.timeRange"
               :items="timeRangeOptions"
-              label="快速选择时间范围"
+              label="蹇€熼€夋嫨鏃堕棿鑼冨洿"
               clearable
               hide-details
               @update:model-value="handleTimeRangeChange"
@@ -145,7 +145,7 @@
             <div class="d-flex align-center gap-4">
               <v-text-field
                 v-model="filters.startDate"
-                label="开始时间"
+                label="寮€濮嬫椂闂?
                 type="datetime-local"
                 hide-details
                 density="compact"
@@ -154,7 +154,7 @@
               ></v-text-field>
               <v-text-field
                 v-model="filters.endDate"
-                label="结束时间"
+                label="缁撴潫鏃堕棿"
                 type="datetime-local"
                 hide-details
                 density="compact"
@@ -166,8 +166,8 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
-          <v-btn color="grey" variant="text" @click="resetFilters">重置</v-btn>
-          <v-btn color="primary" @click="applyFilters">应用</v-btn>
+          <v-btn color="grey" variant="text" @click="resetFilters">閲嶇疆</v-btn>
+          <v-btn color="primary" @click="applyFilters">搴旂敤</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -188,22 +188,22 @@ interface Task {
   manual_review_time: string
   publisher_username: string
   publisher_avatar: string
-  image_count: number
+  resource_count: number
+  task_type: string
   status: string
   task_type?: string
 }
 
 const headers = [
-  { title: '头像', key: 'publisher_avatar', align: 'center', sortable: false },
-  { title: '出版社', key: 'publisher_username', align: 'start' },
-  { title: '任务类型', key: 'task_type', align: 'center', sortable: false },
-  { title: '图片数量', key: 'image_count', align: 'start' },
-  { title: '状态', key: 'status', align: 'center' },
-  { title: '提交时间', key: 'maual_review_time', align: 'center' },
-  { title: '操作', key: 'actions', align: 'center', sortable: false },
+  { title: '澶村儚', key: 'publisher_avatar', align: 'center', sortable: false },
+  { title: '鍑虹増绀?, key: 'publisher_username', align: 'start' },
+  { title: '鏉愭枡鏁伴噺', key: 'resource_count', align: 'start' },
+  { title: '鐘舵€?, key: 'status', align: 'center' },
+  { title: '鎻愪氦鏃堕棿', key: 'maual_review_time', align: 'center' },
+  { title: '鎿嶄綔', key: 'actions', align: 'center', sortable: false },
 ] as const
 
-// 分页相关
+// 鍒嗛〉鐩稿叧
 const tasks = ref<Task[]>([])
 const loading = ref(false)
 const currentPage = ref(1)
@@ -211,10 +211,10 @@ const pageSize = ref(10)
 const totalTasks = ref(0)
 const totalPages = ref(1)
 
-// 搜索相关
+// 鎼滅储鐩稿叧
 const searchQuery = ref('')
 
-// 筛选相关
+// 绛涢€夌浉鍏?
 const showFilterDialog = ref(false)
 const filters = ref<{
   status: string | null
@@ -229,16 +229,16 @@ const filters = ref<{
 })
 
 const statusOptions = [
-  { title: '未完成', value: 'undo' },
-  { title: '已完成', value: 'completed' },
+  { title: '鏈畬鎴?, value: 'undo' },
+  { title: '宸插畬鎴?, value: 'completed' },
 ]
 
 const timeRangeOptions = [
-  { title: '最近一天', value: '1d' },
-  { title: '最近一周', value: '7d' },
-  { title: '最近一月', value: '30d' },
-  { title: '最近三月', value: '90d' },
-  { title: '最近一年', value: '365d' }
+  { title: '鏈€杩戜竴澶?, value: '1d' },
+  { title: '鏈€杩戜竴鍛?, value: '7d' },
+  { title: '鏈€杩戜竴鏈?, value: '30d' },
+  { title: '鏈€杩戜笁鏈?, value: '90d' },
+  { title: '鏈€杩戜竴骞?, value: '365d' }
 ]
 
 const getStatusColor = (status: string) => {
@@ -255,9 +255,9 @@ const getStatusColor = (status: string) => {
 const getStatusName = (status: string) => {
   switch (status) {
     case 'undo':
-      return '未完成'
+      return '鏈畬鎴?
     case 'completed':
-      return '已完成'
+      return '宸插畬鎴?
     default:
       return status
   }
@@ -281,30 +281,30 @@ const getTaskTypeColor = (taskType?: string) => {
 const getTaskTypeName = (taskType?: string) => {
   switch (taskType) {
     case 'image':
-      return '图像检测'
+      return '鍥惧儚妫€娴?
     case 'paper_text':
-      return '论文检测'
+      return '璁烘枃妫€娴?
     case 'review_text':
-      return '评审检测'
+      return '璇勫妫€娴?
     case 'multi_material':
-      return '多材料检测'
+      return '澶氭潗鏂欐娴?
     default:
-      return taskType || '未知'
+      return taskType || '鏈煡'
   }
 }
 
 const formatTime = (timestamp: string) => {
-  return timestamp // 后端返回的时间格式已经是正确的，直接显示
+  return timestamp // 鍚庣杩斿洖鐨勬椂闂存牸寮忓凡缁忔槸姝ｇ‘鐨勶紝鐩存帴鏄剧ず
 }
 
 const goToTaskDetail = (task: Task) => {
   router.push(`/task/detail/${task.manual_review_id}`)
 }
 
-// 时间验证相关
+// 鏃堕棿楠岃瘉鐩稿叧
 const timeError = ref('')
 
-// 处理快速选择时间范围变化
+// 澶勭悊蹇€熼€夋嫨鏃堕棿鑼冨洿鍙樺寲
 const handleTimeRangeChange = (value: string | null) => {
   if (value) {
     filters.value.startDate = null
@@ -313,12 +313,12 @@ const handleTimeRangeChange = (value: string | null) => {
   }
 }
 
-// 处理自定义时间变化
+// 澶勭悊鑷畾涔夋椂闂村彉鍖?
 const handleCustomTimeChange = () => {
   filters.value.timeRange = null
   
   if (!filters.value.startDate || !filters.value.endDate) {
-    timeError.value = '开始时间和结束时间不能为空'
+    timeError.value = '寮€濮嬫椂闂村拰缁撴潫鏃堕棿涓嶈兘涓虹┖'
     return
   }
 
@@ -326,13 +326,13 @@ const handleCustomTimeChange = () => {
   const endTime = new Date(filters.value.endDate).getTime()
   
   if (startTime >= endTime) {
-    timeError.value = '开始时间必须早于结束时间'
+    timeError.value = '寮€濮嬫椂闂村繀椤绘棭浜庣粨鏉熸椂闂?
   } else {
     timeError.value = ''
   }
 }
 
-// 重置筛选条件
+// 閲嶇疆绛涢€夋潯浠?
 const resetFilters = () => {
   filters.value = {
     status: null,
@@ -347,7 +347,7 @@ const resetFilters = () => {
   showFilterDialog.value = false
 }
 
-// 应用筛选条件
+// 搴旂敤绛涢€夋潯浠?
 const applyFilters = () => {
   if (timeError.value) {
     return
@@ -359,18 +359,18 @@ const applyFilters = () => {
   showFilterDialog.value = false
 }
 
-// 处理搜索
+// 澶勭悊鎼滅储
 const handleSearch = () => {
   currentPage.value = 1
   pageSize.value = 10
   fetchTasks(1, 10)
 }
 
-// 从后端获取任务数据
+// 浠庡悗绔幏鍙栦换鍔℃暟鎹?
 const fetchTasks = async (page: number, pageSize: number) => {
   loading.value = true
   try {
-    // 计算时间筛选
+    // 璁＄畻鏃堕棿绛涢€?
     let startTimeFilter: string | undefined
     let endTimeFilter: string | undefined
     if (filters.value.timeRange) {
@@ -401,41 +401,45 @@ const fetchTasks = async (page: number, pageSize: number) => {
     const response = await reviewerApi.getReviewerTasks(params)
     const { results: taskList, current_page, total_pages, total_users } = response.data
     
-    tasks.value = taskList.map((task: any) => ({
+    tasks.value = taskList.map((task: any) => {
+      const taskType = task.task_type || 'image'
+      const resourceCount = taskType.includes('text') ? (task.text_count || 0) : (task.image_count || 0)
+      return {
       manual_review_id: task.manual_review_id,
       manual_review_time: task.manual_review_time,
       publisher_username: task.publisher_username,
-      publisher_avatar: task.publisher_avatar ? import.meta.env.VITE_API_URL + task.publisher_avatar : '',
-      image_count: task.image_count,
-      status: task.status,
-      task_type: task.task_type || 'unknown'
-    }))
+      publisher_avatar: 'http://122.9.45.122' + task.publisher_avatar || '',
+      resource_count: resourceCount,
+      task_type: taskType,
+      status: task.status
+      }
+    })
     
     currentPage.value = current_page
     totalPages.value = total_pages
     totalTasks.value = total_users
   } catch (error) {
-    console.error('获取任务列表失败:', error)
-    snackbar.showMessage('获取任务列表失败', 'error')
+    console.error('鑾峰彇浠诲姟鍒楄〃澶辫触:', error)
+    snackbar.showMessage('鑾峰彇浠诲姟鍒楄〃澶辫触', 'error')
   } finally {
     loading.value = false
   }
 }
 
-// 处理页码变化
+// 澶勭悊椤电爜鍙樺寲
 const handlePageChange = (page: number) => {
   currentPage.value = page
   fetchTasks(page, pageSize.value)
 }
 
-// 处理每页数量变化
+// 澶勭悊姣忛〉鏁伴噺鍙樺寲
 const handlePageSizeChange = (size: number) => {
   pageSize.value = size
   currentPage.value = 1
   fetchTasks(1, size)
 }
 
-// 时间格式化，用于筛选条件
+// 鏃堕棿鏍煎紡鍖栵紝鐢ㄤ簬绛涢€夋潯浠?
 const formatDateFilter = (timestamp: number) => {
   const date = new Date(timestamp)
   const year = date.getFullYear()
@@ -447,7 +451,7 @@ const formatDateFilter = (timestamp: number) => {
   return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`
 }
 
-// 初始化
+// 鍒濆鍖?
 onMounted(() => {
   fetchTasks(currentPage.value, pageSize.value)
 })

@@ -475,7 +475,7 @@ import publisher from '@/api/publisher'
 import axios from 'axios'
 
 const router = useRouter()
-const selectedVersion = ref<1 | 2 | 3 | null>(null)
+const selectedVersion = ref<1 | 2 | 3>(1)
 type ModuleKey = 'image' | 'paper' | 'review' | 'multi'
 type UploadCategoryKey = 'image' | 'paper' | 'review'
 
@@ -649,7 +649,7 @@ const resetCurrentUploadState = () => {
     paper: [],
     review: []
   }
-  selectedVersion.value = null
+  selectedVersion.value = 1
   fileId.value = ''
   fileIds.value = []
   fileIdsByCategory.value = {

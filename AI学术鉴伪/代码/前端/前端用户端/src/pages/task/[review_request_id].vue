@@ -1,48 +1,48 @@
-<template>
+﻿<template>
   <div class="task-detail pa-4">
-    <!-- 返回按钮 -->
+    <!-- 杩斿洖鎸夐挳 -->
     <div class="d-flex align-center mb-6">
       <v-btn icon="mdi-arrow-left" variant="text" @click="router.back()" class="mr-2 return-btn">
         <v-icon>mdi-arrow-left</v-icon>
       </v-btn>
-      <span class="text-h6 font-weight-medium">返回检测历史</span>
+      <span class="text-h6 font-weight-medium">杩斿洖妫€娴嬪巻鍙?/span>
     </div>
 
-    <!-- 主要内容区域 -->
+    <!-- 涓昏鍐呭鍖哄煙 -->
     <div class="main-content rounded-lg">
-      <!-- 顶部信息区域 -->
+      <!-- 椤堕儴淇℃伅鍖哄煙 -->
       <div class="info-section pa-6">
         <div class="content-wrapper d-flex justify-center">
           <div class="content-container">
             <div class="info-content d-flex align-center justify-space-between pa-4">
-              <!-- 左侧进度和标签 -->
+              <!-- 宸︿晶杩涘害鍜屾爣绛?-->
               <div class="d-flex align-center" style="min-width: 320px">
                 <div class="progress-circle mr-3 elevation-1">
                   <!-- <span class="text-h5 font-weight-bold primary--text">{{ taskData?.progress }}%</span> -->
                   <span class="text-h5 font-weight-bold primary--text">{{ formatNumber(AI_detection) }}</span>
-                  <span class="text-caption">为假</span>
+                  <span class="text-caption">涓哄亣</span>
                 </div>
                 <v-btn color="primary" variant="elevated" prepend-icon="mdi-download" @click="handleDownloadReport"
                   class="ml-4">
-                  下载人工审核报告
+                  涓嬭浇浜哄伐瀹℃牳鎶ュ憡
                 </v-btn>
-                <!-- 添加的v-card文本区域 -->
+                <!-- 娣诲姞鐨剉-card鏂囨湰鍖哄煙 -->
                 <v-card class="ml-4 pa-2 elevation-1" flat rounded="lg" width="250">
-                  <v-card-title class="pa-2 pb-1 text-subtitle-2 font-weight-bold">AI 检测结果</v-card-title>
+                  <v-card-title class="pa-2 pb-1 text-subtitle-2 font-weight-bold">AI 妫€娴嬬粨鏋?/v-card-title>
                   <v-card-text class="pa-2 pt-1">
                     <template v-if="isMultiMaterial">
                       <div class="d-flex flex-column text-body-2 text-grey">
                         <div class="d-flex justify-space-between mb-1">
-                          <span class="font-weight-medium">任务类型:</span>
-                          <span class="text-primary">综合检测</span>
+                          <span class="font-weight-medium">浠诲姟绫诲瀷:</span>
+                          <span class="text-primary">缁煎悎妫€娴?/span>
                         </div>
                         <div class="d-flex justify-space-between mb-1">
-                          <span class="font-weight-medium">图片数量:</span>
-                          <span class="text-primary">{{ images.length }} 张</span>
+                          <span class="font-weight-medium">鍥剧墖鏁伴噺:</span>
+                          <span class="text-primary">{{ images.length }} 寮?/span>
                         </div>
                         <div class="d-flex justify-space-between">
-                          <span class="font-weight-medium">文本数量:</span>
-                          <span class="text-primary">{{ textResults.length }} 份</span>
+                          <span class="font-weight-medium">鏂囨湰鏁伴噺:</span>
+                          <span class="text-primary">{{ textResults.length }} 浠?/span>
                         </div>
                       </div>
                     </template>
@@ -50,18 +50,18 @@
                       <div v-for="(dimension, index) in detection_results" :key="index"
                         class="d-flex justify-space-between text-body-2 text-grey">
                         <span class="font-weight-medium">{{ convert(index) }}:</span>
-                        <span class="text-primary">{{ dimension.probability.toFixed(2) }}</span> <!-- 占位符分数 -->
+                        <span class="text-primary">{{ dimension.probability.toFixed(2) }}</span> <!-- 鍗犱綅绗﹀垎鏁?-->
                       </div>
                     </template>
                     <template v-else>
                       <div class="d-flex flex-column text-body-2 text-grey">
                         <div class="d-flex justify-space-between mb-1">
-                          <span class="font-weight-medium">当前任务类型:</span>
-                          <span class="text-primary">{{ taskType === 'paper_text' ? '论文检测' : 'Review检测' }}</span>
+                          <span class="font-weight-medium">褰撳墠浠诲姟绫诲瀷:</span>
+                          <span class="text-primary">{{ taskType === 'paper_text' ? '璁烘枃妫€娴? : 'Review妫€娴? }}</span>
                         </div>
                         <div class="d-flex justify-space-between">
-                          <span class="font-weight-medium">包含文本数量:</span>
-                          <span class="text-primary">{{ textResults.length }} 份</span>
+                          <span class="font-weight-medium">鍖呭惈鏂囨湰鏁伴噺:</span>
+                          <span class="text-primary">{{ textResults.length }} 浠?/span>
                         </div>
                       </div>
                     </template>
@@ -70,25 +70,25 @@
               </div>
 
 
-              <!-- 右侧任务信息 -->
+              <!-- 鍙充晶浠诲姟淇℃伅 -->
               <div class="task-stats d-flex align-center">
                 <div class="stat-item mr-4">
                   <div class="text-subtitle-1 d-flex justify-center">
                     <v-chip variant="flat" size="x-large" class="unprocessed-chip font-weight-medium px-3"
                       style="min-width: 80px">
-                      未处理
+                      鏈鐞?
                     </v-chip>
                   </div>
-                  <div class="text-h6 font-weight-bold">{{ process }}份</div>
+                  <div class="text-h6 font-weight-bold">{{ process }}浠?/div>
                 </div>
                 <div class="stat-item">
                   <div class="text-subtitle-1 d-flex justify-center">
                     <v-chip variant="flat" size="x-large" class="sent-chip font-weight-medium px-3"
                       style="min-width: 80px">
-                      已发送
+                      宸插彂閫?
                     </v-chip>
                   </div>
-                  <div class="text-h6 font-weight-bold">{{ done }}份</div>
+                  <div class="text-h6 font-weight-bold">{{ done }}浠?/div>
                 </div>
               </div>
             </div>
@@ -96,116 +96,116 @@
         </div>
       </div>
 
-      <!-- 分割线 -->
+      <!-- 鍒嗗壊绾?-->
       <v-divider></v-divider>
 
-      <!-- 主要内容区域 -->
+      <!-- 涓昏鍐呭鍖哄煙 -->
       <div class="content-wrapper d-flex pa-2 justify-center">
           <div class="content-container d-flex" style="gap: 12px;">
-          <!-- 动态左侧列表：图片或文本列表 -->
+          <!-- 鍔ㄦ€佸乏渚у垪琛細鍥剧墖鎴栨枃鏈垪琛?-->
           <div class="resource-list rounded-lg elevation-1"
             style="background-color: rgb(var(--v-theme-surface)); padding: 20px;">
             <div class="text-h6 font-weight-medium text-center mb-4" style="white-space: nowrap;">
-              <!-- multi_material 使用 tabs 切换 -->
+              <!-- multi_material 浣跨敤 tabs 鍒囨崲 -->
               <template v-if="isMultiMaterial">
                 <v-tabs v-model="activeTab" density="compact" center-active>
-                  <v-tab value="image">图片</v-tab>
-                  <v-tab value="text">文本</v-tab>
+                  <v-tab value="image">鍥剧墖</v-tab>
+                  <v-tab value="text">鏂囨湰</v-tab>
                 </v-tabs>
               </template>
               <template v-else>
-                {{ isTextTask ? '文本列表' : '图片列表' }}
+                {{ isTextTask ? '鏂囨湰鍒楄〃' : '鍥剧墖鍒楄〃' }}
               </template>
             </div>
             <div class="resource-grid">
-              <!-- multi_material 图片列表 -->
+              <!-- multi_material 鍥剧墖鍒楄〃 -->
               <template v-if="isMultiMaterial && activeTab === 'image'">
                 <div v-for="(image, index) in images" :key="'img-' + index" class="resource-grid-item"
                   :class="{ 'active': currentResourceIndex === index }" @click="handleResourceSelect(index)">
                   <v-img :src="getImageUrl(image.img_url)" cover width="100%" height="100%" class="rounded-lg"></v-img>
                 </div>
               </template>
-              <!-- multi_material 文本列表 -->
+              <!-- multi_material 鏂囨湰鍒楄〃 -->
               <template v-else-if="isMultiMaterial && activeTab === 'text'">
                 <div v-for="(textRes, index) in textResults" :key="'txt-' + index" class="resource-grid-item text-item pa-2"
                   :class="{ 'active': currentResourceIndex === index }" @click="handleResourceSelect(index)">
                   <v-icon :color="textRes.is_fake ? 'error' : 'success'" size="32" class="mb-1">
                     {{ textRes.is_fake ? 'mdi-file-document-alert' : 'mdi-file-document-check' }}
                   </v-icon>
-                  <div class="text-caption text-truncate" style="width: 100%;">文本 {{ index + 1 }}</div>
+                  <div class="text-caption text-truncate" style="width: 100%;">鏂囨湰 {{ index + 1 }}</div>
                 </div>
               </template>
-              <!-- 纯图片列表 -->
+              <!-- 绾浘鐗囧垪琛?-->
               <template v-else-if="!isTextTask && !isMultiMaterial">
                 <div v-for="(image, index) in images" :key="index" class="resource-grid-item"
                   :class="{ 'active': currentResourceIndex === index }" @click="handleResourceSelect(index)">
                   <v-img :src="getImageUrl(image.img_url)" cover width="100%" height="100%" class="rounded-lg"></v-img>
                 </div>
               </template>
-              <!-- 纯文本列表 -->
+              <!-- 绾枃鏈垪琛?-->
               <template v-else-if="isTextTask && !isMultiMaterial">
                 <div v-for="(textRes, index) in textResults" :key="index" class="resource-grid-item text-item pa-2"
                   :class="{ 'active': currentResourceIndex === index }" @click="handleResourceSelect(index)">
                   <v-icon :color="textRes.is_fake ? 'error' : 'success'" size="32" class="mb-1">
                     {{ textRes.is_fake ? 'mdi-file-document-alert' : 'mdi-file-document-check' }}
                   </v-icon>
-                  <div class="text-caption text-truncate" style="width: 100%;">文本 {{ index + 1 }}</div>
+                  <div class="text-caption text-truncate" style="width: 100%;">鏂囨湰 {{ index + 1 }}</div>
                 </div>
               </template>
             </div>
           </div>
 
-          <!-- 动态预览区域：图片预览或文本检测结果展示 -->
+          <!-- 鍔ㄦ€侀瑙堝尯鍩燂細鍥剧墖棰勮鎴栨枃鏈娴嬬粨鏋滃睍绀?-->
           <div class="preview-section">
             <div class="preview-box" :class="{'pa-4': isTextTask || (isMultiMaterial && activeTab === 'text'), 'bg-grey-lighten-4': isTextTask || (isMultiMaterial && activeTab === 'text'), 'rounded-lg': isTextTask || (isMultiMaterial && activeTab === 'text')}">
-              <!-- 图片预览 (纯图片 或 multi_material 图片 tab) -->
+              <!-- 鍥剧墖棰勮 (绾浘鐗?鎴?multi_material 鍥剧墖 tab) -->
               <template v-if="(!isTextTask && !isMultiMaterial) || (isMultiMaterial && activeTab === 'image')">
                 <v-img v-if="currentImage" :src="getImageUrl(currentImage.img_url)" contain height="100%"
                   class="rounded-lg"></v-img>
                 <span v-else class="text-h4">PIC</span>
               </template>
 
-              <!-- 文本检测结果展示 (纯文本 或 multi_material 文本 tab) -->
+              <!-- 鏂囨湰妫€娴嬬粨鏋滃睍绀?(绾枃鏈?鎴?multi_material 鏂囨湰 tab) -->
               <template v-else-if="isTextTask || (isMultiMaterial && activeTab === 'text')">
                 <v-card v-if="currentTextResult" flat class="w-100 h-100 overflow-y-auto" color="transparent">
                   <div v-if="currentTextResult.status === 'in_progress'" class="d-flex flex-column align-center justify-center h-100">
                     <v-progress-circular indeterminate color="primary" size="64" class="mb-4"></v-progress-circular>
-                    <div class="text-h6 text-grey">大模型正在奋力检测中...</div>
+                    <div class="text-h6 text-grey">澶фā鍨嬫鍦ㄥ鍔涙娴嬩腑...</div>
                   </div>
                   <template v-else>
                     <div class="d-flex align-center mb-4">
                       <v-chip :color="currentTextResult.is_fake ? 'error' : 'success'" size="large" class="mr-4 text-subtitle-1 font-weight-bold">
-                        判定: {{ currentTextResult.is_fake ? '疑似AI生成/造假' : '真实文本' }}
+                        鍒ゅ畾: {{ currentTextResult.is_fake ? '鐤戜技AI鐢熸垚/閫犲亣' : '鐪熷疄鏂囨湰' }}
                       </v-chip>
                       <v-chip color="primary" variant="outlined">
-                        AI置信度: {{ (currentTextResult.confidence_score * 100).toFixed(1) }}%
+                        AI缃俊搴? {{ (currentTextResult.confidence_score * 100).toFixed(1) }}%
                       </v-chip>
                     </div>
 
-                    <!-- 事实性造假分析 (论文模式) -->
+                    <!-- 浜嬪疄鎬ч€犲亣鍒嗘瀽 (璁烘枃妯″紡) -->
                     <div v-if="currentTextResult.factual_fake_reason" class="mb-6">
                       <div class="text-h6 font-weight-bold mb-2 d-flex align-center text-error">
-                        <v-icon left class="mr-2">mdi-alert-circle</v-icon> 事实性造假分析
+                        <v-icon left class="mr-2">mdi-alert-circle</v-icon> 浜嬪疄鎬ч€犲亣鍒嗘瀽
                       </div>
                       <v-alert border="start" border-color="error" color="error" variant="tonal" class="text-body-1">
                         {{ currentTextResult.factual_fake_reason }}
                       </v-alert>
                     </div>
 
-                    <!-- 模板化倾向分析 (Review模式) -->
+                    <!-- 妯℃澘鍖栧€惧悜鍒嗘瀽 (Review妯″紡) -->
                     <div v-if="currentTextResult.template_analysis_reason" class="mb-6">
                       <div class="text-h6 font-weight-bold mb-2 d-flex align-center" :class="(currentTextResult.template_tendency_score ?? 0) > 0.6 ? 'text-warning' : 'text-success'">
-                        <v-icon left class="mr-2">mdi-text-box-search-outline</v-icon> 模板化/套话分析 (得分: {{ (currentTextResult.template_tendency_score ?? 0).toFixed(2) }})
+                        <v-icon left class="mr-2">mdi-text-box-search-outline</v-icon> 妯℃澘鍖?濂楄瘽鍒嗘瀽 (寰楀垎: {{ (currentTextResult.template_tendency_score ?? 0).toFixed(2) }})
                       </div>
                       <v-alert border="start" :border-color="(currentTextResult.template_tendency_score ?? 0) > 0.6 ? 'warning' : 'success'" :color="(currentTextResult.template_tendency_score ?? 0) > 0.6 ? 'warning' : 'success'" variant="tonal" class="text-body-1">
                         {{ currentTextResult.template_analysis_reason }}
                       </v-alert>
                     </div>
 
-                    <!-- AI生成的段落标红展示 -->
+                    <!-- AI鐢熸垚鐨勬钀芥爣绾㈠睍绀?-->
                     <div v-if="currentTextResult.ai_generated_paragraphs && currentTextResult.ai_generated_paragraphs.length > 0">
                       <div class="text-h6 font-weight-bold mb-2 d-flex align-center text-error">
-                        <v-icon left class="mr-2">mdi-format-paragraph</v-icon> 疑似AI生成段落
+                        <v-icon left class="mr-2">mdi-format-paragraph</v-icon> 鐤戜技AI鐢熸垚娈佃惤
                       </div>
                       <v-card variant="outlined" color="error" class="pa-4 bg-white">
                         <div v-for="(para, pIdx) in currentTextResult.ai_generated_paragraphs" :key="pIdx" class="mb-3 text-body-1" style="line-height: 1.6;">
@@ -217,7 +217,7 @@
                   </template>
                 </v-card>
                 <div v-else class="d-flex align-center justify-center h-100">
-                  <span class="text-h5 text-grey">暂无文本数据</span>
+                  <span class="text-h5 text-grey">鏆傛棤鏂囨湰鏁版嵁</span>
                 </div>
               </template>
 
@@ -231,10 +231,10 @@
             </div>
           </div>
 
-          <!-- 右侧人工审核区域 -->
+          <!-- 鍙充晶浜哄伐瀹℃牳鍖哄煙 -->
           <div class="review-section rounded-lg elevation-1 pa-4">
             <div class="review-header">
-              <div class="text-h6 font-weight-medium text-center mb-4">人工审核</div>
+              <div class="text-h6 font-weight-medium text-center mb-4">浜哄伐瀹℃牳</div>
               <div class="reviewer-info mt-4">
                 <template v-if="review_results.length > 0">
                   <div v-for="(review, index) in review_results" :key="index"
@@ -245,11 +245,11 @@
                     </v-avatar>
                     <div class="flex-grow-1">
                       <div class="text-body-1 font-weight-medium">{{ review.username }}</div>
-                      <div class="text-caption text-grey mt-1">结果：{{ getResult(review.result) }}</div>
+                      <div class="text-caption text-grey mt-1">缁撴灉锛歿{ getResult(review.result) }}</div>
                     </div>
                     <v-btn variant="text" density="comfortable" class="details-btn" color="primary"
                       @click="handleViewDetail(review)">
-                      查看详情
+                      鏌ョ湅璇︽儏
                       <v-icon size="16" class="ml-1">mdi-chevron-right</v-icon>
                     </v-btn>
                   </div>
@@ -257,7 +257,7 @@
                 <template v-else>
                   <div class="d-flex flex-column align-center justify-center" style="height: 200px;">
                     <v-icon size="48" color="grey" class="mb-4">mdi-information-outline</v-icon>
-                    <div class="text-body-1 text-grey">暂无人工审核结果</div>
+                    <div class="text-body-1 text-grey">鏆傛棤浜哄伐瀹℃牳缁撴灉</div>
                   </div>
                 </template>
               </div>
@@ -269,19 +269,32 @@
       </div>
     </div>
 
-    <!-- 添加详情弹窗 -->
+    <!-- 娣诲姞璇︽儏寮圭獥 -->
     <v-dialog v-model="showDetailDialog" fullscreen :scrim="false" transition="dialog-bottom-transition">
       <v-card>
         <v-toolbar dark color="primary">
           <v-btn icon dark @click="showDetailDialog = false">
             <v-icon>mdi-close</v-icon>
           </v-btn>
-          <v-toolbar-title>检测详情</v-toolbar-title>
+          <v-toolbar-title>妫€娴嬭鎯?/v-toolbar-title>
           <v-spacer></v-spacer>
         </v-toolbar>
-        <result-component v-if="showDetailDialog && currentImage" :task-id="taskData?.id"
-          :imageUrl="getImageUrl(currentImage.img_url)" :reasons="reasons" :result="result"
-          :scores="scores" :ai_detection="AI_detection" :annotations="annotations" />
+        <template v-if="!isTextTask">
+          <result-component v-if="showDetailDialog && currentImage" :task-id="taskData?.id"
+            :imageUrl="getImageUrl(currentImage.img_url)" :reasons="reasons" :result="result"
+            :scores="scores" :ai_detection="AI_detection" :annotations="annotations" />
+        </template>
+        <template v-else>
+          <v-card v-if="showDetailDialog && textReviewDetail" flat class="pa-4">
+            <div class="text-h6 mb-2">浜哄伐瀹℃牳璇︽儏</div>
+            <div class="mb-2">鏈€缁堝垽瀹氾細{{ textReviewDetail.result ? '鐤戜技閫犲亣' : '鐪熷疄鏂囨湰' }}</div>
+            <div class="mb-2">瀹℃牳璇存槑锛歿{ textReviewDetail.overall_comment || '鏃? }}</div>
+            <div v-if="textReviewDetail.template_review_score !== null && textReviewDetail.template_review_score !== undefined" class="mb-2">
+              妯℃澘鍖栧鏍歌瘎鍒嗭細{{ textReviewDetail.template_review_score }}
+            </div>
+            <div v-if="textReviewDetail.template_review_comment" class="mb-2">妯℃澘鍖栧鏍歌鏄庯細{{ textReviewDetail.template_review_comment }}</div>
+          </v-card>
+        </template>
       </v-card>
     </v-dialog>
   </div>
@@ -292,6 +305,7 @@ import { ref, onMounted, computed, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useTheme } from 'vuetify'
 import { useUserStore } from '@/stores/user'
+import axios from 'axios'
 import { useSnackbarStore } from '@/stores/snackbar'
 import ResultComponent from '@/components/result.vue'
 import publisher from '@/api/publisher'
@@ -328,7 +342,7 @@ interface Review {
   result: boolean
 }
 
-// 定义路由参数的类型
+// 瀹氫箟璺敱鍙傛暟鐨勭被鍨?
 interface RouteParams {
   id: string
 }
@@ -368,6 +382,7 @@ const result = ref(false)
 const scores = ref<number[]>([])
 const annotations = ref<Array<Array<{ points: { x: number; y: number; }[]; color: string; }>>>([])
 const detection_results = ref<dimension[]>([])
+const textReviewDetail = ref<{ overall_comment?: string; result: boolean; template_review_score?: number | null; template_review_comment?: string } | null>(null)
 
 const currentImage = computed(() => {
   if (isMultiMaterial.value && activeTab.value !== 'image') return undefined
@@ -381,33 +396,36 @@ const currentTextResult = computed(() => {
 const convert = (index: number) => {
   switch (index) {
     case 0:
-      return '高斯模糊'
+      return '楂樻柉妯＄硦'
     case 1:
-      return '亮度/对比度调节'
+      return '浜害/瀵规瘮搴﹁皟鑺?
     case 2:
-      return '智能修复'
+      return '鏅鸿兘淇'
     case 3:
-      return '暴力覆盖'
+      return '鏆村姏瑕嗙洊'
     case 4:
-      return '同图复制'
+      return '鍚屽浘澶嶅埗'
     case 5:
-      return '重叠切割'
+      return '閲嶅彔鍒囧壊'
     case 6:
-      return '跨图拼接'
+      return '璺ㄥ浘鎷兼帴'
   }
 }
 
 
-// 获取检测结果
+// 鑾峰彇妫€娴嬬粨鏋?
 const fetchDetectionResults = async () => {
   try {
     const isTextMode = isTextTask.value || (isMultiMaterial.value && activeTab.value === 'text')
     if (isTextMode) {
-      // 获取当前选中文本的详细大模型结果
+      // 鑾峰彇褰撳墠閫変腑鏂囨湰鐨勮缁嗗ぇ妯″瀷缁撴灉
+      if (!currentTextResult.value || !currentTextResult.value.resource_id || !currentTextResult.value.status) {
+        return
+      }
       if (currentTextResult.value && currentTextResult.value.resource_id) {
         const res = await publisher.getSingleTextResult(currentTextResult.value.resource_id)
         if (res.data) {
-          // 更新当前文本的详细数据
+          // 鏇存柊褰撳墠鏂囨湰鐨勮缁嗘暟鎹?
           const detail = res.data
           textResults.value[currentResourceIndex.value] = {
             ...textResults.value[currentResourceIndex.value],
@@ -429,59 +447,69 @@ const fetchDetectionResults = async () => {
       }
     }
   } catch (error) {
-    snackbar.showMessage('获取检测结果失败', 'error')
+    if (isTextTask.value && (!currentTextResult.value || !currentTextResult.value.resource_id || !currentTextResult.value.status)) {
+      return
+    }
+    if (axios.isAxiosError(error) && error.response?.status === 404) {
+      return
+    }
+    snackbar.showMessage('鑾峰彇妫€娴嬬粨鏋滃け璐?, 'error')
   }
 }
 
-// 当 multi_material 模式下切换 tab 时重置索引
-watch(activeTab, () => {
-  if (isMultiMaterial.value) {
-    currentResourceIndex.value = 0
-    handleResourceSelect(0)
-  }
-})
-
-const fetchReview = async (img: Image) => {
+const fetchReview = async () => {
   try {
-    if (isTextTask.value) return // 文本任务暂不展示细粒度人工审核列表
-    if (isMultiMaterial.value && activeTab.value === 'text') return // 文本tab不获取图片审核
-    review_results.value = (await publisher.getImageReviewAll({ review_request_id: review_request_id.value, img_id: img.img_id })).data.reviewers_results
+    if (isTextTask.value) {
+      if (!currentTextResult.value?.resource_id) {
+        review_results.value = []
+        return
+      }
+      review_results.value = (await publisher.getTextReviewAll({ review_request_id: review_request_id.value, text_id: currentTextResult.value.resource_id })).data.reviewers_results
+      return
+    }
+    if (!currentImage.value) {
+      review_results.value = []
+      return
+    }
+    review_results.value = (await publisher.getImageReviewAll({ review_request_id: review_request_id.value, img_id: currentImage.value.img_id })).data.reviewers_results
   } catch (error) {
-    snackbar.showMessage('获取人工审核结果失败', 'error')
+    snackbar.showMessage('鑾峰彇浜哄伐瀹℃牳缁撴灉澶辫触', 'error')
   }
 }
 
 const fetchReviewDetail = async (review: Review) => {
   try {
-    if (!currentImage.value) return
+    if (isTextTask.value) {
+      const response = (await publisher.getTextReviewDetail({ review_request_id: review_request_id.value, text_id: currentTextResult.value.resource_id, reviewer_id: review.id })).data
+      textReviewDetail.value = {
+        overall_comment: response.overall_comment,
+        result: response.result,
+        template_review_score: response.template_review_score,
+        template_review_comment: response.template_review_comment,
+      }
+      return
+    }
     const response = (await publisher.getImageReviewDetail({ review_request_id: review_request_id.value, img_id: currentImage.value.img_id, reviewer_id: review.id })).data
     reasons.value = response.reasons
     result.value = response.result
     scores.value = response.scores
     annotations.value = response.points
-    console.log(annotations.value)
   } catch (error) {
-    snackbar.showMessage('获取人工审核详情失败', 'error')
+    snackbar.showMessage('鑾峰彇浜哄伐瀹℃牳璇︽儏澶辫触', 'error')
   }
 }
 
 const handleResourceSelect = (index: number) => {
   currentResourceIndex.value = index
-  if (isMultiMaterial.value) {
-    if (activeTab.value === 'image' && currentImage.value) {
-      fetchReview(currentImage.value)
-    }
-  } else if (!isTextTask.value && currentImage.value) {
-    fetchReview(currentImage.value)
-  }
+  fetchReview()
   fetchDetectionResults()
 }
 
 const getResult = (result: boolean) => {
   if (result === true) {
-    return '假'
+    return '鍋?
   } else {
-    return '真'
+    return '鐪?
   }
 }
 
@@ -510,14 +538,18 @@ const getImageUrl = (url: string) => {
 }
 
 
-// 添加弹窗控制变量
+// 娣诲姞寮圭獥鎺у埗鍙橀噺
 const showDetailDialog = ref(false)
 
 const formatNumber = (result: number) => {
-  return `${(result * 100).toFixed(2)}%`
+  const value = Number(result)
+  if (!Number.isFinite(value)) {
+    return '0.00%'
+  }
+  return `${(value * 100).toFixed(2)}%`
 }
 
-// 修改查看详情按钮的点击事件
+// 淇敼鏌ョ湅璇︽儏鎸夐挳鐨勭偣鍑讳簨浠?
 const handleViewDetail = (review: Review) => {
   showDetailDialog.value = true
   fetchReviewDetail(review)
@@ -526,40 +558,40 @@ const handleViewDetail = (review: Review) => {
 const handleDownloadReport = async () => {
   try {
     const response = await publisher.downloadReviewReport({ review_request_id: review_request_id.value })
-    // 打印response.data（Blob对象）的类型和大小
+    // 鎵撳嵃response.data锛圔lob瀵硅薄锛夌殑绫诲瀷鍜屽ぇ灏?
     console.log('Downloaded data is a Blob. Type:', response.data.type, 'Size:', response.data.size);
 
-    // 确保response.data是一个Blob对象
+    // 纭繚response.data鏄竴涓狟lob瀵硅薄
     if (!(response.data instanceof Blob)) {
       console.error('Expected Blob data, but received:', response.data);
-      snackbar.showMessage('下载失败：未收到文件数据', 'error');
+      snackbar.showMessage('涓嬭浇澶辫触锛氭湭鏀跺埌鏂囦欢鏁版嵁', 'error');
       return;
     }
 
     const blob = response.data
 
-    // 检查Blob类型是否为PDF
+    // 妫€鏌lob绫诲瀷鏄惁涓篜DF
     if (blob.type !== 'application/pdf') {
       console.warn('Downloaded Blob type is not application/pdf:', blob.type);
-      snackbar.showMessage('下载的文件不是PDF格式', 'warning');
+      snackbar.showMessage('涓嬭浇鐨勬枃浠朵笉鏄疨DF鏍煎紡', 'warning');
       return;
     }
 
-    // 创建一个 Blob URL
+    // 鍒涘缓涓€涓?Blob URL
     const url = window.URL.createObjectURL(blob)
-    // 创建一个下载链接
+    // 鍒涘缓涓€涓笅杞介摼鎺?
     const link = document.createElement('a')
     link.href = url
-    link.download = `人工审核报告_${review_request_id.value}.pdf`
-    link.target = '_blank' // 在新标签页打开
+    link.download = `浜哄伐瀹℃牳鎶ュ憡_${review_request_id.value}.pdf`
+    link.target = '_blank' // 鍦ㄦ柊鏍囩椤垫墦寮€
     document.body.appendChild(link)
     link.click()
-    // 清理
+    // 娓呯悊
     document.body.removeChild(link)
     window.URL.revokeObjectURL(url)
-    snackbar.showMessage('报告下载成功', 'success')
+    snackbar.showMessage('鎶ュ憡涓嬭浇鎴愬姛', 'success')
   } catch (error) {
-    snackbar.showMessage('报告下载失败', 'error')
+    snackbar.showMessage('鎶ュ憡涓嬭浇澶辫触', 'error')
   }
 }
 
@@ -567,70 +599,36 @@ onMounted(async () => {
   const hasPermission = true
   if (!hasPermission) return
   try {
-    // 使用 getRequestDetail 获取审核请求详情，该接口同时返回 images 和 texts 数组
     const response = (await publisher.getRequestDetail({ review_request_id: review_request_id.value })).data
     const hasImages = response.images && response.images.length > 0
     const hasTexts = response.texts && response.texts.length > 0
 
     done.value = response.status.done
     process.value = response.status.process
-    AI_detection.value = response.ai_detection_result?.confidence_score || 0
-
-    if (hasImages && hasTexts) {
-      // multi_material: 既有图片又有文本
-      taskType.value = 'multi_material'
-      images.value = response.images
-      activeTab.value = 'image'
-
-      // 使用 request detail 返回的文本信息构建列表，详细数据在选中时通过 getSingleTextResult 获取
-      textResults.value = response.texts.map((t: any) => ({
-        result_id: t.text_id,
-        resource_id: t.text_id,
-        text_type: t.source_type,
-        status: 'completed',
+    AI_detection.value = Number(response.ai_detection_result?.confidence_score) || 0
+    images.value = response.images
+    const responseTexts = Array.isArray(response.texts) ? response.texts : []
+    if (responseTexts.length > 0) {
+      taskType.value = 'paper_text'
+      textResults.value = responseTexts.map((item: any) => ({
+        result_id: 0,
+        resource_id: item.text_id,
+        text_type: item.source_type || 'text',
+        status: '',
         is_fake: false,
-        confidence_score: 0,
+        confidence_score: AI_detection.value || 0,
       }))
+      currentResourceIndex.value = 0
+      fetchReview()
+      return
+    }
 
-      // 获取第一张图片的审核结果
-      if (images.value.length > 0) {
-        review_results.value = (await publisher.getImageReviewAll({ review_request_id: review_request_id.value, img_id: images.value[0].img_id })).data.reviewers_results
-      }
-      currentResourceIndex.value = 0
-      fetchDetectionResults()
-    } else if (hasImages) {
-      // 纯图片任务
-      taskType.value = 'image'
-      images.value = response.images
-      if (images.value.length > 0) {
-        review_results.value = (await publisher.getImageReviewAll({ review_request_id: review_request_id.value, img_id: images.value[0].img_id })).data.reviewers_results
-      }
-      currentResourceIndex.value = 0
-      fetchDetectionResults()
-    } else if (hasTexts) {
-      // 纯文本任务
-      taskType.value = 'paper_text' // 默认为论文检测
-      // 使用 request detail 返回的文本信息构建列表，详细数据在选中时获取
-      textResults.value = response.texts.map((t: any) => ({
-        result_id: t.text_id,
-        resource_id: t.text_id,
-        text_type: t.source_type,
-        status: 'completed',
-        is_fake: false,
-        confidence_score: 0,
-      }))
-      done.value = textResults.value.filter(t => t.status === 'completed').length
-      process.value = textResults.value.length - done.value
-      if (textResults.value.length > 0) {
-        AI_detection.value = textResults.value[0].confidence_score || 0
-      }
-      currentResourceIndex.value = 0
-      fetchDetectionResults()
-    } else {
-      taskType.value = 'image'
+    taskType.value = 'image'
+    if (images.value.length > 0) {
+      review_results.value = (await publisher.getImageReviewAll({ review_request_id: review_request_id.value, img_id: images.value[0].img_id })).data.reviewers_results
     }
   } catch (error) {
-    snackbar.showMessage('获取数据失败', 'error')
+    snackbar.showMessage('鑾峰彇鏁版嵁澶辫触', 'error')
   }
 })
 </script>
@@ -858,7 +856,7 @@ onMounted(async () => {
   color: rgb(76, 175, 80) !important;
 }
 
-/* 滚动条样式 */
+/* 婊氬姩鏉℃牱寮?*/
 ::-webkit-scrollbar {
   width: 6px;
 }
@@ -923,7 +921,7 @@ onMounted(async () => {
   }
 }
 
-/* 添加弹窗过渡动画样式 */
+/* 娣诲姞寮圭獥杩囨浮鍔ㄧ敾鏍峰紡 */
 .dialog-bottom-transition-enter-active,
 .dialog-bottom-transition-leave-active {
   transition: transform 0.2s ease-in-out;

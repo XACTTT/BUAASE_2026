@@ -1,13 +1,11 @@
-<template>
+﻿<template>
   <v-card flat border="0">
-    <!-- Loading -->
     <v-card-text v-if="loading" class="pa-0 mt-4">
       <div class="d-flex justify-center align-center" style="min-height: 400px">
         <v-progress-circular indeterminate color="primary" size="64" />
       </div>
     </v-card-text>
 
-    <!-- Error / no data -->
     <v-card-text v-else-if="error" class="pa-0 mt-4">
       <div class="d-flex flex-column justify-center align-center" style="min-height: 400px">
         <v-icon size="64" color="error" class="mb-4">mdi-alert-circle</v-icon>
@@ -17,20 +15,25 @@
       </div>
     </v-card-text>
 
-    <!-- Image detection -->
     <DetectionReviewStep v-else-if="isImageTask" :task_id="taskId" />
 
-    <!-- Multi-material detection -->
-    <MultiMaterialResultView v-else-if="isMultiMaterialTask" :task-id="taskId" :task-meta="taskMeta" />
+    <MultiMaterialResultView
+      v-else-if="isMultiMaterialTask"
+      :task-id="taskId"
+      :task-meta="taskMeta"
+    />
 
-    <!-- Text detection: paper_text, review_text -->
-    <TextDetectionResultView v-else :task-id="taskId" :task-meta="taskMeta" />
+    <TextDetectionResultView
+      v-else
+      :task-id="taskId"
+      :task-meta="taskMeta"
+    />
   </v-card>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import type { RouteParams } from 'vue-router'
 import DetectionReviewStep from '@/components/steps/DetectionReviewStep.vue'
 import TextDetectionResultView from '@/components/steps/TextDetectionResultView.vue'
@@ -52,41 +55,41 @@ const resolvedTaskType = computed(() => {
 })
 
 const isImageTask = computed(() => {
-  const t = resolvedTaskType.value
-  return t === 'image' || t === 'Image'
+  const type = resolvedTaskType.value
+  return type === 'image' || type === 'Image'
 })
 
 const isMultiMaterialTask = computed(() => {
-  const t = resolvedTaskType.value
-  return t === 'multi_material' || t === 'multi'
+  const type = resolvedTaskType.value
+  return type === 'multi_material' || type === 'multi'
 })
 
 const fetchData = async () => {
   loading.value = true
   error.value = ''
+
   try {
-    // Permission check
-    const accessResp = (await publisher.ifHasPermission({ task_id: taskId.value })).data.access
-    if (accessResp !== true) {
+    const accessResp = await publisher.ifHasPermission({ task_id: taskId.value })
+    if (accessResp.data?.access !== true) {
       router.push('/404')
       return
     }
-    // Fetch task data
-    taskMeta.value = (await publisher.getStructuredTaskResult(taskId.value)).data
+
+    const detailResp = await publisher.getStructuredTaskResult(taskId.value)
+    taskMeta.value = detailResp.data
+
     if (!taskMeta.value?.detect_type && taskMeta.value?.task_type === 'image') {
       taskMeta.value.detect_type = 'image'
     }
   } catch (err) {
     error.value = '获取任务详情失败'
-    snackbar.showMessage('获取任务详情失败', 'error')
+    snackbar.showMessage(error.value, 'error')
   } finally {
     loading.value = false
   }
 }
 
-onMounted(() => {
-  fetchData()
-})
+onMounted(fetchData)
 </script>
 
 <style scoped>

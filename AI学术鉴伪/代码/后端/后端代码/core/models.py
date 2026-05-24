@@ -519,6 +519,7 @@ class ReviewTextResource(models.Model):
     token_count = models.IntegerField(default=0)
     parse_status = models.CharField(max_length=20, choices=PARSE_STATUS_CHOICES, default='pending')
     parse_error = models.TextField(blank=True, null=True)
+    isReview = models.BooleanField(default=False)
     created_at = models.DateTimeField(default=timezone.localtime)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -642,6 +643,7 @@ class ReviewRequest(models.Model):
     # 改为允许为空，因为文本检测不再依赖原有的 DetectionResult 表
     detection_result = models.ForeignKey(DetectionResult, on_delete=models.CASCADE, related_name='review_requests', null=True, blank=True)
     text_detection_result = models.ForeignKey(TextDetectionResult, on_delete=models.CASCADE, related_name='review_requests', null=True, blank=True)
+    detection_task = models.ForeignKey(DetectionTask, on_delete=models.SET_NULL, null=True, blank=True, related_name='review_requests')
     
     # 兼容图片的审核
     imgs = models.ManyToManyField(ImageUpload, related_name='review_requests', blank=True)

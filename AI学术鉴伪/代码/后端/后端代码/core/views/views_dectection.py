@@ -20,6 +20,7 @@ from core.models import (
     DetectionTask,
     FileManagement,
     ImageUpload,
+    LLMAnalysisRun,
     ResourceContainer,
     StructuredDetectionResult,
     SubDetectionResult,
@@ -762,6 +763,8 @@ def _resolve_task_detect_type(task):
         return 'paper'
     if task_type == 'review_text':
         return 'review'
+    if task_type == 'multi_material':
+        return 'multi'
     return getattr(task, 'detect_type', None)
 
 
@@ -775,6 +778,14 @@ def get_task_text_results(request, task_id):
         task = DetectionTask.objects.get(id=task_id, user=request.user)
         
         if task.task_type not in ['paper_text', 'review_text', 'multi_material']:
+            if task.detect_type in ('paper', 'review', 'multi', 'multi_material'):
+                return Response({
+                    "task_id": task.id,
+                    "task_name": task.task_name,
+                    "task_type": task.task_type,
+                    "overall_status": task.status,
+                    "results": [],
+                })
             return Response({"message": "Not a text-related task"}, status=400)
             
         results = TextDetectionResult.objects.filter(detection_task=task)
@@ -937,9 +948,17 @@ def get_task_llm_analysis(request, task_id):
     """
     task = get_object_or_404(DetectionTask, id=task_id, user=request.user)
     extra_payload = task.extra_payload or {}
+    structured_result = StructuredDetectionResult.objects.filter(detection_task=task).first()
+    structured_payload = structured_result.result_payload if structured_result else {}
+    latest_run = LLMAnalysisRun.objects.filter(task=task).order_by('-created_at').first()
     return Response({
         "task_id": task.id,
-        "llm_analysis": extra_payload.get("llm_analysis"),
+        "llm_analysis": (
+            extra_payload.get("llm_analysis")
+            or structured_payload.get("llm_analysis")
+            or (latest_run.output_json if latest_run and latest_run.output_json else None)
+        ),
+        "run": _serialize_llm_analysis_run(latest_run) if latest_run else None,
     })
 
 # 增加两个接口，分别返回造假的图片，和正常的图片；判别方式是detection_result.is_fake
@@ -1121,6 +1140,205 @@ def detection_result_by_image(request, image_id):
     return Response(data)
 
 
+def _serialize_llm_analysis_run(run):
+    if not run:
+        return None
+
+    model_config = run.model_config
+    provider_model = model_config.provider_model if model_config else None
+    source = provider_model.source if provider_model else None
+
+    return {
+        'id': run.id,
+        'stage': run.stage,
+        'status': run.status,
+        'model': provider_model.model_id if provider_model else None,
+        'vendor': source.vendor if source else None,
+        'output_json': run.output_json,
+        'output_text': run.output_text,
+        'error_message': run.error_message,
+        'created_at': timezone.localtime(run.created_at) if run.created_at else None,
+        'updated_at': timezone.localtime(run.updated_at) if run.updated_at else None,
+    }
+
+
+def _serialize_structured_materials(task, request):
+    payload = task.extra_payload or {}
+    file_ids = payload.get('file_ids') or []
+
+    file_queryset = FileManagement.objects.none()
+    if file_ids:
+        file_queryset = FileManagement.objects.filter(id__in=file_ids, user=task.user).order_by('id')
+    elif task.container_id:
+        file_queryset = FileManagement.objects.filter(container=task.container).order_by('id')
+
+    image_queryset = ImageUpload.objects.none()
+    if file_ids:
+        image_queryset = ImageUpload.objects.filter(file_management_id__in=file_ids).order_by('id')
+    elif task.container_id:
+        image_queryset = ImageUpload.objects.filter(container=task.container).order_by('id')
+
+    review_text_queryset = ReviewTextResource.objects.none()
+    review_text_ids = payload.get('review_text_ids') or []
+    if review_text_ids:
+        review_text_queryset = ReviewTextResource.objects.filter(id__in=review_text_ids).order_by('id')
+    elif task.container_id:
+        review_text_queryset = ReviewTextResource.objects.filter(container=task.container).order_by('id')
+
+    files = [
+        {
+            'id': item.id,
+            'file_name': item.file_name,
+            'file_size': item.file_size,
+            'file_type': item.file_type,
+            'resource_role': item.resource_role,
+            'parse_status': item.parse_status,
+            'parse_error': item.parse_error,
+            'preview_url': request.build_absolute_uri(f'/api/preview/file/{item.id}/'),
+            'upload_time': timezone.localtime(item.upload_time) if item.upload_time else None,
+        }
+        for item in file_queryset
+    ]
+
+    images = [
+        {
+            'id': item.id,
+            'file_management_id': item.file_management_id,
+            'image_url': serialize_value(item.image, request),
+            'preview_url': request.build_absolute_uri(f'/api/preview/image/{item.id}/'),
+            'image_role': item.image_role,
+            'source_kind': item.source_kind,
+            'page_number': item.page_number,
+            'width': item.width,
+            'height': item.height,
+        }
+        for item in image_queryset
+    ]
+
+    review_texts = [
+        {
+            'id': item.id,
+            'source_type': item.source_type,
+            'language': item.language,
+            'token_count': item.token_count,
+            'parse_status': item.parse_status,
+            'raw_text': item.raw_text,
+            'normalized_text': item.normalized_text,
+        }
+        for item in review_text_queryset
+    ]
+
+    return {
+        'files': files,
+        'images': images,
+        'review_texts': review_texts,
+    }
+
+
+def _serialize_structured_sections(task, payload):
+    evidence = payload.get('evidence') or {}
+    per_section = evidence.get('per_section') or []
+    if not isinstance(per_section, list):
+        return []
+
+    text_lookup = {}
+    try:
+        snapshot = StructuredDetectionService.build_input_snapshot(task)
+        text_items = StructuredDetectionService._extract_text_items_from_snapshot(snapshot, task.detect_type)
+        text_lookup = {
+            item.get('id'): item.get('text')
+            for item in text_items
+            if item.get('id')
+        }
+    except Exception:
+        text_lookup = {}
+
+    sections = []
+    for index, item in enumerate(per_section):
+        if not isinstance(item, dict):
+            continue
+        section = dict(item)
+        section['index'] = index
+        section['text'] = text_lookup.get(item.get('item_id'))
+        sections.append(section)
+    return sections
+
+
+def _serialize_legacy_text_detection_results(task):
+    results = TextDetectionResult.objects.filter(detection_task=task).select_related('text_resource')
+    return [
+        {
+            'result_id': item.id,
+            'resource_id': item.text_resource_id,
+            'text_type': _resolve_text_result_type(item.text_resource, task),
+            'status': item.status,
+            'is_fake': item.is_fake,
+            'confidence_score': item.confidence_score,
+            'ai_generated_paragraphs': item.ai_generated_paragraphs,
+            'factual_fake_reason': item.factual_fake_reason,
+            'template_tendency_score': item.template_tendency_score,
+            'template_analysis_reason': item.template_analysis_reason,
+            'detection_time': timezone.localtime(item.detection_time) if item.detection_time else None,
+        }
+        for item in results
+    ]
+
+
+def _serialize_structured_task_result(
+    task,
+    structured_result,
+    payload,
+    request,
+    include_evidence=True,
+    include_materials=True,
+    include_llm_runs=True,
+):
+    overall = payload.get('overall') or {}
+    material_summary = payload.get('material_summary') or {}
+    llm_analysis = payload.get('llm_analysis')
+    ai_response = structured_result.ai_response or {}
+
+    response_payload = {
+        'task_id': task.id,
+        'task_name': task.task_name,
+        'detect_type': _resolve_task_detect_type(task),
+        'task_type': task.task_type,
+        'status': task.status,
+        'failure_reason': task.failure_reason,
+        'container_id': task.container_id,
+        'overall': overall,
+        'material_summary': material_summary,
+        'dimensions': payload.get('dimensions') or [],
+        'summary': structured_result.summary or payload.get('summary'),
+        'confidence_score': structured_result.confidence_score,
+        'overall_is_fake': structured_result.overall_is_fake,
+        'llm_analysis': llm_analysis,
+        'validation': payload.get('validation'),
+        'material_cards': payload.get('material_cards') or [],
+        'cross_material_analysis': payload.get('cross_material_analysis') or {},
+        'ai_contribution': payload.get('ai_contribution') or [],
+        'result': payload,
+        'ai_response': ai_response,
+    }
+
+    if include_evidence:
+        response_payload['evidence'] = payload.get('evidence') or {}
+        response_payload['sections'] = _serialize_structured_sections(task, payload)
+
+    if include_materials:
+        response_payload['materials'] = _serialize_structured_materials(task, request)
+
+    if include_llm_runs:
+        runs = (
+            LLMAnalysisRun.objects.filter(task=task)
+            .select_related('model_config', 'model_config__provider_model', 'model_config__provider_model__source')
+            .order_by('-created_at')
+        )
+        response_payload['llm_runs'] = [_serialize_llm_analysis_run(run) for run in runs]
+
+    return response_payload
+
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def structured_task_result(request, task_id):
@@ -1129,25 +1347,21 @@ def structured_task_result(request, task_id):
     # 优先检查结构化检测结果 — paper/review/multi 走 _submit_structured_detection 的任务
     structured_result = StructuredDetectionResult.objects.filter(detection_task=task).first()
     if structured_result is not None:
-        payload = structured_result.result_payload if structured_result else {}
-        return Response(
-            {
-                'task_id': task.id,
-                'task_name': task.task_name,
-                'detect_type': task.detect_type,
-                'task_type': task.task_type,
-                'status': task.status,
-                'failure_reason': task.failure_reason,
-                'container_id': task.container_id,
-                'result': payload,
-                'summary': structured_result.summary if structured_result else None,
-                'confidence_score': structured_result.confidence_score if structured_result else None,
-                'overall_is_fake': structured_result.overall_is_fake if structured_result else None,
-                'ai_response': structured_result.ai_response if structured_result else {},
-            }
-        )
+        payload = structured_result.result_payload or {}
+        include_evidence = request.query_params.get("include_evidence", "1").lower() in ("1", "true", "yes")
+        include_materials = request.query_params.get("include_materials", "1").lower() in ("1", "true", "yes")
+        include_llm_runs = request.query_params.get("include_llm_runs", "1").lower() in ("1", "true", "yes")
+        return Response(_serialize_structured_task_result(
+            task=task,
+            structured_result=structured_result,
+            payload=payload,
+            request=request,
+            include_evidence=include_evidence,
+            include_materials=include_materials,
+            include_llm_runs=include_llm_runs,
+        ))
 
-    if task.detect_type == 'image':
+    if _resolve_task_detect_type(task) == 'image':
         total_results = task.detection_results.count()
         completed_results = task.detection_results.filter(status='completed').count()
         fake_results = task.detection_results.filter(is_fake=True).count()
@@ -1167,12 +1381,12 @@ def structured_task_result(request, task_id):
         )
 
     # 结构化任务尚未完成（还没有 StructuredDetectionResult 记录）
-    if task.detect_type in ('paper', 'review', 'multi', 'multi_material'):
+    if _resolve_task_detect_type(task) in ('paper', 'review', 'multi', 'multi_material'):
         return Response(
             {
                 'task_id': task.id,
                 'task_name': task.task_name,
-                'detect_type': task.detect_type,
+                'detect_type': _resolve_task_detect_type(task),
                 'task_type': task.task_type,
                 'status': task.status,
                 'failure_reason': task.failure_reason,
@@ -1182,6 +1396,7 @@ def structured_task_result(request, task_id):
                 'confidence_score': None,
                 'overall_is_fake': None,
                 'ai_response': {},
+                'results': _serialize_legacy_text_detection_results(task),
             }
         )
 

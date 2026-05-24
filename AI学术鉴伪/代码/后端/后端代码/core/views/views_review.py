@@ -1,10 +1,11 @@
+import json
 from django.core.exceptions import ObjectDoesNotExist
 from django.core.mail import send_mail
 from django.core.paginator import Paginator
 from rest_framework import status
 
 from ..models import ReviewRequest, ManualReview, DetectionResult, User, DetectionTask, PublisherReviewerRelationship, \
-    ManualReview, ImageReview, TextReview, ReviewTextResource
+    ImageReview, ReviewTextResource, TextReview, FileManagement, ResourceContainer, StructuredDetectionResult, TextDetectionResult
 from django.utils import timezone
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
@@ -13,6 +14,7 @@ from rest_framework.permissions import IsAuthenticated
 from ..models import ReviewRequest, DetectionTask, ImageUpload, User, Log
 from core.util import send_notification
 from core.models import Notification
+from core.views.views_dectection import _build_text_resource_from_file
 
 
 def _safe_avatar_url(user):
@@ -100,19 +102,92 @@ def create_review_task_with_admin_check(request):
     if user.role != 'publisher':
         return Response({'error': 'Only publishers can create review tasks'}, status=403)
 
-    image_ids = request.data.get('image_ids', [])
-    text_ids = request.data.get('text_ids', [])
-    task_id = request.data.get('task_id', None)
+    def _to_int_list(raw_value):
+        if raw_value is None:
+            return []
+        if isinstance(raw_value, (list, tuple)):
+            values = raw_value
+        elif isinstance(raw_value, str):
+            stripped = raw_value.strip()
+            if not stripped:
+                return []
+            if stripped.startswith('[') and stripped.endswith(']'):
+                try:
+                    parsed = json.loads(stripped)
+                    values = parsed if isinstance(parsed, list) else [parsed]
+                except json.JSONDecodeError:
+                    values = [item for item in stripped.split(',') if item.strip()]
+            elif ',' in stripped:
+                values = [item for item in stripped.split(',') if item.strip()]
+            else:
+                values = [stripped]
+        else:
+            values = [raw_value]
+
+        normalized = []
+        for item in values:
+            try:
+                normalized.append(int(item))
+            except (TypeError, ValueError):
+                continue
+        return normalized
+
+    image_ids = []
+    if hasattr(request.data, 'getlist'):
+        image_ids.extend(_to_int_list(request.data.getlist('image_ids')))
+    image_ids.extend(_to_int_list(request.data.get('image_ids')))
+    image_ids = sorted(set(image_ids))
+
+    text_ids = []
+    if hasattr(request.data, 'getlist'):
+        text_ids.extend(_to_int_list(request.data.getlist('text_ids')))
+    text_ids.extend(_to_int_list(request.data.get('text_ids')))
+    text_ids = sorted(set(text_ids))
+
+    file_ids = []
+    if hasattr(request.data, 'getlist'):
+        file_ids.extend(_to_int_list(request.data.getlist('file_ids')))
+        file_ids.extend(_to_int_list(request.data.getlist('file_id')))
+    file_ids.extend(_to_int_list(request.data.get('file_ids')))
+    file_ids.extend(_to_int_list(request.data.get('file_id')))
+    file_ids = sorted(set(file_ids))
+
+    container_id = request.data.get('container_id')
+    task_id = request.data.get('task_id')
+    task_type = request.data.get('task_type') or 'paper_text'
+    task_obj = None
+
+    if task_id is not None and not container_id and not file_ids:
+        try:
+            task_obj = DetectionTask.objects.get(id=int(task_id), user=request.user)
+        except (DetectionTask.DoesNotExist, ValueError, TypeError):
+            task_obj = None
+
+        if task_obj:
+            if task_obj.container_id:
+                container_id = task_obj.container_id
+            if not file_ids:
+                extra_file_ids = task_obj.extra_payload.get('file_ids', [])
+                if isinstance(extra_file_ids, list):
+                    for item in extra_file_ids:
+                        try:
+                            file_ids.append(int(item))
+                        except (TypeError, ValueError):
+                            continue
+                file_ids = sorted(set(file_ids))
     reviewers = request.data.get('reviewers', [])
     reason = request.data.get('reason', 'No reason provided')
 
     # 如果提供了 task_id，自动从 DetectionTask 中解析 image_ids 和 text_ids
     if task_id and not image_ids and not text_ids:
-        from core.models import DetectionTask, TextDetectionResult, DetectionResult
         try:
-            det_task = DetectionTask.objects.get(id=task_id, user=request.user)
+            det_task = DetectionTask.objects.get(id=int(task_id), user=request.user)
         except DetectionTask.DoesNotExist:
             return Response({'error': 'DetectionTask not found'}, status=404)
+        except (TypeError, ValueError):
+            return Response({'error': 'Invalid task_id'}, status=400)
+
+        task_obj = det_task
 
         # --- 解析 image_ids：ImageUpload FK → DetectionResult FK → container ---
         image_ids = list(det_task.image_uploads.values_list('id', flat=True))
@@ -138,7 +213,7 @@ def create_review_task_with_admin_check(request):
             text_ids = list(det_task.container.review_texts.values_list('id', flat=True))
 
     # 验证参数
-    if not image_ids and not text_ids:
+    if not image_ids and not text_ids and not file_ids and not container_id and not task_id:
         return Response({'error': 'image_ids or text_ids is required'}, status=400)
     if not reviewers:
         return Response({'error': 'reviewers is required'}, status=400)
@@ -155,10 +230,51 @@ def create_review_task_with_admin_check(request):
                 
         # 获取文本对象
         if text_ids:
-            from core.models import ReviewTextResource
-            texts = ReviewTextResource.objects.filter(id__in=text_ids)
+            texts = list(ReviewTextResource.objects.filter(id__in=text_ids))
             if len(texts) != len(text_ids):
                 return Response({'error': 'Some text IDs do not exist'}, status=404)
+
+        if not texts and container_id:
+            container = ResourceContainer.objects.filter(id=container_id, owner=request.user).first()
+            if container:
+                texts = list(ReviewTextResource.objects.filter(container=container))
+
+        if not texts and container_id and not file_ids:
+            container = ResourceContainer.objects.filter(id=container_id, owner=request.user).first()
+            if container:
+                if task_type == 'paper_text':
+                    role_filters = {'paper_main', 'paper_supplementary', 'paper_revision'}
+                else:
+                    role_filters = {'review_main', 'review_attachment'}
+
+                file_queryset = FileManagement.objects.filter(
+                    container=container,
+                    resource_role__in=role_filters,
+                ).order_by('id')
+                for file_record in file_queryset:
+                    text_resource = _build_text_resource_from_file(
+                        user=request.user,
+                        file_record=file_record,
+                        task_type=task_type,
+                        task_name=reason or file_record.file_name,
+                    )
+                    if text_resource:
+                        texts.append(text_resource)
+
+        if not texts and file_ids:
+            file_queryset = FileManagement.objects.filter(id__in=file_ids, user=request.user)
+            for file_record in file_queryset:
+                text_resource = _build_text_resource_from_file(
+                    user=request.user,
+                    file_record=file_record,
+                    task_type=task_type,
+                    task_name=reason or file_record.file_name,
+                )
+                if text_resource:
+                    texts.append(text_resource)
+
+        if not images and not texts:
+            return Response({'error': 'No valid resources found for review'}, status=404)
 
         # 获取审核员对象
         reviewer_users = User.objects.filter(organization=user.organization, id__in=reviewers, role='reviewer')
@@ -187,6 +303,7 @@ def create_review_task_with_admin_check(request):
         review_request = ReviewRequest.objects.create(
             detection_result=detection_result,
             text_detection_result=text_detection_result,
+            detection_task=task_obj,
             user=request.user,
             reason=reason,
             organization=user.organization,
@@ -559,7 +676,7 @@ def get_request_detail(request, reviewRequest_id):
     text_detection_result = review_request.text_detection_result
 
     # 获取关联的DetectionTask对象
-    detection_task = None
+    detection_task = review_request.detection_task
     if detection_result:
         detection_task = detection_result.detection_task
     elif text_detection_result:
@@ -568,7 +685,6 @@ def get_request_detail(request, reviewRequest_id):
     # 结构化检测任务（paper/review/multi）没有逐资源的 DetectionResult，
     # 通过 M2M 字段反查 DetectionTask
     if not detection_task:
-        from core.models import DetectionTask, StructuredDetectionResult
         img = review_request.imgs.first()
         txt = review_request.text_resources.first()
         if img and img.detection_task:
@@ -603,6 +719,9 @@ def get_request_detail(request, reviewRequest_id):
             'source_type': text.source_type,
         })
 
+    if not detection_result and not text_detection_result and not images and not texts:
+        return Response({'error': 'No resources found for the review request'}, status=404)
+
     # 获取AI检测结果
     ai_detection_result = {}
     if detection_result:
@@ -620,7 +739,6 @@ def get_request_detail(request, reviewRequest_id):
             if text_detection_result.detection_time else None
         }
     elif detection_task:
-        from core.models import StructuredDetectionResult
         try:
             sdr = StructuredDetectionResult.objects.get(detection_task=detection_task)
             overall = (sdr.result_payload or {}).get('overall', {})
@@ -863,6 +981,16 @@ def get_reviewer_manual_request(request):
     for review_request in page_obj.object_list:
         publisher = review_request.user
         image_count = review_request.imgs.count()
+        text_count = review_request.text_resources.count()
+        task_type = None
+        if review_request.detection_result and review_request.detection_result.detection_task:
+            task_type = review_request.detection_result.detection_task.task_type
+        elif review_request.text_detection_result and review_request.text_detection_result.detection_task:
+            task_type = review_request.text_detection_result.detection_task.task_type
+        elif text_count:
+            task_type = 'text'
+        else:
+            task_type = 'image'
         manual_review = review_request.manual_reviews.filter(reviewer=user).first()
 
         # Derive task_type from the detection task chain
@@ -882,8 +1010,9 @@ def get_reviewer_manual_request(request):
                         'publisher_username': publisher.username,
                         'publisher_avatar': _safe_avatar_url(publisher),
                         'image_count': image_count,
-                        'status': manual_review.status,
+                        'text_count': text_count,
                         'task_type': task_type,
+                        'status': manual_review.status
                     })
             else:
                 results.append({
@@ -892,8 +1021,9 @@ def get_reviewer_manual_request(request):
                     'publisher_username': publisher.username,
                     'publisher_avatar': _safe_avatar_url(publisher),
                     'image_count': image_count,
-                    'status': manual_review.status,
+                    'text_count': text_count,
                     'task_type': task_type,
+                    'status': manual_review.status
                 })
 
     return Response({
@@ -1081,11 +1211,11 @@ def post_review(request, manual_review_id):
 
     # 获取请求体数据
     data = request.data
-    results = data.get('result', [])
-    text_reviews_data = data.get('text_reviews', [])
+    image_results = data.get('result', [])
+    text_results = data.get('text_results', data.get('text_reviews', []))
+    results = image_results
+    text_reviews_data = text_results
 
-    if not results and not text_reviews_data:
-        return Response({'error': 'result or text_reviews is required'}, status=400)
 
     # 处理图片审核结果
     for item in results:
@@ -1094,60 +1224,118 @@ def post_review(request, manual_review_id):
         reasons = item.get('reason', [])
         points_list = item.get('points', [])  # 获取 points 列表
         final_result = item.get('final')
+    image_results = data.get('result', [])
+    text_results = data.get('text_results', data.get('text_reviews', []))
+    text_reviews_data = text_results
 
-        if not img_id:
-            return Response({'error': 'img_id is required in each result item'}, status=400)
-        if len(scores) != 7:
-            return Response({'error': 'scores must contain exactly 7 elements'}, status=400)
-        if len(reasons) != 7:
-            return Response({'error': 'reasons must contain exactly 7 elements'}, status=400)
-        if len(points_list) != 7:
-            return Response({'error': 'points must contain exactly 7 elements (one for each method)'}, status=400)
-        if final_result is None:
-            return Response({'error': 'final is required in each result item'}, status=400)
+    if not image_results and not text_results:
+        return Response({'error': 'result or text_results is required'}, status=400)
 
-        try:
-            image_upload = ImageUpload.objects.get(id=img_id)
-        except ImageUpload.DoesNotExist:
-            return Response({'error': f'Image with ID {img_id} not found'}, status=404)
+    if manual_review.imgs.exists() and not image_results:
+        return Response({'error': 'result is required for image review items'}, status=400)
+    if manual_review.text_resources.exists() and not text_results:
+        return Response({'error': 'text_results is required for text review items'}, status=400)
 
-        # 创建或更新 ImageReview 对象
-        image_review, created = ImageReview.objects.update_or_create(
-            manual_review=manual_review,
-            img=image_upload,
-            defaults={
-                'score1': scores[0],
-                'score2': scores[1],
-                'score3': scores[2],
-                'score4': scores[3],
-                'score5': scores[4],
-                'score6': scores[5],
-                'score7': scores[6],
-                'reason1': reasons[0],
-                'reason2': reasons[1],
-                'reason3': reasons[2],
-                'reason4': reasons[3],
-                'reason5': reasons[4],
-                'reason6': reasons[5],
-                'reason7': reasons[6],
-                'points1': points_list[0],  # 存储第一个方法的坐标点
-                'points2': points_list[1],  # 第二个方法
-                'points3': points_list[2],
-                'points4': points_list[3],
-                'points5': points_list[4],
-                'points6': points_list[5],
-                'points7': points_list[6],
-                'result': final_result,
-                'review_time': timezone.now()
-            }
-        )
+    if image_results:
+        for item in image_results:
+            img_id = item.get('img_id')
+            scores = item.get('score', [])
+            reasons = item.get('reason', [])
+            points_list = item.get('points', [])  # 获取 points 列表
+            final_result = item.get('final', item.get('result'))
 
-        # 更新 image_upload 的 isReview 字段
-        image_upload.isReview = True
-        image_upload.save(update_fields=['isReview'])
+            if not img_id:
+                return Response({'error': 'img_id is required in each result item'}, status=400)
+            if len(scores) != 7:
+                return Response({'error': 'scores must contain exactly 7 elements'}, status=400)
+            if len(reasons) != 7:
+                return Response({'error': 'reasons must contain exactly 7 elements'}, status=400)
+            if len(points_list) != 7:
+                return Response({'error': 'points must contain exactly 7 elements (one for each method)'}, status=400)
+            if final_result is None:
+                return Response({'error': 'final is required in each result item'}, status=400)
+
+            try:
+                image_upload = ImageUpload.objects.get(id=img_id)
+            except ImageUpload.DoesNotExist:
+                return Response({'error': f'Image with ID {img_id} not found'}, status=404)
+
+            # 创建或更新 ImageReview 对象
+            ImageReview.objects.update_or_create(
+                manual_review=manual_review,
+                img=image_upload,
+                defaults={
+                    'score1': scores[0],
+                    'score2': scores[1],
+                    'score3': scores[2],
+                    'score4': scores[3],
+                    'score5': scores[4],
+                    'score6': scores[5],
+                    'score7': scores[6],
+                    'reason1': reasons[0],
+                    'reason2': reasons[1],
+                    'reason3': reasons[2],
+                    'reason4': reasons[3],
+                    'reason5': reasons[4],
+                    'reason6': reasons[5],
+                    'reason7': reasons[6],
+                    'points1': points_list[0],  # 存储第一个方法的坐标点
+                    'points2': points_list[1],  # 第二个方法
+                    'points3': points_list[2],
+                    'points4': points_list[3],
+                    'points5': points_list[4],
+                    'points6': points_list[5],
+                    'points7': points_list[6],
+                    'result': final_result,
+                    'review_time': timezone.now()
+                }
+            )
+
+            # 更新 image_upload 的 isReview 字段
+            image_upload.isReview = True
+            image_upload.save(update_fields=['isReview'])
+
+    if text_results:
+        for item in text_results:
+            text_id = item.get('text_id')
+            final_result = item.get('final', item.get('result'))
+            overall_comment = item.get('overall_comment')
+            paragraph_reviews = item.get('paragraph_reviews')
+            template_review_score = item.get('template_review_score')
+            template_review_comment = item.get('template_review_comment')
+
+            if not text_id:
+                return Response({'error': 'text_id is required in each text_result item'}, status=400)
+            if final_result is None:
+                return Response({'error': 'final is required in each text_result item'}, status=400)
+
+            try:
+                text_resource = ReviewTextResource.objects.get(id=text_id)
+            except ReviewTextResource.DoesNotExist:
+                return Response({'error': f'Text with ID {text_id} not found'}, status=404)
+
+            if not manual_review.text_resources.filter(id=text_id).exists():
+                return Response({'error': f'Text with ID {text_id} is not assigned to this review'}, status=400)
+
+            TextReview.objects.update_or_create(
+                manual_review=manual_review,
+                text_resource=text_resource,
+                defaults={
+                    'overall_comment': overall_comment,
+                    'paragraph_reviews': paragraph_reviews,
+                    'template_review_score': template_review_score,
+                    'template_review_comment': template_review_comment,
+                    'result': final_result,
+                    'review_time': timezone.now(),
+                }
+            )
+
+            text_resource.isReview = True
+            text_resource.save(update_fields=['isReview'])
 
     # 处理文本审核结果
-    for item in text_reviews_data:
+    legacy_text_reviews_data = data.get('text_reviews', []) if 'text_results' not in data else []
+    for item in legacy_text_reviews_data:
         text_id = item.get('text_id')
         paragraph_reviews = item.get('paragraph_reviews', None)
         template_review_score = item.get('template_review_score', None)
