@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 import zipfile
 from pathlib import Path
 
@@ -771,15 +772,29 @@ class StructuredDetectionService:
         )
 
         # 3. Call GPU server (with retry)
-        results = get_result(zip_path, data_path)
+        results = None
         retry_count = 0
-        while (results is None or len(results[1][1]) != len(detection_results)) and retry_count < 3:
+        while retry_count < 4:
+            try:
+                raw = get_result(zip_path, data_path)
+                if raw is None:
+                    raise RuntimeError('GPU server returned None')
+                # Validate result structure: need at least results[1][1] for ELA
+                _ = raw[1][1]
+                if len(raw[1][1]) == len(detection_results):
+                    results = raw
+                    break
+                logger.warning(
+                    'Image detection result count mismatch for task %s: got %s, expected %s',
+                    task.id, len(raw[1][1]), len(detection_results),
+                )
+            except (TypeError, IndexError, KeyError, RuntimeError) as exc:
+                logger.warning('Image detection GPU call attempt %d failed for task %s: %s', retry_count + 1, task.id, exc)
             reconnect()
             retry_count += 1
-            results = get_result(zip_path, data_path)
 
         if results is None:
-            logger.warning('Image detection GPU server unreachable for task %s', task.id)
+            logger.warning('Image detection GPU server unreachable after retries for task %s', task.id)
             for dr in detection_results:
                 dr.status = 'failed'
                 dr.save(update_fields=['status'])
@@ -866,7 +881,42 @@ class StructuredDetectionService:
         return detection_results
 
     @staticmethod
+    def _wait_for_image_uploads(task: DetectionTask, timeout: int = 90, interval: int = 3):
+        """Poll until ImageUpload records appear, or timeout.
+
+        parse_uploaded_file_task runs async and may not have finished yet.
+        This ensures we don't build a snapshot with zero images.
+        """
+        file_ids = task.extra_payload.get('file_ids', [])
+        container_id = task.extra_payload.get('container_id')
+
+        target_file_ids = set(int(fid) for fid in file_ids if fid)
+        elapsed = 0
+        while elapsed < timeout:
+            if target_file_ids:
+                count = ImageUpload.objects.filter(file_management_id__in=target_file_ids).count()
+            elif container_id:
+                count = ImageUpload.objects.filter(container_id=container_id).count()
+            else:
+                break
+
+            if count > 0:
+                logger.info('ImageUpload records ready for task %s after %ds (%d images)',
+                            task.id, elapsed, count)
+                return count
+
+            time.sleep(interval)
+            elapsed += interval
+
+        logger.warning('No ImageUpload records found for task %s after %ds wait', task.id, timeout)
+        return 0
+
+    @staticmethod
     def execute_task(task: DetectionTask):
+        # For multi-material tasks, wait for async file parsing to create ImageUpload records
+        if task.detect_type == 'multi':
+            StructuredDetectionService._wait_for_image_uploads(task)
+
         snapshot = StructuredDetectionService.build_input_snapshot(task)
 
         if task.detect_type == 'multi':
@@ -875,9 +925,14 @@ class StructuredDetectionService:
                 raise ValueError(validation.get('message') or '多材料校验失败')
 
             # Run image detection for multi-material tasks (before text analysis)
+            # Wrap in try-except so image detection failure does not crash the entire task
             images = snapshot.get('images', [])
             if images:
-                StructuredDetectionService._run_image_detection(task, snapshot)
+                try:
+                    StructuredDetectionService._run_image_detection(task, snapshot)
+                except Exception as exc:
+                    logger.exception('Image detection failed for multi task %s, continuing with text analysis',
+                                    task.id, exc_info=exc)
 
         text_items = StructuredDetectionService._extract_text_items_from_snapshot(snapshot, task.detect_type)
         if not text_items:

@@ -235,6 +235,7 @@ const selectedImage = ref<ImageItem | null>(null)
 const imageDetailLoading = ref(false)
 const imageDetailError = ref('')
 const hasDetectionResult = ref(false)
+const detectionStatus = ref('')
 const activeTab = ref('analysis')
 const llm = ref('')
 const llm_image = ref('')
@@ -261,6 +262,7 @@ const fetchImageDetection = async (imageId: number) => {
   try {
     const response = (await resourceApi.getImageDetectionByImageId(imageId)).data
     hasDetectionResult.value = true
+    detectionStatus.value = response.status || ''
     llm.value = response.llm || ''
     llm_image.value = response.llm_image || ''
     ela.value = response.ela_image || ''
@@ -281,6 +283,7 @@ const fetchImageDetection = async (imageId: number) => {
     } else {
       imageDetailError.value = '获取图片检测结果失败'
     }
+    detectionStatus.value = ''
     llm.value = ''
     llm_image.value = ''
     ela.value = ''
@@ -318,6 +321,7 @@ const toggleImageDetailClose = () => {
   activeTab.value = 'analysis'
   imageDetailError.value = ''
   hasDetectionResult.value = false
+  detectionStatus.value = ''
 }
 
 const getSelectedImageUrl = (img: ImageItem | null) => {
@@ -1381,6 +1385,12 @@ watch(activeTab, () => {
 
           <!-- Full detection detail -->
           <div v-else>
+            <v-alert v-if="detectionStatus === 'failed'" type="warning" variant="tonal" density="compact" class="mb-3">
+              该图片的伪造检测未成功完成，以下结果可能不完整。
+            </v-alert>
+            <v-alert v-else-if="detectionStatus === 'in_progress'" type="info" variant="tonal" density="compact" class="mb-3">
+              该图片的伪造检测仍在进行中，以下结果可能不完整。
+            </v-alert>
             <v-row>
               <!-- Left: image + overlay -->
               <v-col cols="12" md="6" class="pr-md-6">
