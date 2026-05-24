@@ -137,6 +137,10 @@ export default {
 
   getDetectionMethods() {
     return http.get('/detection/methods/')
+  },
+
+  getResourceContainers() {
+    return http.get('/resource-containers/')
   }
 
 }

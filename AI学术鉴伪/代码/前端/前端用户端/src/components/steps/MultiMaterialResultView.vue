@@ -234,6 +234,7 @@ const showImageDetail = ref(false)
 const selectedImage = ref<ImageItem | null>(null)
 const imageDetailLoading = ref(false)
 const imageDetailError = ref('')
+const hasDetectionResult = ref(false)
 const activeTab = ref('analysis')
 const llm = ref('')
 const llm_image = ref('')
@@ -278,8 +279,10 @@ const viewImageDetail = (img: ImageItem) => {
 const fetchImageDetection = async (imageId: number) => {
   imageDetailLoading.value = true
   imageDetailError.value = ''
+  hasDetectionResult.value = false
   try {
     const response = (await publisher.getImageDetectionByImageId(imageId)).data
+    hasDetectionResult.value = true
     llm.value = response.llm || ''
     llm_image.value = response.llm_image || ''
     ela.value = response.ela_image || ''
@@ -296,7 +299,7 @@ const fetchImageDetection = async (imageId: number) => {
     }
   } catch (error: any) {
     if (error?.response?.status === 404) {
-      imageDetailError.value = '该图片尚未进行过图片检测，暂无详细检测结果'
+      hasDetectionResult.value = false
     } else {
       imageDetailError.value = '获取图片检测结果失败'
     }
@@ -336,11 +339,23 @@ const toggleImageDetailClose = () => {
   isOverlayVisible.value = false
   activeTab.value = 'analysis'
   imageDetailError.value = ''
+  hasDetectionResult.value = false
 }
 
 const getSelectedImageUrl = (img: ImageItem | null) => {
   if (!img) return ''
   return resolveImageUrl(img.image_url)
+}
+
+const showRawJson = ref(false)
+
+const copyRawJson = () => {
+  const text = JSON.stringify(result.value, null, 2)
+  navigator.clipboard.writeText(text).then(() => {
+    snackbar.showMessage('已复制到剪贴板', 'success')
+  }).catch(() => {
+    snackbar.showMessage('复制失败', 'error')
+  })
 }
 
 // --- Helpers ---
@@ -609,6 +624,124 @@ onMounted(async () => {
       </v-col>
     </v-row>
 
+    <!-- ========== Validation Info ========== -->
+    <v-row v-if="validation">
+      <v-col cols="12">
+        <v-alert
+          :type="validation.valid !== false ? 'success' : 'warning'"
+          variant="tonal"
+          class="mb-6"
+          rounded="lg"
+        >
+          <div class="d-flex align-center mb-2">
+            <v-icon :color="validation.valid !== false ? 'success' : 'warning'" class="mr-2">
+              {{ validation.valid !== false ? 'mdi-check-decagram' : 'mdi-alert-decagram' }}
+            </v-icon>
+            <span class="text-subtitle-1 font-weight-bold">
+              {{ validation.valid !== false ? '材料验证通过' : '材料验证未通过' }}
+            </span>
+          </div>
+          <div v-if="validation.message" class="text-body-2 mb-2">{{ validation.message }}</div>
+          <div class="d-flex flex-wrap gap-2">
+            <v-chip
+              v-for="mt in (validation.material_types_present || [])"
+              :key="mt"
+              size="small"
+              color="success"
+              variant="outlined"
+            >
+              <v-icon start size="x-small">mdi-check</v-icon>
+              {{ mt }}
+            </v-chip>
+            <v-chip
+              v-for="mm in (validation.missing_required || [])"
+              :key="mm"
+              size="small"
+              color="error"
+              variant="outlined"
+            >
+              <v-icon start size="x-small">mdi-close</v-icon>
+              {{ mm }}
+            </v-chip>
+          </div>
+        </v-alert>
+      </v-col>
+    </v-row>
+
+    <!-- ========== Evidence Statistics Card ========== -->
+    <v-row v-if="evidence && (evidence.model_dir || evidence.aggregate || evidence.section_count !== undefined)">
+      <v-col cols="12">
+        <v-card class="mb-6" elevation="2" rounded="lg">
+          <v-card-title class="pa-6">
+            <v-icon color="info" class="mr-2">mdi-chart-bar</v-icon>
+            <span class="text-h6">检测统计信息</span>
+          </v-card-title>
+          <v-card-text class="pa-6">
+            <v-row>
+              <v-col v-if="evidence.model_dir" cols="12" sm="6" md="3">
+                <v-card variant="outlined" rounded="lg" class="pa-3 text-center">
+                  <div class="text-caption text-grey mb-1">检测模型</div>
+                  <div class="text-body-2 font-weight-medium">{{ evidence.model_dir }}</div>
+                </v-card>
+              </v-col>
+              <v-col v-if="evidence.lang" cols="12" sm="6" md="3">
+                <v-card variant="outlined" rounded="lg" class="pa-3 text-center">
+                  <div class="text-caption text-grey mb-1">检测语言</div>
+                  <div class="text-body-2 font-weight-medium">{{ evidence.lang }}</div>
+                </v-card>
+              </v-col>
+              <v-col v-if="evidence.section_count !== undefined" cols="12" sm="6" md="3">
+                <v-card variant="outlined" rounded="lg" class="pa-3 text-center">
+                  <div class="text-caption text-grey mb-1">总段落数</div>
+                  <div class="text-h5 primary--text">{{ evidence.section_count }}</div>
+                </v-card>
+              </v-col>
+              <v-col v-if="evidence.aigc_section_count !== undefined" cols="12" sm="6" md="3">
+                <v-card variant="outlined" rounded="lg" class="pa-3 text-center">
+                  <div class="text-caption text-grey mb-1">AIGC段落数</div>
+                  <div class="text-h5" :class="evidence.aigc_section_count > 0 ? 'error--text' : 'success--text'">{{ evidence.aigc_section_count }}</div>
+                </v-card>
+              </v-col>
+            </v-row>
+            <v-row v-if="evidence.aggregate" class="mt-2">
+              <v-col v-if="evidence.aggregate.aigc_ratio !== undefined" cols="12" sm="6" md="3">
+                <v-card variant="outlined" rounded="lg" class="pa-3 text-center">
+                  <div class="text-caption text-grey mb-1">AIGC比例</div>
+                  <div class="text-h5" :class="getProbabilityColor(evidence.aggregate.aigc_ratio) + '--text'">
+                    {{ (evidence.aggregate.aigc_ratio * 100).toFixed(1) }}%
+                  </div>
+                </v-card>
+              </v-col>
+              <v-col v-if="evidence.aggregate.mean_aigc_probability !== undefined" cols="12" sm="6" md="3">
+                <v-card variant="outlined" rounded="lg" class="pa-3 text-center">
+                  <div class="text-caption text-grey mb-1">平均AIGC概率</div>
+                  <div class="text-h5" :class="getProbabilityColor(evidence.aggregate.mean_aigc_probability) + '--text'">
+                    {{ (evidence.aggregate.mean_aigc_probability * 100).toFixed(1) }}%
+                  </div>
+                </v-card>
+              </v-col>
+              <v-col v-if="evidence.aggregate.mean_confidence !== undefined" cols="12" sm="6" md="3">
+                <v-card variant="outlined" rounded="lg" class="pa-3 text-center">
+                  <div class="text-caption text-grey mb-1">平均置信度</div>
+                  <div class="text-h5 info--text">{{ (evidence.aggregate.mean_confidence * 100).toFixed(1) }}%</div>
+                </v-card>
+              </v-col>
+              <v-col v-if="evidence.aggregate.max_confidence !== undefined || evidence.aggregate.min_confidence !== undefined" cols="12" sm="6" md="3">
+                <v-card variant="outlined" rounded="lg" class="pa-3 text-center">
+                  <div class="text-caption text-grey mb-1">置信度范围</div>
+                  <div class="text-body-2 font-weight-medium">
+                    <span v-if="evidence.aggregate.min_confidence !== undefined">{{ (evidence.aggregate.min_confidence * 100).toFixed(1) }}%</span>
+                    <span v-if="evidence.aggregate.min_confidence !== undefined && evidence.aggregate.max_confidence !== undefined"> ~ </span>
+                    <span v-if="evidence.aggregate.max_confidence !== undefined">{{ (evidence.aggregate.max_confidence * 100).toFixed(1) }}%</span>
+                  </div>
+                </v-card>
+              </v-col>
+            </v-row>
+          </v-card-text>
+        </v-card>
+      </v-col>
+    </v-row>
+
     <!-- ========== Material Cards Overview ========== -->
     <v-row v-if="materialCards.length > 0" class="mb-6">
       <v-col
@@ -636,6 +769,13 @@ onMounted(async () => {
           </v-chip>
           <div v-if="card.file_count" class="text-caption text-grey mt-1">
             文件数: {{ card.file_count }}
+          </div>
+          <div v-if="card.files && card.files.length > 0" class="text-left mt-3">
+            <div class="text-caption text-grey mb-1">包含文件：</div>
+            <div v-for="(file, fi) in card.files" :key="fi" class="d-flex align-center mb-1">
+              <v-icon size="x-small" color="grey" class="mr-1">mdi-file-outline</v-icon>
+              <span class="text-caption text-truncate">{{ file.file_name || file.name || file }}</span>
+            </div>
           </div>
         </v-card>
       </v-col>
@@ -1265,6 +1405,28 @@ onMounted(async () => {
       </v-col>
     </v-row>
 
+    <!-- ========== Raw Result JSON ========== -->
+    <v-row>
+      <v-col cols="12">
+        <v-card class="mb-6" elevation="2" rounded="lg">
+          <v-card-title class="pa-6 d-flex align-center" @click="showRawJson = !showRawJson" style="cursor: pointer;">
+            <v-icon color="grey-darken-2" class="mr-2">mdi-code-json</v-icon>
+            <span class="text-h6">模型返回原始数据</span>
+            <v-spacer />
+            <v-btn :icon="showRawJson ? 'mdi-chevron-up' : 'mdi-chevron-down'" variant="text" size="small" />
+          </v-card-title>
+          <v-card-text v-if="showRawJson" class="pa-6">
+            <div class="d-flex justify-end mb-2">
+              <v-btn size="small" variant="outlined" prepend-icon="mdi-content-copy" @click="copyRawJson">
+                复制
+              </v-btn>
+            </div>
+            <pre class="raw-json-pre">{{ JSON.stringify(result, null, 2) }}</pre>
+          </v-card-text>
+        </v-card>
+      </v-col>
+    </v-row>
+
     <!-- ========== Image Detail Dialog ========== -->
     <v-dialog v-model="showImageDetail" max-width="1000">
       <v-card rounded="lg">
@@ -1281,20 +1443,26 @@ onMounted(async () => {
             <div class="text-body-1 text-grey">正在加载检测结果...</div>
           </div>
 
-          <!-- No detection result -->
+          <!-- No detection result (expected for multi-material) -->
+          <div v-else-if="!hasDetectionResult && !imageDetailError" class="text-center py-6">
+            <div v-if="selectedImage" class="mb-4">
+              <v-img
+                :src="getSelectedImageUrl(selectedImage)"
+                max-height="500"
+                contain
+                class="rounded-lg mx-auto"
+                style="max-width: 600px"
+              />
+            </div>
+            <v-alert type="info" variant="tonal" class="mt-4 text-left" density="compact">
+              多材料检测仅分析文本内容，该图片未单独进行伪造检测。如需图片伪造检测，请单独提交图片检测任务。
+            </v-alert>
+          </div>
+
+          <!-- Actual error -->
           <div v-else-if="imageDetailError" class="text-center py-8">
             <v-icon size="64" color="grey-lighten-1" class="mb-4">mdi-image-off-outline</v-icon>
             <div class="text-body-1 text-grey mb-2">{{ imageDetailError }}</div>
-            <div class="text-caption text-grey">多材料检测仅分析文本内容，如需图片伪造检测请单独提交图片检测任务</div>
-            <div v-if="selectedImage" class="mt-6">
-              <v-img
-                :src="getSelectedImageUrl(selectedImage)"
-                max-height="400"
-                contain
-                class="rounded-lg mx-auto"
-                style="max-width: 500px"
-              />
-            </div>
           </div>
 
           <!-- Full detection detail -->
@@ -1668,5 +1836,20 @@ onMounted(async () => {
 .cursor-pointer:hover {
   transform: translateY(-2px);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.raw-json-pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  padding: 16px;
+  background-color: #1e1e1e;
+  color: #d4d4d4;
+  border-radius: 8px;
+  font-family: "Courier New", Courier, monospace;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  max-height: 600px;
+  overflow-y: auto;
 }
 </style>

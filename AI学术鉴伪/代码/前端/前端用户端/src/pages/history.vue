@@ -114,12 +114,10 @@
         <!-- 操作列自定义 -->
         <template v-slot:item.actions="{ item }">
           <div class="d-flex justify-center gap-2">
-            <v-btn size="small" color="primary" variant="text" @click="handleNext(item)"
-              :disabled="item.status !== 'completed'">
+            <v-btn size="small" color="primary" variant="text" @click="handleNext(item)">
               下一步
             </v-btn>
-            <v-btn size="small" color="error" variant="text" @click="handleDelete(item)"
-              :disabled="item.status !== 'completed'">
+            <v-btn size="small" color="error" variant="text" @click="handleDelete(item)">
               删除
             </v-btn>
           </div>
