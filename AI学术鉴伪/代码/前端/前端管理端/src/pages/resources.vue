@@ -675,7 +675,7 @@
     </v-dialog>
 
     <!-- 关联资源对话框 -->
-    <v-dialog v-model="showRelatedResourcesDialog" max-width="900" scrollable>
+    <v-dialog v-model="showRelatedResourcesDialog" max-width="1000" scrollable>
       <v-card>
         <v-card-title class="d-flex justify-space-between align-center">
           <span class="text-h5 font-weight-bold">关联资源</span>
@@ -685,20 +685,52 @@
         </v-card-title>
         <v-divider></v-divider>
         <v-card-text style="max-height: 70vh;">
-          <v-list lines="two" v-if="relatedResourcesList.length > 0">
-            <v-list-item
-              v-for="res in relatedResourcesList"
-              :key="res.id"
-              :subtitle="res.type + ' · ' + res.relation_type"
-            >
-              <template v-slot:prepend>
-                <v-icon :color="getRelatedTypeColor(res.type)" class="mr-3">
-                  {{ getRelatedTypeIcon(res.type) }}
-                </v-icon>
-              </template>
-              <v-list-item-title>{{ res.file_name }}</v-list-item-title>
-            </v-list-item>
-          </v-list>
+          <v-data-table
+            v-if="relatedResourcesList.length > 0"
+            :items="relatedResourcesList"
+            :headers="relatedResourceHeaders"
+            item-value="id"
+            density="comfortable"
+            hover
+            class="elevation-1"
+          >
+            <template v-slot:item.id="{ item }">
+              <span class="font-weight-medium">{{ item.id }}</span>
+            </template>
+            <template v-slot:item.title="{ item }">
+              <span>{{ item.title }}</span>
+            </template>
+            <template v-slot:item.actions="{ item }">
+              <v-tooltip text="查看详情" location="top">
+                <template v-slot:activator="{ props }">
+                  <v-btn icon variant="text" size="small" color="primary" v-bind="props" @click="viewRelatedDetail(item)">
+                    <v-icon>mdi-eye</v-icon>
+                  </v-btn>
+                </template>
+              </v-tooltip>
+              <v-tooltip text="资源预览" location="top">
+                <template v-slot:activator="{ props }">
+                  <v-btn icon variant="text" size="small" color="info" v-bind="props" @click="previewRelatedResource(item)">
+                    <v-icon>mdi-file-find</v-icon>
+                  </v-btn>
+                </template>
+              </v-tooltip>
+              <v-tooltip text="检测结果" location="top">
+                <template v-slot:activator="{ props }">
+                  <v-btn icon variant="text" size="small" color="warning" v-bind="props" @click="viewRelatedDetectionResult(item)" :disabled="!item.task_id">
+                    <v-icon>mdi-magnify-scan</v-icon>
+                  </v-btn>
+                </template>
+              </v-tooltip>
+              <v-tooltip text="删除" location="top">
+                <template v-slot:activator="{ props }">
+                  <v-btn icon variant="text" size="small" color="error" v-bind="props" @click="deleteRelatedResource(item)">
+                    <v-icon>mdi-delete</v-icon>
+                  </v-btn>
+                </template>
+              </v-tooltip>
+            </template>
+          </v-data-table>
           <div v-else class="text-center pa-8 text-grey">
             <v-icon size="64" color="grey-lighten-1">mdi-file-search-outline</v-icon>
             <div class="text-h6 mt-4">暂无关联资源</div>
@@ -716,7 +748,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useSnackbarStore } from '@/stores/snackbar'
-import resourceApi, { type Resource, type StructuredResult } from '@/api/resource'
+import resourceApi, { type Resource, type StructuredResult, type RelatedResource } from '@/api/resource'
 import ImageDetectionResult from '@/components/detection/ImageDetectionResult.vue'
 import TextDetectionResult from '@/components/detection/TextDetectionResult.vue'
 import MultiMaterialResult from '@/components/detection/MultiMaterialResult.vue'
@@ -770,6 +802,11 @@ const previewFileName = ref('')
 
 // 关联资源对话框
 const showRelatedResourcesDialog = ref(false)
+const relatedResourceHeaders = [
+  { title: '资源ID', key: 'id', align: 'center' as const, sortable: true, width: '120px' },
+  { title: '资源标题', key: 'title', align: 'start' as const, sortable: true },
+  { title: '操作', key: 'actions', align: 'center' as const, sortable: false, width: '200px' },
+]
 const relatedResourcesList = ref<any[]>([])
 
 
@@ -804,7 +841,7 @@ const resourceTypes = computed(() => [
 
 // 资源表格表头
 const resourceTableHeaders = [
-  { title: '论文 ID', key: 'id', align: 'start' as const, sortable: true },
+  { title: '资源 ID', key: 'id', align: 'start' as const, sortable: true },
   { title: '资源标题', key: 'title', align: 'start' as const, sortable: true },
   { title: '作者信息', key: 'author', align: 'start' as const, sortable: true },
   { title: '所属组织', key: 'organization', align: 'start' as const, sortable: true },
@@ -1062,6 +1099,92 @@ const clearAllFilters = () => {
     endTime: null
   }
   selectedType.value = null
+}
+
+// 关联资源操作
+const viewRelatedDetail = async (res: RelatedResource) => {
+  try {
+    const response = await resourceApi.getResourceDetail(res.id)
+    selectedResource.value = response.data
+    showDetailDialog.value = true
+  } catch (error) {
+    console.error('获取资源详情失败:', error)
+    snackbar.showMessage('获取资源详情失败', 'error')
+  }
+}
+
+const previewRelatedResource = async (res: RelatedResource) => {
+  showPreviewDialog.value = true
+  previewLoading.value = true
+  previewUrl.value = null
+  previewType.value = 'other'
+  previewTextContent.value = ''
+  previewFileName.value = res.title || res.file_name || ''
+
+  try {
+    const fileType = res.type === 'image' ? 'image' : 'file'
+    const response = await resourceApi.previewResource(res.id, fileType)
+    const blob = response.data as any
+    const contentType = blob.type || ''
+
+    if (res.type === 'image' || contentType.startsWith('image/')) {
+      previewType.value = 'image'
+      previewUrl.value = URL.createObjectURL(blob)
+    } else if (contentType === 'application/pdf' || (res.file_name && res.file_name.toLowerCase().endsWith('.pdf'))) {
+      previewType.value = 'pdf'
+      previewUrl.value = URL.createObjectURL(blob)
+    } else if (contentType.startsWith('text/') || (res.file_name && /\.(txt|md|csv|json|xml)$/i.test(res.file_name))) {
+      previewType.value = 'text'
+      previewUrl.value = URL.createObjectURL(blob)
+      const text = await blob.text()
+      previewTextContent.value = text
+    } else {
+      previewType.value = 'other'
+      previewUrl.value = URL.createObjectURL(blob)
+    }
+  } catch (error: any) {
+    console.error('预览资源失败:', error)
+    if (error?.response?.status === 404) {
+      snackbar.showMessage('资源文件不存在或已被删除', 'warning')
+    } else {
+      snackbar.showMessage('预览资源失败', 'error')
+    }
+    previewUrl.value = null
+  } finally {
+    previewLoading.value = false
+  }
+}
+
+const viewRelatedDetectionResult = async (res: RelatedResource) => {
+  if (!res.task_id) {
+    snackbar.showMessage('该资源没有关联的检测任务', 'warning')
+    return
+  }
+  showDetectionResultDialog.value = true
+  detectionResultLoading.value = true
+  detectionResultData.value = null
+  try {
+    const response = await resourceApi.getDetectionResult(res.task_id)
+    detectionResultData.value = response.data
+  } catch (error) {
+    console.error('获取检测结果失败:', error)
+    snackbar.showMessage('获取检测结果失败', 'error')
+  } finally {
+    detectionResultLoading.value = false
+  }
+}
+
+const deleteRelatedResource = async (res: RelatedResource) => {
+  if (!confirm(`确定要删除资源 "${res.title || res.file_name}" (ID: ${res.id}) 吗？此操作不可撤销。`)) return
+  try {
+    await resourceApi.deleteResource(res.id)
+    snackbar.showMessage('删除成功', 'success')
+    // Refresh related resources list by reloading resources
+    loadResources()
+  } catch (error) {
+    console.error('删除资源失败:', error)
+    snackbar.showMessage('删除失败', 'error')
+  }
 }
 
 // 查看资源详情

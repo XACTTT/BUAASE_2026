@@ -29,6 +29,8 @@ export interface RelatedResource {
   type: string
   file_name: string
   relation_type: string
+  task_id: number | null
+  title: string
 }
 
 export interface ResourceListParams {

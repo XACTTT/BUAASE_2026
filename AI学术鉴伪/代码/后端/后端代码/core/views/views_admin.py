@@ -113,11 +113,14 @@ def _serialize_resource(file_obj):
             container_id=file_obj.container_id
         ).exclude(id=file_obj.id).select_related('user', 'organization')
         for fm in related_fm:
+            fm_metadata = fm.extra_metadata or {}
             related_resources.append({
                 'id': fm.id,
                 'type': _infer_resource_type(fm),
                 'file_name': fm.file_name,
                 'relation_type': fm.resource_role or '',
+                'task_id': task_id,
+                'title': fm_metadata.get('title') or fm.file_name,
             })
 
     metadata = file_obj.extra_metadata or {}
