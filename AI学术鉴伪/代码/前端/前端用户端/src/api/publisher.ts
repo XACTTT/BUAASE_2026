@@ -3,7 +3,7 @@ import http from './request'
 export default {
   //发布审核任务
   dispatchAnnual(data: any) {
-    return http.post('/create_review_task_with_admin_check/', data)
+    return http.post('/create_review_task_with_admin_check/', data, { timeout: 30000 })
   },
 
   //data是taskId

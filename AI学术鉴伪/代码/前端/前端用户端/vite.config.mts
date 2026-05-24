@@ -76,7 +76,7 @@ export default defineConfig({
         // target: 'http://82.156.232.106',
         // target: 'http://localhost:8080',
         target: 'http://116.63.14.7',
-        changeOrigin: true,
+        changeOrigin: true,  
         // rewrite: (path) => path.replace(/^\/api/, ''),
       },
       '/media': {

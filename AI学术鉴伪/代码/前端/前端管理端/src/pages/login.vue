@@ -148,11 +148,12 @@
       let errorMessage = '网络错误，请稍后重试'
       if (error.response) {
         switch (error.response.status) {
+          case 400:
           case 401:
             errorMessage = '账号/密码错误'
             break
           default:
-            errorMessage = '账号/密码错误'
+            errorMessage = (error.response as any).data?.non_field_errors?.[0] || (error.response as any).data?.detail || '未知错误'
             break
         }
       }

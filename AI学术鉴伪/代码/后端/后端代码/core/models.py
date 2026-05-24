@@ -786,6 +786,12 @@ class Log(models.Model):
         ('file_bind', 'File Bind'),
         ('review_text', 'Review Text'),
         ('material_validation', 'Material Validation'),
+        # 检测与审核流程
+        ('create_detection_task', 'Create Detection Task'),
+        ('create_review_request', 'Create Review Request'),
+        ('approve_review_request', 'Approve Review Request'),
+        ('reject_review_request', 'Reject Review Request'),
+        ('submit_review', 'Submit Review'),
     ]
 
     log_id = models.AutoField(primary_key=True)

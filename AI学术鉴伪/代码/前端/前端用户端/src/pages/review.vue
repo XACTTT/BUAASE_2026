@@ -61,6 +61,16 @@
             </v-avatar>
           </template>
 
+          <template v-slot:item.task_type="{ item }">
+            <v-chip
+              :color="getTaskTypeColor(item.task_type)"
+              size="small"
+              class="status-chip"
+            >
+              {{ getTaskTypeName(item.task_type) }}
+            </v-chip>
+          </template>
+
           <template v-slot:item.status="{ item }">
             <v-chip
               :color="getStatusColor(item.status)"
@@ -180,11 +190,13 @@ interface Task {
   publisher_avatar: string
   image_count: number
   status: string
+  task_type?: string
 }
 
 const headers = [
   { title: '头像', key: 'publisher_avatar', align: 'center', sortable: false },
   { title: '出版社', key: 'publisher_username', align: 'start' },
+  { title: '任务类型', key: 'task_type', align: 'center', sortable: false },
   { title: '图片数量', key: 'image_count', align: 'start' },
   { title: '状态', key: 'status', align: 'center' },
   { title: '提交时间', key: 'maual_review_time', align: 'center' },
@@ -248,6 +260,36 @@ const getStatusName = (status: string) => {
       return '已完成'
     default:
       return status
+  }
+}
+
+const getTaskTypeColor = (taskType?: string) => {
+  switch (taskType) {
+    case 'image':
+      return 'blue'
+    case 'paper_text':
+      return 'green'
+    case 'review_text':
+      return 'orange'
+    case 'multi_material':
+      return 'purple'
+    default:
+      return 'grey'
+  }
+}
+
+const getTaskTypeName = (taskType?: string) => {
+  switch (taskType) {
+    case 'image':
+      return '图像检测'
+    case 'paper_text':
+      return '论文检测'
+    case 'review_text':
+      return '评审检测'
+    case 'multi_material':
+      return '多材料检测'
+    default:
+      return taskType || '未知'
   }
 }
 
@@ -365,7 +407,8 @@ const fetchTasks = async (page: number, pageSize: number) => {
       publisher_username: task.publisher_username,
       publisher_avatar: 'http://122.9.45.122' + task.publisher_avatar || '',
       image_count: task.image_count,
-      status: task.status
+      status: task.status,
+      task_type: task.task_type || 'unknown'
     }))
     
     currentPage.value = current_page

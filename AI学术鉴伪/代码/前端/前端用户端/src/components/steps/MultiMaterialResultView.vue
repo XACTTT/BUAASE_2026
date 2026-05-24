@@ -305,9 +305,12 @@ const submitReview = async () => {
     showReviewDialog.value = false
     router.push('/annual')
   } catch (error: any) {
+    const backendMsg = error?.response?.data?.error || error?.response?.data?.错误
     let message = '提交人工审核任务失败'
     if (error?.code === 'ERR_NETWORK') {
       message = '用户无权限'
+    } else if (backendMsg) {
+      message = backendMsg
     }
     snackbar.showMessage(message, 'error')
   } finally {

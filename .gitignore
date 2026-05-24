@@ -113,3 +113,6 @@ mlruns/
 
 # Others------------------------
 test_resource/
+.claude/settings.local.json
+.gitignore
+.gitignore

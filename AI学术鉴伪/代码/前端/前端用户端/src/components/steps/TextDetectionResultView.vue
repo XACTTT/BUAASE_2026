@@ -62,17 +62,183 @@ const textList = ref<TextResultItem[]>([])
 const textDetails = ref<Map<number, TextDetail>>(new Map())
 const allReviewers = ref<Reviewer[]>([])
 
-// --- Review dialog state ---
-const showReviewDialog = ref(false)
+// --- Review submission state ---
 const selectedReviewers = ref<number[]>([])
 const reviewReason = ref('')
-const selectedTextIds = ref<number[]>([])
 const reviewSearchQuery = ref('')
 const submittingReview = ref(false)
 
-// --- Paragraph detail dialog ---
+// --- Section checkbox selection (for review submission) ---
+const selectedSectionIds = ref<Set<string>>(new Set())
+
+function toggleSectionSelection(item_id: string, event?: Event) {
+  if (event) event.stopPropagation()
+  const newSet = new Set(selectedSectionIds.value)
+  if (newSet.has(item_id)) {
+    newSet.delete(item_id)
+  } else {
+    newSet.add(item_id)
+  }
+  selectedSectionIds.value = newSet
+}
+
+function isSectionSelected(item_id: string): boolean {
+  return selectedSectionIds.value.has(item_id)
+}
+
+function selectAllSections(type: 'paper' | 'review') {
+  const sections = type === 'paper' ? structuredSections.value : structuredReviewSections.value
+  const newSet = new Set(selectedSectionIds.value)
+  for (const s of sections) {
+    newSet.add(s.item_id)
+  }
+  selectedSectionIds.value = newSet
+}
+
+function deselectAllSections(type: 'paper' | 'review') {
+  const sections = type === 'paper' ? structuredSections.value : structuredReviewSections.value
+  const ids = new Set(sections.map(s => s.item_id))
+  const newSet = new Set([...selectedSectionIds.value].filter(id => !ids.has(id)))
+  selectedSectionIds.value = newSet
+}
+
+const selectedPaperCount = computed(() => {
+  const paperIds = new Set(structuredSections.value.map(s => s.item_id))
+  return [...selectedSectionIds.value].filter(id => paperIds.has(id)).length
+})
+
+const selectedReviewCount = computed(() => {
+  const reviewIds = new Set(structuredReviewSections.value.map(s => s.item_id))
+  return [...selectedSectionIds.value].filter(id => reviewIds.has(id)).length
+})
+
+// Map selected section item_ids to text resource_ids for submission
+const selectedResourceIds = computed<number[]>(() => {
+  const idSet = new Set<number>()
+  // item_id format:
+  //   paper:  {detect_type}_paper_{fileIdx}_{secIdx}        -> resource index = parts[2]
+  //   review: {detect_type}_review_file_{fileIdx}_{secIdx}  -> resource index = parts[3]
+  //           {detect_type}_review_text_{textIdx}            -> resource index = parts[3]
+  const paperResources = textList.value.filter(t => t.text_type === 'paper' || t.text_type === 'multi_material')
+  const reviewResources = textList.value.filter(t => t.text_type === 'review' || t.text_type === 'multi_material')
+
+  const selectedPaper = structuredSections.value.filter(s => selectedSectionIds.value.has(s.item_id))
+  for (const section of selectedPaper) {
+    const parts = section.item_id.split('_')
+    const resourceIdx = parseInt(parts[2])
+    if (!isNaN(resourceIdx) && resourceIdx < paperResources.length) {
+      idSet.add(paperResources[resourceIdx].resource_id)
+    }
+  }
+
+  const selectedReview = structuredReviewSections.value.filter(s => selectedSectionIds.value.has(s.item_id))
+  for (const section of selectedReview) {
+    const parts = section.item_id.split('_')
+    const resourceIdx = parseInt(parts[3])
+    if (!isNaN(resourceIdx) && resourceIdx < reviewResources.length) {
+      idSet.add(reviewResources[resourceIdx].resource_id)
+    }
+  }
+
+  return [...idSet]
+})
+
+const allPaperSelected = computed(() => {
+  return structuredSections.value.length > 0 && selectedPaperCount.value === structuredSections.value.length
+})
+
+const allReviewSelected = computed(() => {
+  return structuredReviewSections.value.length > 0 && selectedReviewCount.value === structuredReviewSections.value.length
+})
+
+// --- Structured section selection (paper - for detail viewing) ---
+const selectedSectionId = ref<string | null>(null)
+const sortMode = ref<'order' | 'risk'>('order')
+
+// --- Structured section selection (review - for detail viewing) ---
+const selectedReviewSectionId = ref<string | null>(null)
+const reviewSortMode = ref<'order' | 'risk'>('order')
+
+// --- Structured per_section data from taskMeta ---
+interface SectionItem {
+  item_id: string
+  is_aigc: boolean
+  label_name: string
+  confidence_score: number
+  probabilities: { human?: number; aigc?: number }
+  text: string
+  title: string
+  page_number: number | null
+  source_file: string
+}
+
+const structuredSections = computed<SectionItem[]>(() => {
+  const sections = props.taskMeta?.result?.evidence?.per_section
+  if (!Array.isArray(sections)) return []
+  return sections.filter((s: any) => s.item_id && s.item_id.includes('_paper_'))
+})
+
+const sortedSections = computed(() => {
+  if (sortMode.value === 'risk') {
+    return [...structuredSections.value].sort((a, b) => (b.confidence_score || 0) - (a.confidence_score || 0))
+  }
+  return structuredSections.value
+})
+
+const selectedSection = computed(() => {
+  if (!selectedSectionId.value) return null
+  return structuredSections.value.find(s => s.item_id === selectedSectionId.value) || null
+})
+
+function selectSection(item_id: string) {
+  selectedSectionId.value = selectedSectionId.value === item_id ? null : item_id
+}
+
+const structuredReviewSections = computed<SectionItem[]>(() => {
+  const sections = props.taskMeta?.result?.evidence?.per_section
+  if (!Array.isArray(sections)) return []
+  return sections.filter((s: any) => s.item_id && s.item_id.includes('_review_'))
+})
+
+const sortedReviewSections = computed(() => {
+  if (reviewSortMode.value === 'risk') {
+    return [...structuredReviewSections.value].sort((a, b) => (b.confidence_score || 0) - (a.confidence_score || 0))
+  }
+  return structuredReviewSections.value
+})
+
+const selectedReviewSection = computed(() => {
+  if (!selectedReviewSectionId.value) return null
+  return structuredReviewSections.value.find(s => s.item_id === selectedReviewSectionId.value) || null
+})
+
+function selectReviewSection(item_id: string) {
+  selectedReviewSectionId.value = selectedReviewSectionId.value === item_id ? null : item_id
+}
+
+const reviewStatistics = computed(() => {
+  const sections = structuredReviewSections.value
+  let total = sections.length
+  let high = 0
+  let medium = 0
+  let low = 0
+  for (const s of sections) {
+    const score = s.confidence_score || 0
+    if (score > 0.8) high++
+    else if (score > 0.5) medium++
+    else low++
+  }
+  return { total, high, medium, low }
+})
+
+// --- Paragraph detail dialog (for TOP5 clicks) ---
 const showParagraphDialog = ref(false)
-const selectedParagraph = ref<ParagraphInfo | null>(null)
+const selectedParagraph = ref<SectionItem | null>(null)
+
+function showParagraphDetail(section: SectionItem) {
+  selectedParagraph.value = section
+  showParagraphDialog.value = true
+}
 
 // --- Computed ---
 const taskType = computed(() => {
@@ -80,19 +246,19 @@ const taskType = computed(() => {
 })
 
 const hasPaperResults = computed(() => {
-  return textList.value.some(item => item.text_type === 'paper_text')
+  return structuredSections.value.length > 0
 })
 
 const hasReviewResults = computed(() => {
-  return textList.value.some(item => item.text_type === 'review_text')
+  return structuredReviewSections.value.length > 0 || textList.value.some(item => item.text_type === 'review')
 })
 
 const paperResults = computed(() => {
-  return textList.value.filter(item => item.text_type === 'paper_text')
+  return textList.value.filter(item => item.text_type === 'paper')
 })
 
 const reviewResults = computed(() => {
-  return textList.value.filter(item => item.text_type === 'review_text')
+  return textList.value.filter(item => item.text_type === 'review')
 })
 
 const firstDetectionTime = computed(() => {
@@ -117,46 +283,26 @@ const overallConclusion = computed(() => {
   return null
 })
 
-// --- Paper text statistics (aggregated across all paper results) ---
+// --- Paper statistics (from structured sections) ---
 const paperStatistics = computed(() => {
-  let total = 0
+  const sections = structuredSections.value
+  let total = sections.length
   let high = 0
   let medium = 0
   let low = 0
-
-  for (const item of paperResults.value) {
-    const detail = textDetails.value.get(item.resource_id)
-    if (detail && detail.ai_generated_paragraphs) {
-      for (const para of detail.ai_generated_paragraphs) {
-        total++
-        if (para.ai_probability > 0.8) high++
-        else if (para.ai_probability > 0.5) medium++
-        else low++
-      }
-    }
+  for (const s of sections) {
+    const score = s.confidence_score || 0
+    if (score > 0.8) high++
+    else if (score > 0.5) medium++
+    else low++
   }
-
   return { total, high, medium, low }
 })
 
-// All paragraphs across paper results
-const allPaperParagraphs = computed(() => {
-  const paragraphs: (ParagraphInfo & { resource_id: number })[] = []
-  for (const item of paperResults.value) {
-    const detail = textDetails.value.get(item.resource_id)
-    if (detail && detail.ai_generated_paragraphs) {
-      for (const para of detail.ai_generated_paragraphs) {
-        paragraphs.push({ ...para, resource_id: item.resource_id })
-      }
-    }
-  }
-  return paragraphs
-})
-
-// Top 5 high risk paragraphs
-const topRiskParagraphs = computed(() => {
-  return [...allPaperParagraphs.value]
-    .sort((a, b) => b.ai_probability - a.ai_probability)
+// Top 5 high risk sections
+const topRiskSections = computed(() => {
+  return [...structuredSections.value]
+    .sort((a, b) => (b.confidence_score || 0) - (a.confidence_score || 0))
     .slice(0, 5)
 })
 
@@ -188,7 +334,6 @@ const reviewTemplateData = computed(() => {
   return data
 })
 
-// Average template tendency score
 const avgTemplateScore = computed(() => {
   if (reviewTemplateData.value.length === 0) return 0
   const sum = reviewTemplateData.value.reduce((acc, d) => acc + d.score, 0)
@@ -219,13 +364,7 @@ const evidence = computed(() => {
 
 // Review submission
 const canSubmitReview = computed(() => {
-  return selectedTextIds.value.length > 0 && selectedReviewers.value.length > 0
-})
-
-const filteredReviewers = computed(() => {
-  if (!reviewSearchQuery.value) return allReviewers.value
-  const q = reviewSearchQuery.value.toLowerCase()
-  return allReviewers.value.filter(r => r.username.toLowerCase().includes(q))
+  return selectedSectionIds.value.size > 0 && selectedReviewers.value.length > 0
 })
 
 // --- Helpers ---
@@ -263,25 +402,18 @@ function formatDateTime(dateTime: string): string {
   return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`
 }
 
-function showParagraphDetail(paragraph: ParagraphInfo) {
-  selectedParagraph.value = paragraph
-  showParagraphDialog.value = true
+function openReviewDialog() {
+  // Select all sections by default
+  const newSet = new Set<string>()
+  for (const s of structuredSections.value) newSet.add(s.item_id)
+  for (const s of structuredReviewSections.value) newSet.add(s.item_id)
+  selectedSectionIds.value = newSet
 }
 
-function openReviewDialog() {
-  selectedTextIds.value = textList.value.map(item => item.resource_id)
+function clearReviewSelection() {
+  selectedSectionIds.value = new Set()
   selectedReviewers.value = []
   reviewReason.value = ''
-  showReviewDialog.value = true
-}
-
-function toggleTextId(resourceId: number) {
-  const idx = selectedTextIds.value.indexOf(resourceId)
-  if (idx >= 0) {
-    selectedTextIds.value.splice(idx, 1)
-  } else {
-    selectedTextIds.value.push(resourceId)
-  }
 }
 
 function getTemplateSuggestion(score: number): string {
@@ -294,7 +426,6 @@ function getTemplateSuggestion(score: number): string {
   }
 }
 
-// Chinese label map for LLM analysis
 function getChineseLabel(key: string): string {
   const map: Record<string, string> = {
     risk_level: '风险等级',
@@ -360,17 +491,19 @@ const submitReview = async () => {
   submittingReview.value = true
   try {
     await publisher.dispatchAnnual({
-      text_ids: selectedTextIds.value,
+      task_id: props.taskId,
       reviewers: selectedReviewers.value,
       reason: reviewReason.value
     })
     snackbar.showMessage('已提交人工审核任务，请等待审核', 'success')
-    showReviewDialog.value = false
     router.push('/annual')
   } catch (error: any) {
+    const backendMsg = error?.response?.data?.error || error?.response?.data?.错误
     let message = '提交人工审核任务失败'
     if (error?.code === 'ERR_NETWORK') {
       message = '用户无权限'
+    } else if (backendMsg) {
+      message = backendMsg
     }
     snackbar.showMessage(message, 'error')
   } finally {
@@ -382,12 +515,12 @@ const submitReview = async () => {
 onMounted(async () => {
   loading.value = true
   try {
-    // Fetch text results list
+    // Fetch text results list (still needed for review text section)
     const textListResp = await publisher.getTaskTextResults(props.taskId)
     const results = textListResp.data?.results || []
     textList.value = results
 
-    // Fetch detail for each result
+    // Fetch detail for each result (needed for review text details)
     const detailPromises = results.map(async (item: TextResultItem) => {
       try {
         const detailResp = await publisher.getSingleTextResult(item.resource_id)
@@ -506,18 +639,6 @@ onMounted(async () => {
                   >
                     查看报告
                   </v-btn>
-                  <v-btn
-                    :color="isDarkMode ? 'green-darken-2' : 'success'"
-                    variant="elevated"
-                    class="px-8 py-2"
-                    rounded="pill"
-                    prepend-icon="mdi-send"
-                    elevation="2"
-                    :disabled="textList.length === 0"
-                    @click="openReviewDialog"
-                  >
-                    提交人工审核
-                  </v-btn>
                 </div>
               </div>
             </v-col>
@@ -526,8 +647,8 @@ onMounted(async () => {
       </v-col>
     </v-row>
 
-    <!-- ========== Paper Text Section ========== -->
-    <template v-if="hasPaperResults && (taskType === 'paper_text' || taskType === 'multi_material')">
+    <!-- ========== Paper Text Section (Redesigned) ========== -->
+    <template v-if="hasPaperResults">
       <!-- Statistics Row -->
       <v-row class="mb-6">
         <v-col cols="12" md="3">
@@ -556,56 +677,326 @@ onMounted(async () => {
         </v-col>
       </v-row>
 
-      <!-- Paper content: left 8 cols + right 4 cols -->
-      <v-row>
-        <!-- Left Column -->
-        <v-col cols="12" md="8">
-          <!-- Paragraph AI Analysis Card -->
-          <v-card class="mb-6" elevation="2" rounded="lg">
-            <v-card-title class="d-flex justify-space-between pa-6">
-              <div class="d-flex align-center">
-                <v-icon color="primary" class="mr-2">mdi-text-box-search</v-icon>
-                <span class="text-h6">段落AI生成分析</span>
+      <!-- Combined Risk Distribution + Dimensions Card -->
+      <v-card class="mb-6" elevation="2" rounded="lg">
+        <v-card-title class="pa-6">
+          <v-icon color="primary" class="mr-2">mdi-chart-box</v-icon>
+          <span class="text-h6">风险分析与维度评估</span>
+        </v-card-title>
+        <v-card-text class="pa-6 pt-0">
+          <v-row>
+            <v-col cols="12" md="4">
+              <div class="text-subtitle-2 font-weight-bold mb-4">风险分布</div>
+              <v-progress-linear
+                v-if="paperStatistics.total > 0"
+                :model-value="(paperStatistics.high / paperStatistics.total) * 100"
+                color="error"
+                height="25"
+                class="mb-4"
+              >
+                <template #default="{ value }">
+                  <strong>高风险: {{ paperStatistics.high }} ({{ value.toFixed(0) }}%)</strong>
+                </template>
+              </v-progress-linear>
+              <v-progress-linear
+                v-if="paperStatistics.total > 0"
+                :model-value="(paperStatistics.medium / paperStatistics.total) * 100"
+                color="warning"
+                height="25"
+                class="mb-4"
+              >
+                <template #default="{ value }">
+                  <strong>中风险: {{ paperStatistics.medium }} ({{ value.toFixed(0) }}%)</strong>
+                </template>
+              </v-progress-linear>
+              <v-progress-linear
+                v-if="paperStatistics.total > 0"
+                :model-value="(paperStatistics.low / paperStatistics.total) * 100"
+                color="success"
+                height="25"
+              >
+                <template #default="{ value }">
+                  <strong>低风险: {{ paperStatistics.low }} ({{ value.toFixed(0) }}%)</strong>
+                </template>
+              </v-progress-linear>
+              <div v-if="paperStatistics.total === 0" class="text-center text-grey py-4">
+                暂无风险分布数据
               </div>
-              <v-chip size="small" color="info">
-                <v-icon start>mdi-information</v-icon>
-                点击段落查看详情
-              </v-chip>
+            </v-col>
+            <v-col cols="12" md="8" v-if="dimensions && Array.isArray(dimensions) && dimensions.length > 0">
+              <div class="text-subtitle-2 font-weight-bold mb-4">检测维度</div>
+              <v-row>
+                <v-col
+                  v-for="(dim, idx) in dimensions"
+                  :key="idx"
+                  cols="12"
+                  sm="6"
+                >
+                  <v-card variant="outlined" rounded="lg" class="pa-4">
+                    <div class="text-subtitle-1 font-weight-bold mb-2">{{ dim.name || `维度 ${idx + 1}` }}</div>
+                    <v-chip
+                      v-if="dim.score !== undefined"
+                      :color="dim.score > 0.7 ? 'error' : dim.score > 0.4 ? 'warning' : 'success'"
+                      size="small"
+                      class="mb-2"
+                    >
+                      评分: {{ (dim.score * 100).toFixed(1) }}%
+                    </v-chip>
+                    <div v-if="dim.summary" class="text-body-2 text-grey">{{ dim.summary }}</div>
+                  </v-card>
+                </v-col>
+              </v-row>
+            </v-col>
+          </v-row>
+        </v-card-text>
+      </v-card>
+
+      <!-- Paper content: Left section list + Right detail panel -->
+      <v-row>
+        <!-- Left Column: Section List -->
+        <v-col cols="12" md="4">
+          <v-card class="mb-6" elevation="2" rounded="lg">
+            <v-card-title class="d-flex justify-space-between align-center pa-6">
+              <div class="d-flex align-center">
+                <v-icon color="primary" class="mr-2">mdi-format-list-bulleted</v-icon>
+                <span class="text-h6">段落列表</span>
+              </div>
+              <div class="d-flex align-center gap-2">
+                <v-chip size="small" color="primary" variant="tonal">
+                  {{ selectedPaperCount }}/{{ structuredSections.length }}
+                </v-chip>
+                <v-btn
+                  v-if="!allPaperSelected"
+                  size="x-small"
+                  variant="text"
+                  color="primary"
+                  @click="selectAllSections('paper')"
+                >
+                  全选
+                </v-btn>
+                <v-btn
+                  v-else
+                  size="x-small"
+                  variant="text"
+                  color="error"
+                  @click="deselectAllSections('paper')"
+                >
+                  取消全选
+                </v-btn>
+              </div>
             </v-card-title>
-            <v-card-text class="pa-6">
-              <div v-if="allPaperParagraphs.length === 0" class="text-center text-grey py-8">
+            <v-card-text class="pa-4 pt-0">
+              <div v-if="structuredSections.length === 0" class="text-center text-grey py-8">
                 暂无段落分析数据
               </div>
-              <div v-else class="paragraph-container">
-                <div
-                  v-for="(para, index) in allPaperParagraphs"
-                  :key="index"
-                  class="paragraph-item"
-                  :class="getProbabilityClass(para.ai_probability)"
-                  @click="showParagraphDetail(para)"
+              <div v-else>
+                <!-- Sort toggle -->
+                <v-btn-toggle
+                  v-model="sortMode"
+                  mandatory
+                  density="compact"
+                  variant="outlined"
+                  divided
+                  class="mb-3 w-100"
                 >
-                  <div class="paragraph-header">
-                    <div class="paragraph-number">
-                      <v-chip :color="getProbabilityColor(para.ai_probability)" size="small" label>
-                        段落 {{ para.paragraph_index }}
-                      </v-chip>
-                    </div>
-                    <div class="paragraph-probability">
-                      <v-chip
-                        :color="getProbabilityColor(para.ai_probability)"
+                  <v-btn value="order" size="small" class="flex-grow-1">
+                    <v-icon start size="small">mdi-sort-ascending</v-icon>
+                    按顺序排列
+                  </v-btn>
+                  <v-btn value="risk" size="small" class="flex-grow-1">
+                    <v-icon start size="small">mdi-sort-alert</v-icon>
+                    按风险排列
+                  </v-btn>
+                </v-btn-toggle>
+                <div class="section-list-container">
+                <div
+                  v-for="section in sortedSections"
+                  :key="section.item_id"
+                  class="section-list-item pa-3 mb-2 rounded-lg cursor-pointer"
+                  :class="{
+                    'section-selected': selectedSectionId === section.item_id,
+                    'section-checked': isSectionSelected(section.item_id)
+                  }"
+                  @click="selectSection(section.item_id)"
+                >
+                  <div class="d-flex align-center justify-space-between">
+                    <div class="d-flex align-center" style="min-width: 0; flex: 1;">
+                      <v-checkbox
+                        :model-value="isSectionSelected(section.item_id)"
+                        @click.stop
+                        @update:model-value="toggleSectionSelection(section.item_id, $event)"
+                        color="primary"
+                        hide-details
+                        density="compact"
+                        class="flex-shrink-0 mr-1"
+                        style="margin-top: 0; padding-top: 0;"
+                      />
+                      <v-icon
+                        :color="getProbabilityColor(section.confidence_score || 0)"
                         size="small"
-                        variant="outlined"
+                        class="mr-2 flex-shrink-0"
                       >
-                        <v-icon start size="small">mdi-brain</v-icon>
-                        AI概率: {{ (para.ai_probability * 100).toFixed(1) }}%
-                      </v-chip>
+                        {{ (section.confidence_score || 0) > 0.5 ? 'mdi-alert-circle' : 'mdi-check-circle' }}
+                      </v-icon>
+                      <div style="min-width: 0; flex: 1;">
+                        <div class="text-body-2 font-weight-medium text-truncate">
+                          {{ section.title || section.item_id }}
+                        </div>
+                        <div v-if="section.source_file" class="text-caption text-grey text-truncate">
+                          {{ section.source_file }}
+                          <span v-if="section.page_number !== null && section.page_number !== undefined">
+                            · 第{{ (section.page_number + 1) }}页
+                          </span>
+                        </div>
+                      </div>
                     </div>
+                    <v-chip
+                      :color="getProbabilityColor(section.confidence_score || 0)"
+                      size="x-small"
+                      class="ml-2 flex-shrink-0"
+                    >
+                      {{ ((section.confidence_score || 0) * 100).toFixed(0) }}%
+                    </v-chip>
                   </div>
-                  <div class="paragraph-text">{{ para.text }}</div>
+                  <!-- Mini progress bar -->
+                  <v-progress-linear
+                    :model-value="(section.confidence_score || 0) * 100"
+                    :color="getProbabilityColor(section.confidence_score || 0)"
+                    height="3"
+                    rounded
+                    class="mt-2"
+                  />
                 </div>
+              </div>
               </div>
             </v-card-text>
           </v-card>
+        </v-col>
+
+        <!-- Right Column: Section Detail Panel -->
+        <v-col cols="12" md="8">
+          <!-- No section selected placeholder -->
+          <v-card v-if="!selectedSection" elevation="2" rounded="lg" class="pa-8 text-center">
+            <v-icon size="64" color="grey">mdi-cursor-default-click</v-icon>
+            <div class="text-h6 text-grey mt-4">点击左侧段落查看详情</div>
+            <div class="text-body-2 text-grey mt-2">选择任意段落查看完整的检测分析结果</div>
+          </v-card>
+
+          <!-- Selected section detail -->
+          <template v-else>
+            <!-- Section header card -->
+            <v-card class="mb-6" elevation="2" rounded="lg">
+              <v-card-title class="pa-6">
+                <div class="d-flex align-center flex-wrap gap-2">
+                  <v-icon :color="getProbabilityColor(selectedSection.confidence_score || 0)" class="mr-1">
+                    {{ (selectedSection.confidence_score || 0) > 0.5 ? 'mdi-alert-circle' : 'mdi-check-circle' }}
+                  </v-icon>
+                  <span class="text-h6">{{ selectedSection.title || selectedSection.item_id }}</span>
+                  <v-chip :color="getProbabilityColor(selectedSection.confidence_score || 0)" size="small">
+                    {{ getProbabilityLevel(selectedSection.confidence_score || 0) }}
+                  </v-chip>
+                  <v-chip v-if="selectedSection.is_aigc" color="error" size="small" variant="tonal">
+                    <v-icon start size="x-small">mdi-robot</v-icon>
+                    AI生成
+                  </v-chip>
+                  <v-chip v-else color="success" size="small" variant="tonal">
+                    <v-icon start size="x-small">mdi-account</v-icon>
+                    人类撰写
+                  </v-chip>
+                </div>
+              </v-card-title>
+              <v-card-text class="pa-6 pt-0">
+                <div class="d-flex flex-wrap gap-3 text-body-2 text-grey">
+                  <span v-if="selectedSection.source_file">
+                    <v-icon size="small" class="mr-1">mdi-file-document</v-icon>
+                    {{ selectedSection.source_file }}
+                  </span>
+                  <span v-if="selectedSection.page_number !== null && selectedSection.page_number !== undefined">
+                    <v-icon size="small" class="mr-1">mdi-book-open-page-variant</v-icon>
+                    第 {{ (selectedSection.page_number + 1) }} 页
+                  </span>
+                  <span>
+                    <v-icon size="small" class="mr-1">mdi-identifier</v-icon>
+                    {{ selectedSection.item_id }}
+                  </span>
+                </div>
+              </v-card-text>
+            </v-card>
+
+            <!-- BERT Detection Result Card -->
+            <v-card class="mb-6" elevation="2" rounded="lg">
+              <v-card-title class="pa-6">
+                <v-icon color="primary" class="mr-2">mdi-brain</v-icon>
+                <span class="text-h6">BERT 检测结果</span>
+              </v-card-title>
+              <v-card-text class="pa-6 pt-0">
+                <v-row>
+                  <v-col cols="12" md="6">
+                    <div class="text-subtitle-2 font-weight-bold mb-2">AI生成置信度</div>
+                    <v-progress-linear
+                      :model-value="(selectedSection.confidence_score || 0) * 100"
+                      :color="getProbabilityColor(selectedSection.confidence_score || 0)"
+                      height="28"
+                      rounded
+                    >
+                      <template #default="{ value }">
+                        <strong>{{ value.toFixed(1) }}%</strong>
+                      </template>
+                    </v-progress-linear>
+                  </v-col>
+                  <v-col cols="12" md="6">
+                    <div class="text-subtitle-2 font-weight-bold mb-2">概率分布</div>
+                    <div class="d-flex align-center gap-4">
+                      <div class="flex-grow-1">
+                        <div class="text-caption text-grey mb-1">人类撰写</div>
+                        <v-progress-linear
+                          :model-value="(selectedSection.probabilities?.human || 0) * 100"
+                          color="success"
+                          height="12"
+                          rounded
+                        />
+                        <div class="text-caption text-right">{{ ((selectedSection.probabilities?.human || 0) * 100).toFixed(1) }}%</div>
+                      </div>
+                      <div class="flex-grow-1">
+                        <div class="text-caption text-grey mb-1">AI生成</div>
+                        <v-progress-linear
+                          :model-value="(selectedSection.probabilities?.aigc || 0) * 100"
+                          color="error"
+                          height="12"
+                          rounded
+                        />
+                        <div class="text-caption text-right">{{ ((selectedSection.probabilities?.aigc || 0) * 100).toFixed(1) }}%</div>
+                      </div>
+                    </div>
+                  </v-col>
+                </v-row>
+                <div v-if="selectedSection.label_name" class="mt-4">
+                  <v-chip
+                    :color="selectedSection.is_aigc ? 'error' : 'success'"
+                    variant="tonal"
+                  >
+                    模型判定：{{ selectedSection.label_name }}
+                  </v-chip>
+                </div>
+              </v-card-text>
+            </v-card>
+
+            <!-- Section Text Content Card -->
+            <v-card class="mb-6" elevation="2" rounded="lg">
+              <v-card-title class="pa-6">
+                <v-icon color="info" class="mr-2">mdi-text-box</v-icon>
+                <span class="text-h6">段落内容</span>
+              </v-card-title>
+              <v-card-text class="pa-6 pt-0">
+                <div v-if="selectedSection.text" class="paragraph-detail-text">{{ selectedSection.text }}</div>
+                <div v-else class="text-center py-8">
+                  <v-icon size="48" color="grey-lighten-1">mdi-text-box-remove-outline</v-icon>
+                  <div class="text-body-1 text-grey mt-2">该段落文本内容未保存</div>
+                  <div class="text-caption text-grey mt-1">请重新执行检测以获取完整文本数据</div>
+                </div>
+              </v-card-text>
+            </v-card>
+          </template>
 
           <!-- Factual Fake Reason Card -->
           <v-card
@@ -625,105 +1016,15 @@ onMounted(async () => {
             </v-card-text>
           </v-card>
         </v-col>
-
-        <!-- Right Column -->
-        <v-col cols="12" md="4">
-          <!-- Risk Distribution -->
-          <v-card class="mb-6" elevation="2" rounded="lg">
-            <v-card-title class="pa-6">
-              <span class="text-h6">风险分布</span>
-            </v-card-title>
-            <v-card-text class="pa-6">
-              <v-progress-linear
-                v-if="paperStatistics.total > 0"
-                :model-value="(paperStatistics.high / paperStatistics.total) * 100"
-                color="error"
-                height="25"
-                class="mb-4"
-              >
-                <template #default="{ value }">
-                  <strong>高风险: {{ paperStatistics.high }} ({{ value.toFixed(0) }}%)</strong>
-                </template>
-              </v-progress-linear>
-
-              <v-progress-linear
-                v-if="paperStatistics.total > 0"
-                :model-value="(paperStatistics.medium / paperStatistics.total) * 100"
-                color="warning"
-                height="25"
-                class="mb-4"
-              >
-                <template #default="{ value }">
-                  <strong>中风险: {{ paperStatistics.medium }} ({{ value.toFixed(0) }}%)</strong>
-                </template>
-              </v-progress-linear>
-
-              <v-progress-linear
-                v-if="paperStatistics.total > 0"
-                :model-value="(paperStatistics.low / paperStatistics.total) * 100"
-                color="success"
-                height="25"
-              >
-                <template #default="{ value }">
-                  <strong>低风险: {{ paperStatistics.low }} ({{ value.toFixed(0) }}%)</strong>
-                </template>
-              </v-progress-linear>
-
-              <div v-if="paperStatistics.total === 0" class="text-center text-grey py-4">
-                暂无风险分布数据
-              </div>
-            </v-card-text>
-          </v-card>
-
-          <!-- High Risk TOP5 -->
-          <v-card elevation="2" rounded="lg">
-            <v-card-title class="pa-6">
-              <span class="text-h6">高风险段落TOP5</span>
-            </v-card-title>
-            <v-card-text class="pa-6">
-              <v-list density="compact" v-if="topRiskParagraphs.length > 0">
-                <v-list-item
-                  v-for="(para, index) in topRiskParagraphs"
-                  :key="index"
-                  @click="showParagraphDetail(para)"
-                  class="method-item"
-                >
-                  <template #prepend>
-                    <v-icon :color="getProbabilityColor(para.ai_probability)">
-                      mdi-format-paint
-                    </v-icon>
-                  </template>
-                  <v-list-item-title>
-                    段落 {{ para.paragraph_index }}
-                  </v-list-item-title>
-                  <v-list-item-subtitle>
-                    {{ (para.ai_probability * 100).toFixed(1) }}% - {{ getProbabilityLevel(para.ai_probability) }}
-                  </v-list-item-subtitle>
-                  <template #append>
-                    <v-chip
-                      :color="getProbabilityColor(para.ai_probability)"
-                      size="small"
-                    >
-                      {{ (para.ai_probability * 100).toFixed(1) }}%
-                    </v-chip>
-                  </template>
-                </v-list-item>
-              </v-list>
-              <div v-else class="text-center text-grey py-4">
-                暂无高风险段落
-              </div>
-            </v-card-text>
-          </v-card>
-        </v-col>
       </v-row>
     </template>
 
-    <!-- ========== Review Text Section ========== -->
+    <!-- ========== Review Text Section (Redesigned) ========== -->
     <template v-if="hasReviewResults && (taskType === 'review_text' || taskType === 'multi_material')">
+      <!-- Review-specific: Template Tendency Analysis -->
       <v-row>
-        <!-- Left Column -->
+        <!-- Left Column: Gauge + Reasons -->
         <v-col cols="12" md="8">
-          <!-- Template Tendency Analysis Card -->
           <v-card class="mb-6" elevation="2" rounded="lg">
             <v-card-title class="pa-6">
               <v-icon :color="templateLevel.color" class="mr-2">
@@ -781,7 +1082,7 @@ onMounted(async () => {
             </v-card-text>
           </v-card>
 
-          <!-- Template Analysis Reason Card -->
+          <!-- Template Analysis Reason Cards (one per review text) -->
           <v-card
             v-for="(tplData, idx) in reviewTemplateData"
             :key="'template-reason-' + idx"
@@ -807,7 +1108,7 @@ onMounted(async () => {
           </v-card>
         </v-col>
 
-        <!-- Right Column -->
+        <!-- Right Column: Distribution + Quality -->
         <v-col cols="12" md="4">
           <!-- Score Level Distribution -->
           <v-card class="mb-6" elevation="2" rounded="lg">
@@ -914,115 +1215,410 @@ onMounted(async () => {
           </v-card>
         </v-col>
       </v-row>
-    </template>
 
-    <!-- ========== Dimensions Card ========== -->
-    <v-row v-if="dimensions && Array.isArray(dimensions) && dimensions.length > 0">
-      <v-col cols="12">
-        <v-card class="mb-6" elevation="2" rounded="lg">
-          <v-card-title class="pa-6">
-            <v-icon color="primary" class="mr-2">mdi-chart-box</v-icon>
-            <span class="text-h6">检测维度分析</span>
-          </v-card-title>
-          <v-card-text class="pa-6">
-            <v-row>
-              <v-col
-                v-for="(dim, idx) in dimensions"
-                :key="idx"
-                cols="12"
-                sm="6"
-                md="4"
+      <!-- LLM Analysis Card -->
+      <v-row v-if="llmAnalysis">
+        <v-col cols="12">
+          <v-card class="mb-6" elevation="2" rounded="lg">
+            <v-card-title class="pa-6">
+              <v-icon color="purple" class="mr-2">mdi-robot</v-icon>
+              <span class="text-h6">大模型分析</span>
+              <v-chip
+                v-if="llmAnalysis.risk_level"
+                :color="llmAnalysis.risk_level === 'high' ? 'error' : llmAnalysis.risk_level === 'medium' ? 'warning' : 'success'"
+                size="small"
+                class="ml-4"
               >
-                <v-card variant="outlined" rounded="lg" class="pa-4">
-                  <div class="text-subtitle-1 font-weight-bold mb-2">{{ dim.name || `维度 ${idx + 1}` }}</div>
-                  <v-chip
-                    v-if="dim.score !== undefined"
-                    :color="dim.score > 0.7 ? 'error' : dim.score > 0.4 ? 'warning' : 'success'"
-                    size="small"
-                    class="mb-2"
+                {{ llmAnalysis.risk_level === 'high' ? '高风险' : llmAnalysis.risk_level === 'medium' ? '中风险' : '低风险' }}
+              </v-chip>
+            </v-card-title>
+            <v-card-text class="pa-6">
+              <div v-if="typeof llmAnalysis === 'string'" class="text-body-1 analysis-text">
+                {{ llmAnalysis }}
+              </div>
+              <div v-else-if="typeof llmAnalysis === 'object'">
+                <v-row>
+                  <v-col
+                    v-for="(value, key) in llmAnalysis"
+                    :key="String(key)"
+                    cols="12"
+                    sm="6"
                   >
-                    评分: {{ (dim.score * 100).toFixed(1) }}%
-                  </v-chip>
-                  <div v-if="dim.summary" class="text-body-2 text-grey">{{ dim.summary }}</div>
-                </v-card>
-              </v-col>
-            </v-row>
-          </v-card-text>
-        </v-card>
-      </v-col>
-    </v-row>
+                    <div class="llm-field">
+                      <div class="text-subtitle-2 font-weight-bold mb-1">{{ getChineseLabel(String(key)) }}</div>
+                      <v-card variant="outlined" rounded="lg" class="pa-3">
+                        <div class="text-body-2">{{ formatLlmAnalysisValue(value) }}</div>
+                      </v-card>
+                    </div>
+                  </v-col>
+                </v-row>
+              </div>
+            </v-card-text>
+          </v-card>
+        </v-col>
+      </v-row>
 
-    <!-- ========== Evidence Card ========== -->
-    <v-row v-if="evidence">
-      <v-col cols="12">
-        <v-card class="mb-6" elevation="2" rounded="lg">
-          <v-card-title class="pa-6">
-            <v-icon color="info" class="mr-2">mdi-file-document</v-icon>
-            <span class="text-h6">检测证据</span>
-          </v-card-title>
-          <v-card-text class="pa-6">
-            <v-card variant="outlined">
-              <v-card-text>
-                <pre class="evidence-pre">{{ typeof evidence === 'string' ? evidence : JSON.stringify(evidence, null, 2) }}</pre>
-              </v-card-text>
-            </v-card>
-          </v-card-text>
-        </v-card>
-      </v-col>
-    </v-row>
+      <!-- Review Statistics Row -->
+      <v-row class="mb-6">
+        <v-col cols="12" md="3">
+          <v-card elevation="2" rounded="lg" class="text-center pa-4">
+            <div class="text-h4 primary--text">{{ reviewStatistics.total }}</div>
+            <div class="text-body-2 text-grey mt-1">总段落数</div>
+          </v-card>
+        </v-col>
+        <v-col cols="12" md="3">
+          <v-card elevation="2" rounded="lg" class="text-center pa-4" color="red-lighten-5">
+            <div class="text-h4 error--text">{{ reviewStatistics.high }}</div>
+            <div class="text-body-2 text-grey mt-1">高风险段落</div>
+          </v-card>
+        </v-col>
+        <v-col cols="12" md="3">
+          <v-card elevation="2" rounded="lg" class="text-center pa-4" color="orange-lighten-5">
+            <div class="text-h4 warning--text">{{ reviewStatistics.medium }}</div>
+            <div class="text-body-2 text-grey mt-1">中风险段落</div>
+          </v-card>
+        </v-col>
+        <v-col cols="12" md="3">
+          <v-card elevation="2" rounded="lg" class="text-center pa-4" color="green-lighten-5">
+            <div class="text-h4 success--text">{{ reviewStatistics.low }}</div>
+            <div class="text-body-2 text-grey mt-1">低风险段落</div>
+          </v-card>
+        </v-col>
+      </v-row>
 
-    <!-- ========== LLM Analysis Card ========== -->
-    <v-row v-if="llmAnalysis">
-      <v-col cols="12">
-        <v-card class="mb-6" elevation="2" rounded="lg">
-          <v-card-title class="pa-6">
-            <v-icon color="purple" class="mr-2">mdi-robot</v-icon>
-            <span class="text-h6">大模型分析</span>
-            <v-chip
-              v-if="llmAnalysis.risk_level"
-              :color="llmAnalysis.risk_level === 'high' ? 'error' : llmAnalysis.risk_level === 'medium' ? 'warning' : 'success'"
-              size="small"
-              class="ml-4"
-            >
-              {{ llmAnalysis.risk_level === 'high' ? '高风险' : llmAnalysis.risk_level === 'medium' ? '中风险' : '低风险' }}
-            </v-chip>
-          </v-card-title>
-          <v-card-text class="pa-6">
-            <!-- If it's a string, just display it -->
-            <div v-if="typeof llmAnalysis === 'string'" class="text-body-1 analysis-text">
-              {{ llmAnalysis }}
-            </div>
-            <!-- If it's an object, show structured key-value -->
-            <div v-else-if="typeof llmAnalysis === 'object'">
+      <!-- Review: Risk Distribution + Dimensions -->
+      <v-card class="mb-6" elevation="2" rounded="lg">
+        <v-card-title class="pa-6">
+          <v-icon color="primary" class="mr-2">mdi-chart-box</v-icon>
+          <span class="text-h6">风险分析与维度评估</span>
+        </v-card-title>
+        <v-card-text class="pa-6 pt-0">
+          <v-row>
+            <v-col cols="12" md="4">
+              <div class="text-subtitle-2 font-weight-bold mb-4">风险分布</div>
+              <v-progress-linear
+                v-if="reviewStatistics.total > 0"
+                :model-value="(reviewStatistics.high / reviewStatistics.total) * 100"
+                color="error"
+                height="25"
+                class="mb-4"
+              >
+                <template #default="{ value }">
+                  <strong>高风险: {{ reviewStatistics.high }} ({{ value.toFixed(0) }}%)</strong>
+                </template>
+              </v-progress-linear>
+              <v-progress-linear
+                v-if="reviewStatistics.total > 0"
+                :model-value="(reviewStatistics.medium / reviewStatistics.total) * 100"
+                color="warning"
+                height="25"
+                class="mb-4"
+              >
+                <template #default="{ value }">
+                  <strong>中风险: {{ reviewStatistics.medium }} ({{ value.toFixed(0) }}%)</strong>
+                </template>
+              </v-progress-linear>
+              <v-progress-linear
+                v-if="reviewStatistics.total > 0"
+                :model-value="(reviewStatistics.low / reviewStatistics.total) * 100"
+                color="success"
+                height="25"
+              >
+                <template #default="{ value }">
+                  <strong>低风险: {{ reviewStatistics.low }} ({{ value.toFixed(0) }}%)</strong>
+                </template>
+              </v-progress-linear>
+              <div v-if="reviewStatistics.total === 0" class="text-center text-grey py-4">
+                暂无风险分布数据
+              </div>
+            </v-col>
+            <v-col cols="12" md="8" v-if="dimensions && Array.isArray(dimensions) && dimensions.length > 0">
+              <div class="text-subtitle-2 font-weight-bold mb-4">检测维度</div>
               <v-row>
                 <v-col
-                  v-for="(value, key) in llmAnalysis"
-                  :key="String(key)"
+                  v-for="(dim, idx) in dimensions"
+                  :key="idx"
                   cols="12"
                   sm="6"
                 >
-                  <div class="llm-field">
-                    <div class="text-subtitle-2 font-weight-bold mb-1">{{ getChineseLabel(String(key)) }}</div>
-                    <v-card variant="outlined" rounded="lg" class="pa-3">
-                      <div class="text-body-2">{{ formatLlmAnalysisValue(value) }}</div>
-                    </v-card>
-                  </div>
+                  <v-card variant="outlined" rounded="lg" class="pa-4">
+                    <div class="text-subtitle-1 font-weight-bold mb-2">{{ dim.name || `维度 ${idx + 1}` }}</div>
+                    <v-chip
+                      v-if="dim.score !== undefined"
+                      :color="dim.score > 0.7 ? 'error' : dim.score > 0.4 ? 'warning' : 'success'"
+                      size="small"
+                      class="mb-2"
+                    >
+                      评分: {{ (dim.score * 100).toFixed(1) }}%
+                    </v-chip>
+                    <div v-if="dim.summary" class="text-body-2 text-grey">{{ dim.summary }}</div>
+                  </v-card>
                 </v-col>
               </v-row>
-            </div>
-          </v-card-text>
-        </v-card>
-      </v-col>
-    </v-row>
+            </v-col>
+          </v-row>
+        </v-card-text>
+      </v-card>
 
-    <!-- ========== Paragraph Detail Dialog ========== -->
+      <!-- Review content: Left section list + Right detail panel -->
+      <v-row>
+        <!-- Left Column: Review Section List -->
+        <v-col cols="12" md="4">
+          <v-card class="mb-6" elevation="2" rounded="lg">
+            <v-card-title class="d-flex justify-space-between align-center pa-6">
+              <div class="d-flex align-center">
+                <v-icon color="primary" class="mr-2">mdi-format-list-bulleted</v-icon>
+                <span class="text-h6">段落列表</span>
+              </div>
+              <div class="d-flex align-center gap-2">
+                <v-chip size="small" color="primary" variant="tonal">
+                  {{ selectedReviewCount }}/{{ structuredReviewSections.length }}
+                </v-chip>
+                <v-btn
+                  v-if="!allReviewSelected"
+                  size="x-small"
+                  variant="text"
+                  color="primary"
+                  @click="selectAllSections('review')"
+                >
+                  全选
+                </v-btn>
+                <v-btn
+                  v-else
+                  size="x-small"
+                  variant="text"
+                  color="error"
+                  @click="deselectAllSections('review')"
+                >
+                  取消全选
+                </v-btn>
+              </div>
+            </v-card-title>
+            <v-card-text class="pa-4 pt-0">
+              <div v-if="structuredReviewSections.length === 0" class="text-center text-grey py-8">
+                暂无段落分析数据
+              </div>
+              <div v-else>
+                <!-- Sort toggle -->
+                <v-btn-toggle
+                  v-model="reviewSortMode"
+                  mandatory
+                  density="compact"
+                  variant="outlined"
+                  divided
+                  class="mb-3 w-100"
+                >
+                  <v-btn value="order" size="small" class="flex-grow-1">
+                    <v-icon start size="small">mdi-sort-ascending</v-icon>
+                    按顺序排列
+                  </v-btn>
+                  <v-btn value="risk" size="small" class="flex-grow-1">
+                    <v-icon start size="small">mdi-sort-alert</v-icon>
+                    按风险排列
+                  </v-btn>
+                </v-btn-toggle>
+                <div class="section-list-container">
+                <div
+                  v-for="section in sortedReviewSections"
+                  :key="section.item_id"
+                  class="section-list-item pa-3 mb-2 rounded-lg cursor-pointer"
+                  :class="{
+                    'section-selected': selectedReviewSectionId === section.item_id,
+                    'section-checked': isSectionSelected(section.item_id)
+                  }"
+                  @click="selectReviewSection(section.item_id)"
+                >
+                  <div class="d-flex align-center justify-space-between">
+                    <div class="d-flex align-center" style="min-width: 0; flex: 1;">
+                      <v-checkbox
+                        :model-value="isSectionSelected(section.item_id)"
+                        @click.stop
+                        @update:model-value="toggleSectionSelection(section.item_id, $event)"
+                        color="primary"
+                        hide-details
+                        density="compact"
+                        class="flex-shrink-0 mr-1"
+                        style="margin-top: 0; padding-top: 0;"
+                      />
+                      <v-icon
+                        :color="getProbabilityColor(section.confidence_score || 0)"
+                        size="small"
+                        class="mr-2 flex-shrink-0"
+                      >
+                        {{ (section.confidence_score || 0) > 0.5 ? 'mdi-alert-circle' : 'mdi-check-circle' }}
+                      </v-icon>
+                      <div style="min-width: 0; flex: 1;">
+                        <div class="text-body-2 font-weight-medium text-truncate">
+                          {{ section.title || section.item_id }}
+                        </div>
+                        <div v-if="section.source_file" class="text-caption text-grey text-truncate">
+                          {{ section.source_file }}
+                          <span v-if="section.page_number !== null && section.page_number !== undefined">
+                            · 第{{ (section.page_number + 1) }}页
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    <v-chip
+                      :color="getProbabilityColor(section.confidence_score || 0)"
+                      size="x-small"
+                      class="ml-2 flex-shrink-0"
+                    >
+                      {{ ((section.confidence_score || 0) * 100).toFixed(0) }}%
+                    </v-chip>
+                  </div>
+                  <!-- Mini progress bar -->
+                  <v-progress-linear
+                    :model-value="(section.confidence_score || 0) * 100"
+                    :color="getProbabilityColor(section.confidence_score || 0)"
+                    height="3"
+                    rounded
+                    class="mt-2"
+                  />
+                </div>
+              </div>
+              </div>
+            </v-card-text>
+          </v-card>
+        </v-col>
+
+        <!-- Right Column: Review Section Detail Panel -->
+        <v-col cols="12" md="8">
+          <!-- No section selected placeholder -->
+          <v-card v-if="!selectedReviewSection" elevation="2" rounded="lg" class="pa-8 text-center">
+            <v-icon size="64" color="grey">mdi-cursor-default-click</v-icon>
+            <div class="text-h6 text-grey mt-4">点击左侧段落查看详情</div>
+            <div class="text-body-2 text-grey mt-2">选择任意段落查看完整的检测分析结果</div>
+          </v-card>
+
+          <!-- Selected review section detail -->
+          <template v-else>
+            <!-- Section header card -->
+            <v-card class="mb-6" elevation="2" rounded="lg">
+              <v-card-title class="pa-6">
+                <div class="d-flex align-center flex-wrap gap-2">
+                  <v-icon :color="getProbabilityColor(selectedReviewSection.confidence_score || 0)" class="mr-1">
+                    {{ (selectedReviewSection.confidence_score || 0) > 0.5 ? 'mdi-alert-circle' : 'mdi-check-circle' }}
+                  </v-icon>
+                  <span class="text-h6">{{ selectedReviewSection.title || selectedReviewSection.item_id }}</span>
+                  <v-chip :color="getProbabilityColor(selectedReviewSection.confidence_score || 0)" size="small">
+                    {{ getProbabilityLevel(selectedReviewSection.confidence_score || 0) }}
+                  </v-chip>
+                  <v-chip v-if="selectedReviewSection.is_aigc" color="error" size="small" variant="tonal">
+                    <v-icon start size="x-small">mdi-robot</v-icon>
+                    AI生成
+                  </v-chip>
+                  <v-chip v-else color="success" size="small" variant="tonal">
+                    <v-icon start size="x-small">mdi-account</v-icon>
+                    人类撰写
+                  </v-chip>
+                </div>
+              </v-card-title>
+              <v-card-text class="pa-6 pt-0">
+                <div class="d-flex flex-wrap gap-3 text-body-2 text-grey">
+                  <span v-if="selectedReviewSection.source_file">
+                    <v-icon size="small" class="mr-1">mdi-file-document</v-icon>
+                    {{ selectedReviewSection.source_file }}
+                  </span>
+                  <span v-if="selectedReviewSection.page_number !== null && selectedReviewSection.page_number !== undefined">
+                    <v-icon size="small" class="mr-1">mdi-book-open-page-variant</v-icon>
+                    第 {{ (selectedReviewSection.page_number + 1) }} 页
+                  </span>
+                  <span>
+                    <v-icon size="small" class="mr-1">mdi-identifier</v-icon>
+                    {{ selectedReviewSection.item_id }}
+                  </span>
+                </div>
+              </v-card-text>
+            </v-card>
+
+            <!-- BERT Detection Result Card -->
+            <v-card class="mb-6" elevation="2" rounded="lg">
+              <v-card-title class="pa-6">
+                <v-icon color="primary" class="mr-2">mdi-brain</v-icon>
+                <span class="text-h6">BERT 检测结果</span>
+              </v-card-title>
+              <v-card-text class="pa-6 pt-0">
+                <v-row>
+                  <v-col cols="12" md="6">
+                    <div class="text-subtitle-2 font-weight-bold mb-2">AI生成置信度</div>
+                    <v-progress-linear
+                      :model-value="(selectedReviewSection.confidence_score || 0) * 100"
+                      :color="getProbabilityColor(selectedReviewSection.confidence_score || 0)"
+                      height="28"
+                      rounded
+                    >
+                      <template #default="{ value }">
+                        <strong>{{ value.toFixed(1) }}%</strong>
+                      </template>
+                    </v-progress-linear>
+                  </v-col>
+                  <v-col cols="12" md="6">
+                    <div class="text-subtitle-2 font-weight-bold mb-2">概率分布</div>
+                    <div class="d-flex align-center gap-4">
+                      <div class="flex-grow-1">
+                        <div class="text-caption text-grey mb-1">人类撰写</div>
+                        <v-progress-linear
+                          :model-value="(selectedReviewSection.probabilities?.human || 0) * 100"
+                          color="success"
+                          height="12"
+                          rounded
+                        />
+                        <div class="text-caption text-right">{{ ((selectedReviewSection.probabilities?.human || 0) * 100).toFixed(1) }}%</div>
+                      </div>
+                      <div class="flex-grow-1">
+                        <div class="text-caption text-grey mb-1">AI生成</div>
+                        <v-progress-linear
+                          :model-value="(selectedReviewSection.probabilities?.aigc || 0) * 100"
+                          color="error"
+                          height="12"
+                          rounded
+                        />
+                        <div class="text-caption text-right">{{ ((selectedReviewSection.probabilities?.aigc || 0) * 100).toFixed(1) }}%</div>
+                      </div>
+                    </div>
+                  </v-col>
+                </v-row>
+                <div v-if="selectedReviewSection.label_name" class="mt-4">
+                  <v-chip
+                    :color="selectedReviewSection.is_aigc ? 'error' : 'success'"
+                    variant="tonal"
+                  >
+                    模型判定：{{ selectedReviewSection.label_name }}
+                  </v-chip>
+                </div>
+              </v-card-text>
+            </v-card>
+
+            <!-- Review Text Content Card -->
+            <v-card class="mb-6" elevation="2" rounded="lg">
+              <v-card-title class="pa-6">
+                <v-icon color="info" class="mr-2">mdi-text-box</v-icon>
+                <span class="text-h6">段落内容</span>
+              </v-card-title>
+              <v-card-text class="pa-6 pt-0">
+                <div v-if="selectedReviewSection.text" class="paragraph-detail-text">{{ selectedReviewSection.text }}</div>
+                <div v-else class="text-center py-8">
+                  <v-icon size="48" color="grey-lighten-1">mdi-text-box-remove-outline</v-icon>
+                  <div class="text-body-1 text-grey mt-2">该段落文本内容未保存</div>
+                  <div class="text-caption text-grey mt-1">请重新执行检测以获取完整文本数据</div>
+                </div>
+              </v-card-text>
+            </v-card>
+
+          </template>
+        </v-col>
+      </v-row>
+    </template>
+
+    <!-- ========== Section Detail Dialog (for TOP5 clicks) ========== -->
     <v-dialog v-model="showParagraphDialog" max-width="800">
       <v-card v-if="selectedParagraph" rounded="lg">
         <v-card-title class="pa-6 d-flex align-center">
-          <v-icon :color="getProbabilityColor(selectedParagraph.ai_probability)" class="mr-2">
-            {{ selectedParagraph.ai_probability > 0.5 ? 'mdi-alert-circle' : 'mdi-information' }}
+          <v-icon :color="getProbabilityColor(selectedParagraph.confidence_score || 0)" class="mr-2">
+            {{ (selectedParagraph.confidence_score || 0) > 0.5 ? 'mdi-alert-circle' : 'mdi-information' }}
           </v-icon>
-          <span class="text-h6">段落 {{ selectedParagraph.paragraph_index }} 详情</span>
+          <span class="text-h6">{{ selectedParagraph.title || selectedParagraph.item_id }} 详情</span>
           <v-spacer />
           <v-btn icon="mdi-close" variant="text" @click="showParagraphDialog = false" />
         </v-card-title>
@@ -1030,45 +1626,73 @@ onMounted(async () => {
         <v-card-text class="pa-6">
           <!-- AI probability chips -->
           <div class="mb-4">
-            <v-chip :color="getProbabilityColor(selectedParagraph.ai_probability)" size="large">
+            <v-chip :color="getProbabilityColor(selectedParagraph.confidence_score || 0)" size="large">
               <v-icon start>mdi-brain</v-icon>
-              AI生成概率: {{ (selectedParagraph.ai_probability * 100).toFixed(1) }}%
+              AI生成置信度: {{ ((selectedParagraph.confidence_score || 0) * 100).toFixed(1) }}%
             </v-chip>
             <v-chip
-              :color="getProbabilityColor(selectedParagraph.ai_probability)"
+              :color="getProbabilityColor(selectedParagraph.confidence_score || 0)"
               size="large"
               class="ml-2"
             >
-              {{ getProbabilityLevel(selectedParagraph.ai_probability) }}
+              {{ getProbabilityLevel(selectedParagraph.confidence_score || 0) }}
+            </v-chip>
+            <v-chip v-if="selectedParagraph.source_file" size="large" class="ml-2" variant="tonal">
+              {{ selectedParagraph.source_file }}
             </v-chip>
           </div>
 
           <!-- Paragraph text -->
           <div class="mb-4">
             <h3 class="text-h6 mb-2">段落内容</h3>
-            <div class="paragraph-detail-text">{{ selectedParagraph.text }}</div>
-          </div>
-
-          <!-- AI judgment reason -->
-          <div class="mb-4">
-            <h3 class="text-h6 mb-2">AI判断原因</h3>
-            <v-alert :color="getProbabilityColor(selectedParagraph.ai_probability)" variant="tonal">
-              {{ selectedParagraph.reason }}
-            </v-alert>
+            <div class="paragraph-detail-text">{{ selectedParagraph.text || '该段落文本内容未保存' }}</div>
           </div>
 
           <!-- Probability visual -->
-          <div>
+          <div class="mb-4">
             <h3 class="text-h6 mb-2">AI生成概率可视化</h3>
             <v-progress-linear
-              :model-value="selectedParagraph.ai_probability * 100"
-              :color="getProbabilityColor(selectedParagraph.ai_probability)"
+              :model-value="(selectedParagraph.confidence_score || 0) * 100"
+              :color="getProbabilityColor(selectedParagraph.confidence_score || 0)"
               height="30"
             >
               <template #default="{ value }">
                 <strong>{{ value.toFixed(1) }}%</strong>
               </template>
             </v-progress-linear>
+          </div>
+
+          <!-- Probability breakdown -->
+          <div>
+            <h3 class="text-h6 mb-2">概率分布</h3>
+            <v-row>
+              <v-col cols="6">
+                <div class="text-body-2 mb-1">人类撰写</div>
+                <v-progress-linear
+                  :model-value="(selectedParagraph.probabilities?.human || 0) * 100"
+                  color="success"
+                  height="20"
+                  rounded
+                >
+                  <template #default="{ value }">
+                    <strong>{{ value.toFixed(1) }}%</strong>
+                  </template>
+                </v-progress-linear>
+              </v-col>
+              <v-col cols="6">
+                <div class="text-body-2 mb-1">AI生成</div>
+                <v-progress-linear
+                  :model-value="(selectedParagraph.probabilities?.aigc || 0) * 100"
+                  color="error"
+                  height="20"
+                  rounded
+                >
+                  <template #default="{ value }">
+                    <strong>{{ value.toFixed(1) }}%</strong>
+                  </template>
+                </v-progress-linear>
+              </v-col>
+            </v-row>
           </div>
         </v-card-text>
 
@@ -1079,109 +1703,122 @@ onMounted(async () => {
       </v-card>
     </v-dialog>
 
-    <!-- ========== Review Submission Dialog ========== -->
-    <v-dialog v-model="showReviewDialog" max-width="700" persistent>
-      <v-card rounded="lg">
-        <v-card-title class="pa-6 d-flex align-center">
-          <v-icon color="success" class="mr-2">mdi-send</v-icon>
-          <span class="text-h6">提交人工审核</span>
-          <v-spacer />
-          <v-btn icon="mdi-close" variant="text" @click="showReviewDialog = false" />
-        </v-card-title>
+    <!-- ========== Review Submission Card (Inline) ========== -->
+    <v-row class="mt-6">
+      <v-col cols="12">
+        <v-card elevation="2" rounded="lg" class="pa-6">
+          <v-card-title class="pa-0 mb-4 d-flex align-center">
+            <v-icon color="success" class="mr-2">mdi-account-check</v-icon>
+            <span class="text-h6">提交人工审核</span>
+            <v-spacer />
+            <v-chip size="small" :color="selectedSectionIds.size > 0 ? 'primary' : 'default'" variant="tonal">
+              已选择 {{ selectedSectionIds.size }} 个段落
+            </v-chip>
+          </v-card-title>
 
-        <v-card-text class="pa-6">
-          <!-- Text ID selection -->
-          <div class="mb-4">
-            <div class="text-subtitle-1 font-weight-bold mb-2">选择检测文本</div>
-            <v-list variant="outlined" rounded="lg" density="compact" class="border">
-              <v-list-item
-                v-for="item in textList"
-                :key="item.resource_id"
-                @click="toggleTextId(item.resource_id)"
-              >
-                <template #prepend>
-                  <v-checkbox
-                    :model-value="selectedTextIds.includes(item.resource_id)"
-                    @click.stop
-                    @update:model-value="toggleTextId(item.resource_id)"
-                    color="primary"
-                    hide-details
-                  />
-                </template>
-                <v-list-item-title>
-                  文本资源 #{{ item.resource_id }}
-                </v-list-item-title>
-                <v-list-item-subtitle>
-                  类型: {{ item.text_type === 'paper_text' ? '论文文本' : item.text_type === 'review_text' ? '评审文本' : item.text_type }}
-                  <span v-if="item.is_fake" class="error--text ml-2">疑似AI生成</span>
-                </v-list-item-subtitle>
-                <template #append>
+          <v-card-text class="pa-0">
+            <v-row>
+              <!-- Left: Selected sections summary -->
+              <v-col cols="12" md="6">
+                <div class="text-subtitle-2 font-weight-bold mb-3">
+                  <v-icon size="small" class="mr-1">mdi-file-document-multiple</v-icon>
+                  已选择段落
+                </div>
+                <div v-if="selectedSectionIds.size === 0" class="text-body-2 text-grey pa-4 text-center rounded-lg border">
+                  请在上方段落列表中勾选需要审核的段落
+                </div>
+                <div v-else class="selected-sections-preview">
                   <v-chip
-                    :color="item.is_fake ? 'error' : 'success'"
+                    v-for="id in [...selectedSectionIds].slice(0, 10)"
+                    :key="id"
                     size="small"
+                    closable
+                    class="ma-1"
+                    @click:close="toggleSectionSelection(id)"
                   >
-                    {{ (item.confidence_score * 100).toFixed(1) }}%
+                    {{ structuredSections.find(s => s.item_id === id)?.title || structuredReviewSections.find(s => s.item_id === id)?.title || id }}
                   </v-chip>
-                </template>
-              </v-list-item>
-            </v-list>
-          </div>
+                  <div v-if="selectedSectionIds.size > 10" class="text-caption text-grey mt-1">
+                    ...及其他 {{ selectedSectionIds.size - 10 }} 个段落
+                  </div>
+                </div>
+              </v-col>
 
-          <!-- Reviewer selection -->
-          <div class="mb-4">
-            <div class="text-subtitle-1 font-weight-bold mb-2">选择审核人员</div>
-            <v-autocomplete
-              v-model="selectedReviewers"
-              :items="filteredReviewers"
-              v-model:search="reviewSearchQuery"
-              item-title="username"
-              item-value="id"
-              label="搜索审核人员"
-              multiple
-              chips
-              closable-chips
-              hide-details
-              variant="outlined"
-            >
-              <template #chip="{ props: chipProps, item }">
-                <v-chip v-bind="chipProps" :prepend-avatar="getImageUrl(item.raw.avatar)">
-                  {{ item.raw.username }}
-                </v-chip>
-              </template>
-              <template #item="{ props: itemProps, item }">
-                <v-list-item v-bind="itemProps" :prepend-avatar="getImageUrl(item.raw.avatar)" :title="item.raw.username" />
-              </template>
-            </v-autocomplete>
-          </div>
+              <!-- Right: Reviewer selection + submit -->
+              <v-col cols="12" md="6">
+                <div class="text-subtitle-2 font-weight-bold mb-3">
+                  <v-icon size="small" class="mr-1">mdi-account-group</v-icon>
+                  选择审核人员
+                </div>
+                <v-autocomplete
+                  v-model="selectedReviewers"
+                  :items="allReviewers"
+                  v-model:search="reviewSearchQuery"
+                  item-title="username"
+                  item-value="id"
+                  label="搜索并选择审核人员"
+                  multiple
+                  chips
+                  closable-chips
+                  hide-details
+                  variant="outlined"
+                  class="mb-3"
+                >
+                  <template #chip="{ props: chipProps, item }">
+                    <v-chip v-bind="chipProps" :prepend-avatar="getImageUrl(item.raw.avatar)">
+                      {{ item.raw.username }}
+                    </v-chip>
+                  </template>
+                  <template #item="{ props: itemProps, item }">
+                    <v-list-item v-bind="itemProps" :prepend-avatar="getImageUrl(item.raw.avatar)" :title="item.raw.username" />
+                  </template>
+                </v-autocomplete>
 
-          <!-- Reason -->
-          <div>
-            <div class="text-subtitle-1 font-weight-bold mb-2">审核原因</div>
-            <v-textarea
-              v-model="reviewReason"
-              label="请输入提交审核的原因（选填）"
-              variant="outlined"
-              rows="3"
-              hide-details
-            />
-          </div>
-        </v-card-text>
+                <!-- Reason textarea -->
+                <v-textarea
+                  v-model="reviewReason"
+                  label="审核原因（选填）"
+                  variant="outlined"
+                  rows="2"
+                  hide-details
+                  class="mb-4"
+                />
 
-        <v-card-actions class="pa-6 pt-0">
-          <v-spacer />
-          <v-btn variant="text" @click="showReviewDialog = false">取消</v-btn>
-          <v-btn
-            color="success"
-            variant="elevated"
-            :disabled="!canSubmitReview"
-            :loading="submittingReview"
-            @click="submitReview"
-          >
-            提交审核
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+                <!-- Submit button -->
+                <div class="d-flex justify-end gap-3">
+                  <v-btn
+                    :color="isDarkMode ? 'green-darken-2' : 'success'"
+                    variant="outlined"
+                    prepend-icon="mdi-select-all"
+                    :disabled="textList.length === 0"
+                    @click="selectAllSections('paper'); selectAllSections('review')"
+                  >
+                    全选段落
+                  </v-btn>
+                  <v-btn
+                    variant="outlined"
+                    @click="clearReviewSelection"
+                    :disabled="selectedSectionIds.size === 0 && selectedReviewers.length === 0"
+                  >
+                    清空选择
+                  </v-btn>
+                  <v-btn
+                    color="success"
+                    variant="elevated"
+                    prepend-icon="mdi-send"
+                    :disabled="!canSubmitReview"
+                    :loading="submittingReview"
+                    @click="submitReview"
+                  >
+                    提交审核
+                  </v-btn>
+                </div>
+              </v-col>
+            </v-row>
+          </v-card-text>
+        </v-card>
+      </v-col>
+    </v-row>
   </v-container>
 </template>
 
@@ -1223,59 +1860,32 @@ onMounted(async () => {
   background-color: rgba(255, 255, 255, 0.05);
 }
 
-.paragraph-container {
-  max-height: 800px;
+/* Section list styles */
+.section-list-container {
+  max-height: 600px;
   overflow-y: auto;
 }
 
-.paragraph-item {
-  padding: 16px;
-  margin-bottom: 12px;
-  border-radius: 8px;
+.section-list-item {
   cursor: pointer;
-  transition: all 0.3s ease;
-  border-left: 4px solid transparent;
+  transition: all 0.2s ease;
+  border: 2px solid transparent;
 }
 
-.paragraph-item:hover {
+.section-list-item:hover {
+  background-color: #f5f5f5;
   transform: translateX(4px);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
-.high-probability {
-  background-color: rgba(255, 0, 0, 0.05);
-  border-left: 4px solid #f44336;
+.section-selected {
+  border-color: rgb(var(--v-theme-primary));
+  background-color: rgba(var(--v-theme-primary), 0.05);
+  box-shadow: 0 2px 8px rgba(var(--v-theme-primary), 0.15);
 }
 
-.medium-probability {
-  background-color: rgba(255, 165, 0, 0.05);
-  border-left: 4px solid #ff9800;
-}
-
-.low-probability {
-  background-color: rgba(0, 128, 0, 0.05);
-  border-left: 4px solid #4caf50;
-}
-
-.paragraph-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 12px;
-}
-
-.paragraph-number {
-  font-weight: bold;
-}
-
-.paragraph-probability {
-  font-size: 14px;
-}
-
-.paragraph-text {
-  line-height: 1.8;
-  color: #333;
-  text-align: justify;
+.section-checked {
+  border-color: rgb(var(--v-theme-primary));
+  background-color: rgba(var(--v-theme-primary), 0.03);
 }
 
 .paragraph-detail-text {
@@ -1284,8 +1894,10 @@ onMounted(async () => {
   padding: 16px;
   background-color: #f5f5f5;
   border-radius: 8px;
-  max-height: 300px;
+  max-height: 400px;
   overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .method-item {
@@ -1346,7 +1958,15 @@ onMounted(async () => {
   gap: 8px;
 }
 
+.gap-3 {
+  gap: 12px;
+}
+
 .gap-4 {
   gap: 16px;
+}
+
+.cursor-pointer {
+  cursor: pointer;
 }
 </style>

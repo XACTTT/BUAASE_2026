@@ -12,11 +12,26 @@ export const resolveApiAssetUrl = (path: string): string => {
     return ''
   }
 
+  // For absolute URLs pointing to the backend, strip the host to use the dev proxy
+  const envBase = String(import.meta.env.VITE_API_URL || '').trim()
+  const backendHosts = ['http://116.63.14.7']
+  if (envBase) {
+    try {
+      const url = new URL(envBase)
+      backendHosts.push(`${url.protocol}//${url.host}`)
+    } catch { /* ignore */ }
+  }
+
+  for (const host of backendHosts) {
+    if (path.startsWith(host)) {
+      return path.slice(host.length) || '/'
+    }
+  }
+
   if (/^https?:\/\//i.test(path)) {
     return path
   }
 
-  const envBase = String(import.meta.env.VITE_API_URL || '').trim()
   if (!envBase) {
     return path
   }

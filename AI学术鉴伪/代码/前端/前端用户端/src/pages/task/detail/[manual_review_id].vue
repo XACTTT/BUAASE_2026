@@ -203,8 +203,8 @@
                     :class="{ 'text-sidebar-item-active': currentTextIndex === index }"
                     @click="currentTextIndex = index">
                     <div class="d-flex align-center mb-1">
-                      <v-chip size="x-small" :color="text.source_type === 'paste' ? 'info' : 'success'" class="mr-2">
-                        {{ text.source_type === 'paste' ? '粘贴' : '文件' }}
+                      <v-chip size="x-small" :color="text.ai_detection?.ai_generated_paragraphs?.length > 0 ? 'green' : text.ai_detection?.template_tendency_score !== null && text.ai_detection?.template_tendency_score !== undefined ? 'orange' : 'grey'" class="mr-2">
+                        {{ text.ai_detection?.ai_generated_paragraphs?.length > 0 ? '论文' : text.ai_detection?.template_tendency_score !== null && text.ai_detection?.template_tendency_score !== undefined ? '评审' : '文本' }}
                       </v-chip>
                       <span class="text-caption text-grey">ID: {{ text.id }}</span>
                     </div>
@@ -279,6 +279,12 @@
                         </div>
                       </div>
                     </template>
+
+                    <!-- AI检测分析原因 -->
+                    <v-alert v-if="currentAiDetection.factual_fake_reason" type="warning" variant="tonal" class="mb-3">
+                      <div class="text-subtitle-2 mb-1">AI检测分析</div>
+                      {{ currentAiDetection.factual_fake_reason }}
+                    </v-alert>
 
                     <!-- Review专属：模板化倾向 -->
                     <template v-if="currentAiDetection.template_tendency_score !== null && currentAiDetection.template_tendency_score !== undefined">
@@ -563,8 +569,8 @@
                         :class="{ 'text-sidebar-item-active': currentTextIndex === index }"
                         @click="currentTextIndex = index">
                         <div class="d-flex align-center mb-1">
-                          <v-chip size="x-small" :color="text.source_type === 'paste' ? 'info' : 'success'" class="mr-2">
-                            {{ text.source_type === 'paste' ? '粘贴' : '文件' }}
+                          <v-chip size="x-small" :color="text.ai_detection?.ai_generated_paragraphs?.length > 0 ? 'green' : text.ai_detection?.template_tendency_score !== null && text.ai_detection?.template_tendency_score !== undefined ? 'orange' : 'grey'" class="mr-2">
+                            {{ text.ai_detection?.ai_generated_paragraphs?.length > 0 ? '论文' : text.ai_detection?.template_tendency_score !== null && text.ai_detection?.template_tendency_score !== undefined ? '评审' : '文本' }}
                           </v-chip>
                           <span class="text-caption text-grey">ID: {{ text.id }}</span>
                         </div>
@@ -639,6 +645,12 @@
                             </div>
                           </div>
                         </template>
+
+                        <!-- AI检测分析原因 -->
+                        <v-alert v-if="currentAiDetection.factual_fake_reason" type="warning" variant="tonal" class="mb-3">
+                          <div class="text-subtitle-2 mb-1">AI检测分析</div>
+                          {{ currentAiDetection.factual_fake_reason }}
+                        </v-alert>
 
                         <!-- Review专属：模板化倾向 -->
                         <template v-if="currentAiDetection.template_tendency_score !== null && currentAiDetection.template_tendency_score !== undefined">

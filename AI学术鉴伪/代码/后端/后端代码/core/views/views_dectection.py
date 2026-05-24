@@ -28,7 +28,7 @@ from core.models import (
 from core.services.material_validation_service import MaterialValidationService
 from core.services.content_extraction_service import ContentExtractionService
 from core.services.structured_detection_service import StructuredDetectionService
-from ..utils.log_utils import action_log
+from ..utils.log_utils import action_log, log_action, get_client_ip
 from django.db.models import Q
 from ..utils.report_generator import generate_detection_task_report
 from ..utils.serializers_safe import serialize_value
@@ -240,6 +240,22 @@ def _submit_structured_detection(request, user, mode, task_name, cmd_block_size,
     )
 
     run_structured_detection_task.apply_async(args=[detection_task.pk], queue='cpu')
+
+    log_action(
+        user=user,
+        operation_type='create_detection_task',
+        target_type='detection_task',
+        target_id=detection_task.id,
+        ip=get_client_ip(request),
+        detail={
+            'task_type': task_type_map.get(detect_type, detect_type),
+            'detect_type': detect_type,
+            'file_count': len(file_ids),
+            'review_text_count': len(review_text_ids),
+            'container_id': container.id if container else None,
+            'if_use_llm': if_use_llm,
+        },
+    )
 
     return Response(
         {
@@ -487,6 +503,21 @@ def submit_detection2(request):
             priority=pri
         )
 
+    log_action(
+        user=request.user,
+        operation_type='create_detection_task',
+        target_type='detection_task',
+        target_id=detection_task.id,
+        ip=get_client_ip(request),
+        detail={
+            'task_type': 'image',
+            'detect_type': 'image',
+            'file_count': len(image_ids),
+            'mode': mode,
+            'if_use_llm': if_use_llm,
+        },
+    )
+
     return Response({
         "message": "Detection request submitted successfully",
         "task_id": detection_task.id,
@@ -629,6 +660,20 @@ def submit_text_detection(request):
             request.data.get('detection_mode', 'fast_detect_gpt'),
         ],
         queue='ai'
+    )
+
+    log_action(
+        user=request.user,
+        operation_type='create_detection_task',
+        target_type='detection_task',
+        target_id=detection_task.id,
+        ip=get_client_ip(request),
+        detail={
+            'task_type': task_type,
+            'detect_type': detection_task.detect_type,
+            'text_resource_count': len(text_resources),
+            'detection_mode': request.data.get('detection_mode', 'fast_detect_gpt'),
+        },
     )
 
     return Response({
@@ -895,7 +940,7 @@ def list_fake_task_results(request, task_id):
         if dr.status == "completed" and dr.is_fake is True:
             item = {"result_id": dr.id, "image_id": dr.image_upload.id, "timestamp": dr.detection_time}
             if include_img:
-                item["image_url"] = serialize_value(dr.image_upload.image, request)
+                item["image_url"] = request.build_absolute_uri(f"/api/preview/image/{dr.image_upload.id}/")
             result_list.append(item)
 
     return Response({
@@ -920,7 +965,7 @@ def list_normal_task_results(request, task_id):
         if dr.status == "completed" and dr.is_fake is False:
             item = {"result_id": dr.id, "image_id": dr.image_upload.id, "timestamp": dr.detection_time}
             if include_img:
-                item["image_url"] = serialize_value(dr.image_upload.image, request)
+                item["image_url"] = request.build_absolute_uri(f"/api/preview/image/{dr.image_upload.id}/")
             result_list.append(item)
 
     return Response({
@@ -945,8 +990,8 @@ class SubDetectionResultSerializer(serializers.ModelSerializer):
     # --- helpers ---------------------------------------------------------
     def get_mask_image(self, obj):
         req = self.context["request"]
-        if isinstance(obj.mask_image, FieldFile) and obj.mask_image:
-            return req.build_absolute_uri(obj.mask_image.url)
+        if obj.mask_image:
+            return req.build_absolute_uri(f"/api/preview/sub_result/{obj.id}/")
         return None
 
     def get_mask_matrix(self, obj):
@@ -985,14 +1030,14 @@ def detection_result_detail(request, result_id):
         "confidence_score": dr.confidence_score,
     })
     add("llm",          dr.llm_judgment)
-    add("llm_image",    serialize_value(dr.llm_image, request))
-    add("ela_image",    serialize_value(dr.ela_image, request))
+    add("llm_image",    request.build_absolute_uri(f"/api/preview/detection/{dr.id}/?image_type=llm"))
+    add("ela_image",    request.build_absolute_uri(f"/api/preview/detection/{dr.id}/?image_type=ela"))
     add("exif", {
         "photoshop_edited":  dr.exif_photoshop,
         "time_modified":     dr.exif_time_modified,
     })
     add("timestamps",   timezone.localtime(dr.detection_time))
-    add("image",        serialize_value(dr.image_upload.image, request))
+    add("image",        request.build_absolute_uri(f"/api/preview/image/{dr.image_upload.id}/"))
 
     # -------- 子方法 -----------------------------------------------------
     if "sub_methods" in requested:
@@ -1037,13 +1082,13 @@ def detection_result_by_image(request, image_id):
         "confidence_score": dr.confidence_score,
     })
     add("llm", dr.llm_judgment)
-    add("ela_image", serialize_value(dr.ela_image, request))
+    add("ela_image", request.build_absolute_uri(f"/api/preview/detection/{dr.id}/?image_type=ela"))
     add("exif", {
         "photoshop_edited": dr.exif_photoshop,
         "time_modified": dr.exif_time_modified,
     })
     add("timestamps", dr.detection_time)
-    add("image", serialize_value(dr.image_upload.image, request))
+    add("image", request.build_absolute_uri(f"/api/preview/image/{dr.image_upload.id}/"))
 
     # -------- 子方法 -----------------------------------------------------
     if "sub_methods" in requested:
