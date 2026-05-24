@@ -84,44 +84,6 @@
             </v-menu>
           </v-col>
 
-          <!-- 资源状态 -->
-          <v-col cols="12" sm="6" md="2">
-            <v-menu v-model="statusMenu" :close-on-content-click="false" open-on-hover>
-              <template v-slot:activator="{ props }">
-                <v-text-field
-                  v-bind="props"
-                  :model-value="getStatusName(filters.status)"
-                  label="资源状态"
-                  variant="outlined"
-                  density="comfortable"
-                  color="amber"
-                  bg-color="surface"
-                  readonly
-                  hide-details
-                >
-                  <template v-slot:prepend-inner>
-                    <v-icon color="amber" class="mr-2">mdi-clock-outline</v-icon>
-                  </template>
-                  <template v-if="filters.status" v-slot:append-inner>
-                    <v-icon @click.stop="filters.status = null; handleFilterChange()" size="small" color="error">mdi-close-circle</v-icon>
-                  </template>
-                </v-text-field>
-              </template>
-              <v-list>
-                <v-list-item
-                  v-for="item in statusOptions"
-                  :key="item.value"
-                  @click="filters.status = item.value; statusMenu = false; handleFilterChange()"
-                >
-                  <v-list-item-title>
-                    <v-icon size="small" class="mr-2" :color="getStatusColor(item.value)">mdi-circle-small</v-icon>
-                    {{ item.title }}
-                  </v-list-item-title>
-                </v-list-item>
-              </v-list>
-            </v-menu>
-          </v-col>
-
           <!-- 检测结果 -->
           <v-col cols="12" sm="6" md="2">
             <v-menu v-model="detectionResultMenu" :close-on-content-click="false" open-on-hover>
@@ -324,33 +286,6 @@
                 <v-divider class="mb-3"></v-divider>
 
                 <div class="mb-2">
-                  <div class="text-caption text-medium-emphasis">已发布</div>
-                  <div class="text-body-2 success--text font-weight-bold">{{ getStatusCount('published') }}</div>
-                </div>
-
-                <div class="mb-2">
-                  <div class="text-caption text-medium-emphasis">审核中</div>
-                  <div class="text-body-2 warning--text font-weight-bold">{{ getStatusCount('reviewing') }}</div>
-                </div>
-
-                <div class="mb-2">
-                  <div class="text-caption text-medium-emphasis">草稿</div>
-                  <div class="text-body-2 grey--text font-weight-bold">{{ getStatusCount('draft') }}</div>
-                </div>
-
-                <div class="mb-2">
-                  <div class="text-caption text-medium-emphasis">已提交</div>
-                  <div class="text-body-2 info--text font-weight-bold">{{ getStatusCount('submitted') }}</div>
-                </div>
-
-                <div class="mb-2">
-                  <div class="text-caption text-medium-emphasis">已拒绝</div>
-                  <div class="text-body-2 error--text font-weight-bold">{{ getStatusCount('rejected') }}</div>
-                </div>
-
-                <v-divider class="mb-3"></v-divider>
-
-                <div class="mb-2">
                   <div class="text-caption text-medium-emphasis">真实论文</div>
                   <div class="text-body-2 success--text font-weight-bold">{{ getDetectionResultCount('real') }}</div>
                 </div>
@@ -366,33 +301,6 @@
                 <div class="mb-3">
                   <div class="text-caption text-medium-emphasis">Review总数</div>
                   <div class="text-h4 font-weight-bold primary--text">{{ filteredResources.length }}</div>
-                </div>
-
-                <v-divider class="mb-3"></v-divider>
-
-                <div class="mb-2">
-                  <div class="text-caption text-medium-emphasis">已发布</div>
-                  <div class="text-body-2 success--text font-weight-bold">{{ getStatusCount('published') }}</div>
-                </div>
-
-                <div class="mb-2">
-                  <div class="text-caption text-medium-emphasis">审核中</div>
-                  <div class="text-body-2 warning--text font-weight-bold">{{ getStatusCount('reviewing') }}</div>
-                </div>
-
-                <div class="mb-2">
-                  <div class="text-caption text-medium-emphasis">草稿</div>
-                  <div class="text-body-2 grey--text font-weight-bold">{{ getStatusCount('draft') }}</div>
-                </div>
-
-                <div class="mb-2">
-                  <div class="text-caption text-medium-emphasis">已提交</div>
-                  <div class="text-body-2 info--text font-weight-bold">{{ getStatusCount('submitted') }}</div>
-                </div>
-
-                <div class="mb-2">
-                  <div class="text-caption text-medium-emphasis">已拒绝</div>
-                  <div class="text-body-2 error--text font-weight-bold">{{ getStatusCount('rejected') }}</div>
                 </div>
 
                 <v-divider class="mb-3"></v-divider>
@@ -418,33 +326,6 @@
                 <v-divider class="mb-3"></v-divider>
 
                 <div class="mb-2">
-                  <div class="text-caption text-medium-emphasis">已发布</div>
-                  <div class="text-body-2 success--text font-weight-bold">{{ getStatusCount('published') }}</div>
-                </div>
-
-                <div class="mb-2">
-                  <div class="text-caption text-medium-emphasis">审核中</div>
-                  <div class="text-body-2 warning--text font-weight-bold">{{ getStatusCount('reviewing') }}</div>
-                </div>
-
-                <div class="mb-2">
-                  <div class="text-caption text-medium-emphasis">草稿</div>
-                  <div class="text-body-2 grey--text font-weight-bold">{{ getStatusCount('draft') }}</div>
-                </div>
-
-                <div class="mb-2">
-                  <div class="text-caption text-medium-emphasis">已提交</div>
-                  <div class="text-body-2 info--text font-weight-bold">{{ getStatusCount('submitted') }}</div>
-                </div>
-
-                <div class="mb-2">
-                  <div class="text-caption text-medium-emphasis">已拒绝</div>
-                  <div class="text-body-2 error--text font-weight-bold">{{ getStatusCount('rejected') }}</div>
-                </div>
-
-                <v-divider class="mb-3"></v-divider>
-
-                <div class="mb-2">
                   <div class="text-caption text-medium-emphasis">真实图片</div>
                   <div class="text-body-2 success--text font-weight-bold">{{ getDetectionResultCount('real') }}</div>
                 </div>
@@ -460,33 +341,6 @@
                 <div class="mb-3">
                   <div class="text-caption text-medium-emphasis">综合资源总数</div>
                   <div class="text-h4 font-weight-bold primary--text">{{ filteredResources.length }}</div>
-                </div>
-
-                <v-divider class="mb-3"></v-divider>
-
-                <div class="mb-2">
-                  <div class="text-caption text-medium-emphasis">已发布</div>
-                  <div class="text-body-2 success--text font-weight-bold">{{ getStatusCount('published') }}</div>
-                </div>
-
-                <div class="mb-2">
-                  <div class="text-caption text-medium-emphasis">审核中</div>
-                  <div class="text-body-2 warning--text font-weight-bold">{{ getStatusCount('reviewing') }}</div>
-                </div>
-
-                <div class="mb-2">
-                  <div class="text-caption text-medium-emphasis">草稿</div>
-                  <div class="text-body-2 grey--text font-weight-bold">{{ getStatusCount('draft') }}</div>
-                </div>
-
-                <div class="mb-2">
-                  <div class="text-caption text-medium-emphasis">已提交</div>
-                  <div class="text-body-2 info--text font-weight-bold">{{ getStatusCount('submitted') }}</div>
-                </div>
-
-                <div class="mb-2">
-                  <div class="text-caption text-medium-emphasis">已拒绝</div>
-                  <div class="text-body-2 error--text font-weight-bold">{{ getStatusCount('rejected') }}</div>
                 </div>
 
                 <v-divider class="mb-3"></v-divider>
@@ -543,19 +397,9 @@
                 <span>{{ item.organization || '-' }}</span>
               </template>
 
-              <template v-slot:item.editor="{ item }">
-                <span>{{ item.editor || '-' }}</span>
-              </template>
-
               <template v-slot:item.subject="{ item }">
                 <v-chip size="small" :color="getSubjectColor(item.subject)">
                   {{ getSubjectName(item.subject) }}
-                </v-chip>
-              </template>
-
-              <template v-slot:item.status="{ item }">
-                <v-chip :color="getStatusColor(item.status)" size="small">
-                  {{ getStatusName(item.status) }}
                 </v-chip>
               </template>
 
@@ -568,10 +412,27 @@
                 </v-chip>
               </template>
 
-              <template v-slot:item.has_review="{ item }">
-                <v-chip :color="(item.review_count || 0) > 0 ? 'success' : 'grey'" size="small">
-                  {{ (item.review_count || 0) > 0 ? '是' : '否' }}
+              <template v-slot:item.detection_type="{ item }">
+                <v-chip
+                  :color="getDetectionTypeColor(item.detection_type)"
+                  size="small"
+                  variant="tonal"
+                >
+                  {{ item.detection_type }}
                 </v-chip>
+              </template>
+
+              <template v-slot:item.related_resources="{ item }">
+                <v-btn
+                  size="small"
+                  variant="text"
+                  color="primary"
+                  @click="openRelatedResourcesDialog(item)"
+                  :disabled="!item.related_resources || item.related_resources.length === 0"
+                >
+                  {{ item.related_resources ? item.related_resources.length : 0 }} 个资源
+                  <v-icon end size="small">mdi-open-in-new</v-icon>
+                </v-btn>
               </template>
 
               <template v-slot:item.upload_time="{ item }">
@@ -812,6 +673,43 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
+
+    <!-- 关联资源对话框 -->
+    <v-dialog v-model="showRelatedResourcesDialog" max-width="900" scrollable>
+      <v-card>
+        <v-card-title class="d-flex justify-space-between align-center">
+          <span class="text-h5 font-weight-bold">关联资源</span>
+          <v-btn icon @click="showRelatedResourcesDialog = false">
+            <v-icon>mdi-close</v-icon>
+          </v-btn>
+        </v-card-title>
+        <v-divider></v-divider>
+        <v-card-text style="max-height: 70vh;">
+          <v-list lines="two" v-if="relatedResourcesList.length > 0">
+            <v-list-item
+              v-for="res in relatedResourcesList"
+              :key="res.id"
+              :subtitle="res.type + ' · ' + res.relation_type"
+            >
+              <template v-slot:prepend>
+                <v-icon :color="getRelatedTypeColor(res.type)" class="mr-3">
+                  {{ getRelatedTypeIcon(res.type) }}
+                </v-icon>
+              </template>
+              <v-list-item-title>{{ res.file_name }}</v-list-item-title>
+            </v-list-item>
+          </v-list>
+          <div v-else class="text-center pa-8 text-grey">
+            <v-icon size="64" color="grey-lighten-1">mdi-file-search-outline</v-icon>
+            <div class="text-h6 mt-4">暂无关联资源</div>
+          </div>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer></v-spacer>
+          <v-btn color="primary" @click="showRelatedResourcesDialog = false">关闭</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </v-container>
 </template>
 
@@ -829,20 +727,17 @@ const snackbar = useSnackbarStore()
 const searchQuery = ref('')
 
 // 菜单状态
-const statusMenu = ref(false)
 const detectionResultMenu = ref(false)
 const subjectMenu = ref(false)
 
 // 筛选条件
 const filters = ref<{
   subject: string | null
-  status: string | null
   detectionResult: string | null
   startTime: Date | null
   endTime: Date | null
 }>({
   subject: null,
-  status: null,
   detectionResult: null,
   startTime: null,
   endTime: null
@@ -873,6 +768,11 @@ const previewType = ref<'image' | 'pdf' | 'text' | 'other'>('other')
 const previewTextContent = ref('')
 const previewFileName = ref('')
 
+// 关联资源对话框
+const showRelatedResourcesDialog = ref(false)
+const relatedResourcesList = ref<any[]>([])
+
+
 // 选项配置
 const subjectOptions = [
   { title: '全部学科', value: 'all' },
@@ -886,15 +786,6 @@ const subjectOptions = [
   { title: '工程学', value: 'engineering' },
   { title: '图形学', value: 'graphics' },
   { title: '其他', value: 'other' }
-]
-
-const statusOptions = [
-  { title: '全部状态', value: 'all' },
-  { title: '草稿', value: 'draft' },
-  { title: '已提交', value: 'submitted' },
-  { title: '审核中', value: 'reviewing' },
-  { title: '已发布', value: 'published' },
-  { title: '已拒绝', value: 'rejected' }
 ]
 
 const detectionResultOptions = [
@@ -917,11 +808,10 @@ const resourceTableHeaders = [
   { title: '资源标题', key: 'title', align: 'start' as const, sortable: true },
   { title: '作者信息', key: 'author', align: 'start' as const, sortable: true },
   { title: '所属组织', key: 'organization', align: 'start' as const, sortable: true },
-  { title: '编辑负责人', key: 'editor', align: 'start' as const, sortable: true },
   { title: '学科', key: 'subject', align: 'center' as const, sortable: true },
-  { title: '状态', key: 'status', align: 'center' as const, sortable: true },
   { title: '检测结果', key: 'detection_result', align: 'center' as const, sortable: true },
-  { title: '关联Review', key: 'has_review', align: 'center' as const, sortable: true },
+  { title: '检测类型', key: 'detection_type', align: 'center' as const, sortable: true },
+  { title: '关联资源', key: 'related_resources', align: 'center' as const, sortable: false },
   { title: '更新时间', key: 'upload_time', align: 'center' as const, sortable: true },
   { title: '操作', key: 'actions', align: 'center' as const, sortable: false }
 ]
@@ -938,10 +828,6 @@ const filteredResources = computed(() => {
   // 根据筛选条件过滤
   if (filters.value.subject && filters.value.subject !== 'all') {
     filtered = filtered.filter(r => r.subject === filters.value.subject)
-  }
-  
-  if (filters.value.status && filters.value.status !== 'all') {
-    filtered = filtered.filter(r => r.status === filters.value.status)
   }
   
   if (filters.value.detectionResult) {
@@ -999,25 +885,6 @@ const getSubjectName = (subject?: string | null) => {
   return option ? option.title : subject
 }
 
-// 获取状态名称
-const getStatusName = (status?: string | null) => {
-  if (!status) return '全部状态'
-  const option = statusOptions.find(opt => opt.value === status)
-  return option ? option.title : status
-}
-
-// 获取状态颜色
-const getStatusColor = (status?: string | null) => {
-  const colors: { [key: string]: string } = {
-    draft: 'grey',
-    submitted: 'info',
-    reviewing: 'warning',
-    published: 'success',
-    rejected: 'error'
-  }
-  return status ? colors[status] || 'grey' : 'grey'
-}
-
 // 获取资源类型名称
 const getTypeName = (type: string | null) => {
   if (!type) return '全部类型'
@@ -1039,6 +906,46 @@ const getTypeColor = (type: string | null) => {
     comprehensive: 'info'
   }
   return type ? colors[type] || 'grey' : 'grey'
+}
+
+// 获取检测类型颜色
+const getDetectionTypeColor = (type: string) => {
+  const colors: { [key: string]: string } = {
+    '图像': 'warning',
+    '论文': 'primary',
+    'review': 'success',
+    '综合': 'info',
+    '未检测': 'grey'
+  }
+  return colors[type] || 'grey'
+}
+
+// 打开关联资源对话框
+const openRelatedResourcesDialog = (resource: Resource) => {
+  relatedResourcesList.value = resource.related_resources || []
+  showRelatedResourcesDialog.value = true
+}
+
+// 获取关联资源类型图标
+const getRelatedTypeIcon = (type: string) => {
+  const icons: { [key: string]: string } = {
+    paper: 'mdi-file-document',
+    review: 'mdi-comment-text',
+    image: 'mdi-image',
+    comprehensive: 'mdi-folder-multiple'
+  }
+  return icons[type] || 'mdi-file'
+}
+
+// 获取关联资源类型颜色
+const getRelatedTypeColor = (type: string) => {
+  const colors: { [key: string]: string } = {
+    paper: 'primary',
+    review: 'success',
+    image: 'warning',
+    comprehensive: 'info'
+  }
+  return colors[type] || 'grey'
 }
 
 // 获取检测状态名称
@@ -1094,12 +1001,11 @@ const loadResources = async () => {
         title: '深度学习在图像识别中的应用',
         author: '张三',
         organization: '北京大学',
-        editor: '李四',
         subject: 'computer_science',
-        status: 'published',
         detection_result: 'real',
         detection_status: 'completed',
-        review_count: 5,
+        detection_type: '论文',
+        related_resources: [],
         upload_time: '2026-04-15T10:30:00',
         uploader_name: '张三',
         uploader_id: 1,
@@ -1116,12 +1022,11 @@ const loadResources = async () => {
         title: '机器学习算法综述',
         author: '王五',
         organization: '清华大学',
-        editor: '赵六',
         subject: 'artificial_intelligence',
-        status: 'reviewing',
         detection_result: 'real',
         detection_status: 'completed',
-        review_count: 3,
+        detection_type: '论文',
+        related_resources: [],
         upload_time: '2026-04-16T14:20:00',
         uploader_name: '王五',
         uploader_id: 2,
@@ -1152,7 +1057,6 @@ const clearAllFilters = () => {
   searchQuery.value = ''
   filters.value = {
     subject: null,
-    status: null,
     detectionResult: null,
     startTime: null,
     endTime: null
@@ -1182,11 +1086,6 @@ const getTypeCount = (type: string) => {
 // 获取特定检测结果的数量
 const getDetectionResultCount = (result: string) => {
   return filteredResources.value.filter(r => r.detection_result === result).length
-}
-
-// 获取特定状态的资源数量
-const getStatusCount = (status: string) => {
-  return filteredResources.value.filter(r => r.status === status).length
 }
 
 // 查看检测结果

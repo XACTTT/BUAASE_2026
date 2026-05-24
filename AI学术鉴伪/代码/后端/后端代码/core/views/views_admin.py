@@ -65,6 +65,7 @@ def _serialize_resource(file_obj):
     detection_result = None
     detection_time = None
     task_id = None
+    detection_task = None
 
     if latest_result is not None:
         if latest_result.is_fake is True:
@@ -74,8 +75,11 @@ def _serialize_resource(file_obj):
         if latest_result.detection_time:
             detection_time = timezone.localtime(latest_result.detection_time).isoformat()
         task_id = latest_result.detection_task_id
+        if task_id:
+            detection_task = DetectionTask.objects.filter(id=task_id).first()
 
     # Also check via container for structured/text detection tasks
+    container_task = None
     if task_id is None and file_obj.container_id:
         container_task = DetectionTask.objects.filter(
             container_id=file_obj.container_id
@@ -88,6 +92,33 @@ def _serialize_resource(file_obj):
                 detection_result = detection_result or 'real'
             elif container_task.status == 'failed':
                 detection_result = 'failed'
+
+    # Determine detection_type from the resolved task
+    resolved_task = detection_task or container_task
+    task_type_display = {
+        'image': '图像',
+        'paper_text': '论文',
+        'review_text': 'review',
+        'multi_material': '综合',
+    }
+    if resolved_task and hasattr(resolved_task, 'task_type') and resolved_task.task_type:
+        detection_type = task_type_display.get(resolved_task.task_type, resolved_task.task_type)
+    else:
+        detection_type = '未检测'
+
+    # Related resources in the same container
+    related_resources = []
+    if file_obj.container_id:
+        related_fm = FileManagement.objects.filter(
+            container_id=file_obj.container_id
+        ).exclude(id=file_obj.id).select_related('user', 'organization')
+        for fm in related_fm:
+            related_resources.append({
+                'id': fm.id,
+                'type': _infer_resource_type(fm),
+                'file_name': fm.file_name,
+                'relation_type': fm.resource_role or '',
+            })
 
     metadata = file_obj.extra_metadata or {}
 
@@ -105,13 +136,12 @@ def _serialize_resource(file_obj):
         'detection_result': detection_result,
         'detection_status': _map_detection_status(file_obj.parse_status),
         'task_id': task_id,
+        'detection_type': detection_type,
+        'related_resources': related_resources,
         'title': metadata.get('title') or file_obj.file_name,
         'author': metadata.get('author'),
         'organization': file_obj.organization.name if file_obj.organization else None,
-        'editor': metadata.get('editor'),
         'subject': file_obj.tag,
-        'status': metadata.get('status'),
-        'review_count': metadata.get('review_count', 0),
     }
 
 

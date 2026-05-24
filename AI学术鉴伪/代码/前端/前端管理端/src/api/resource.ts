@@ -14,15 +14,14 @@ export interface Resource {
   detection_result: string | null
   detection_status: 'pending' | 'detecting' | 'completed' | 'failed'
   task_id: number | null
-  related_resources?: RelatedResource[]
+  related_resources: RelatedResource[]
   // 新增字段
   title?: string
   author?: string
   organization?: string
-  editor?: string
   subject?: string
-  status?: string
-  review_count?: number
+  // 检测类型
+  detection_type: '图像' | '论文' | 'review' | '综合' | '未检测'
 }
 
 export interface RelatedResource {
