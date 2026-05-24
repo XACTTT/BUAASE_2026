@@ -25,14 +25,17 @@ class ResourceContainerService:
         if user.email == 'admin@mail.com':
             return ResourceContainer.objects.all().order_by('-created_at')
 
-        base_qs = ResourceContainer.objects.none()
-        if user.organization_id:
-            base_qs = ResourceContainer.objects.filter(organization_id=user.organization_id)
+        if not user.organization_id:
+            return ResourceContainer.objects.filter(owner_id=user.id).order_by('-created_at')
 
-        return base_qs.filter(
+        if user.role == 'admin':
+            return ResourceContainer.objects.filter(organization_id=user.organization_id).order_by('-created_at')
+
+        return ResourceContainer.objects.filter(
+            organization_id=user.organization_id
+        ).filter(
             Q(owner_id=user.id) |
-            Q(owner__role='admin') |
-            Q(owner__email='admin@mail.com')
+            Q(owner__role='admin')
         ).distinct().order_by('-created_at')
 
     @staticmethod

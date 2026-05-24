@@ -1127,7 +1127,7 @@ const resourceTypes = computed(() => [
 // 资源表格表头
 const resourceTableHeaders = [
   { title: '论文 ID', key: 'id', align: 'start' as const, sortable: true },
-  { title: '论文标题', key: 'title', align: 'start' as const, sortable: true },
+  { title: '资源标题', key: 'title', align: 'start' as const, sortable: true },
   { title: '作者信息', key: 'author', align: 'start' as const, sortable: true },
   { title: '所属组织', key: 'organization', align: 'start' as const, sortable: true },
   { title: '编辑负责人', key: 'editor', align: 'start' as const, sortable: true },

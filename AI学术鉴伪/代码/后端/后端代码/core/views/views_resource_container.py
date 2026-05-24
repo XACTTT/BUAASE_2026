@@ -3,7 +3,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from core.models import FileManagement, ImageUpload, ResourceContainer, ReviewTextResource
+from core.models import DetectionTask, FileManagement, ImageUpload, ResourceContainer, ReviewTextResource
 from core.services.material_validation_service import MaterialValidationService
 from core.services.permissions import can_access_container
 from core.services.resource_container_service import ResourceContainerService
@@ -14,8 +14,8 @@ def _error(code, message, status_code=status.HTTP_400_BAD_REQUEST):
     return Response({'error_code': code, 'message': message}, status=status_code)
 
 
-def _serialize_container(container: ResourceContainer):
-    return {
+def _serialize_container(container: ResourceContainer, detection_task=None, file_names=None, tag=None):
+    data = {
         'id': container.id,
         'organization': container.organization_id,
         'owner': container.owner_id,
@@ -30,7 +30,20 @@ def _serialize_container(container: ResourceContainer):
         'created_at': container.created_at,
         'updated_at': container.updated_at,
         'submitted_at': container.submitted_at,
+        'file_names': file_names or [],
+        'tag': tag or '',
     }
+    if detection_task:
+        data['detection_task_id'] = detection_task.id
+        data['detection_task_status'] = detection_task.status
+        data['task_type'] = detection_task.task_type
+        data['task_name'] = detection_task.task_name
+    else:
+        data['detection_task_id'] = None
+        data['detection_task_status'] = None
+        data['task_type'] = None
+        data['task_name'] = None
+    return data
 
 
 @api_view(['GET', 'POST'])
@@ -50,7 +63,25 @@ def resource_container_list_create(request):
         return Response(_serialize_container(container), status=status.HTTP_201_CREATED)
 
     containers = ResourceContainerService.list_containers(request.user)
-    return Response([_serialize_container(item) for item in containers])
+    container_ids = [c.id for c in containers]
+    # Batch fetch detection tasks
+    task_map = {}
+    if container_ids:
+        for dt in DetectionTask.objects.filter(container_id__in=container_ids).order_by('-id'):
+            if dt.container_id not in task_map:
+                task_map[dt.container_id] = dt
+    # Batch fetch file info
+    file_names_map = {}
+    tag_map = {}
+    if container_ids:
+        for cid, fname, ftag in FileManagement.objects.filter(container_id__in=container_ids).order_by('id').values_list('container_id', 'file_name', 'tag'):
+            file_names_map.setdefault(cid, []).append(fname)
+            if cid not in tag_map and ftag:
+                tag_map[cid] = ftag
+    return Response([
+        _serialize_container(c, detection_task=task_map.get(c.id), file_names=file_names_map.get(c.id), tag=tag_map.get(c.id))
+        for c in containers
+    ])
 
 
 @api_view(['GET', 'PUT', 'DELETE'])
@@ -64,7 +95,8 @@ def resource_container_detail(request, container_id):
         return _error('CONTAINER_FORBIDDEN', 'no permission to access this container', status.HTTP_403_FORBIDDEN)
 
     if request.method == 'GET':
-        return Response(_serialize_container(container))
+        detection_task = DetectionTask.objects.filter(container=container).order_by('-id').first()
+        return Response(_serialize_container(container, detection_task=detection_task))
 
     if request.method == 'PUT':
         try:
@@ -73,7 +105,8 @@ def resource_container_detail(request, container_id):
             return _error('CONTAINER_EDIT_FORBIDDEN', 'no permission to edit this container', status.HTTP_403_FORBIDDEN)
         except Exception as exc:
             return _error('CONTAINER_UPDATE_FAILED', str(exc))
-        return Response(_serialize_container(container))
+        detection_task = DetectionTask.objects.filter(container=container).order_by('-id').first()
+        return Response(_serialize_container(container, detection_task=detection_task))
 
     try:
         ResourceContainerService.delete_container(request.user, container)

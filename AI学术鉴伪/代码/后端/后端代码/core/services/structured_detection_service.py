@@ -149,16 +149,34 @@ class StructuredDetectionService:
     def _build_multi_materials(task: DetectionTask):
         validation = MaterialValidationService.validate_container_materials(task.user, task.container)
 
-        paper_files = FileManagement.objects.filter(
-            container=task.container,
-            resource_role__in=StructuredDetectionService.PAPER_FILE_ROLES,
-        ).order_by('id')
-        review_files = FileManagement.objects.filter(
-            container=task.container,
-            resource_role__in=StructuredDetectionService.REVIEW_FILE_ROLES,
-        ).order_by('id')
-        images = ImageUpload.objects.filter(container=task.container).order_by('id')
-        review_texts = ReviewTextResource.objects.filter(container=task.container).order_by('id')
+        file_ids = task.extra_payload.get('file_ids', [])
+        review_text_ids = task.extra_payload.get('review_text_ids', [])
+
+        if file_ids:
+            paper_files = FileManagement.objects.filter(
+                id__in=file_ids,
+                resource_role__in=StructuredDetectionService.PAPER_FILE_ROLES,
+            ).order_by('id')
+            review_files = FileManagement.objects.filter(
+                id__in=file_ids,
+                resource_role__in=StructuredDetectionService.REVIEW_FILE_ROLES,
+            ).order_by('id')
+            images = ImageUpload.objects.filter(file_management_id__in=file_ids).order_by('id')
+        else:
+            paper_files = FileManagement.objects.filter(
+                container=task.container,
+                resource_role__in=StructuredDetectionService.PAPER_FILE_ROLES,
+            ).order_by('id')
+            review_files = FileManagement.objects.filter(
+                container=task.container,
+                resource_role__in=StructuredDetectionService.REVIEW_FILE_ROLES,
+            ).order_by('id')
+            images = ImageUpload.objects.filter(container=task.container).order_by('id')
+
+        if review_text_ids:
+            review_texts = ReviewTextResource.objects.filter(id__in=review_text_ids).order_by('id')
+        else:
+            review_texts = ReviewTextResource.objects.filter(container=task.container).order_by('id')
 
         return {
             'validation': validation,
