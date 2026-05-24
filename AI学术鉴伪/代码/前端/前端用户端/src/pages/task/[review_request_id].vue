@@ -30,8 +30,23 @@
                 <v-card class="ml-4 pa-2 elevation-1" flat rounded="lg" width="250">
                   <v-card-title class="pa-2 pb-1 text-subtitle-2 font-weight-bold">AI 检测结果</v-card-title>
                   <v-card-text class="pa-2 pt-1">
-                    <template v-if="!isTextTask">
-                      <!-- 图片造假维度列表 -->
+                    <template v-if="isMultiMaterial">
+                      <div class="d-flex flex-column text-body-2 text-grey">
+                        <div class="d-flex justify-space-between mb-1">
+                          <span class="font-weight-medium">任务类型:</span>
+                          <span class="text-primary">综合检测</span>
+                        </div>
+                        <div class="d-flex justify-space-between mb-1">
+                          <span class="font-weight-medium">图片数量:</span>
+                          <span class="text-primary">{{ images.length }} 张</span>
+                        </div>
+                        <div class="d-flex justify-space-between">
+                          <span class="font-weight-medium">文本数量:</span>
+                          <span class="text-primary">{{ textResults.length }} 份</span>
+                        </div>
+                      </div>
+                    </template>
+                    <template v-else-if="!isTextTask">
                       <div v-for="(dimension, index) in detection_results" :key="index"
                         class="d-flex justify-space-between text-body-2 text-grey">
                         <span class="font-weight-medium">{{ convert(index) }}:</span>
@@ -91,18 +106,44 @@
           <div class="resource-list rounded-lg elevation-1"
             style="background-color: rgb(var(--v-theme-surface)); padding: 20px;">
             <div class="text-h6 font-weight-medium text-center mb-4" style="white-space: nowrap;">
-              {{ isTextTask ? '文本列表' : '图片列表' }}
+              <!-- multi_material 使用 tabs 切换 -->
+              <template v-if="isMultiMaterial">
+                <v-tabs v-model="activeTab" density="compact" center-active>
+                  <v-tab value="image">图片</v-tab>
+                  <v-tab value="text">文本</v-tab>
+                </v-tabs>
+              </template>
+              <template v-else>
+                {{ isTextTask ? '文本列表' : '图片列表' }}
+              </template>
             </div>
             <div class="resource-grid">
-              <!-- 图片列表项 -->
-              <template v-if="!isTextTask">
+              <!-- multi_material 图片列表 -->
+              <template v-if="isMultiMaterial && activeTab === 'image'">
+                <div v-for="(image, index) in images" :key="'img-' + index" class="resource-grid-item"
+                  :class="{ 'active': currentResourceIndex === index }" @click="handleResourceSelect(index)">
+                  <v-img :src="getImageUrl(image.img_url)" cover width="100%" height="100%" class="rounded-lg"></v-img>
+                </div>
+              </template>
+              <!-- multi_material 文本列表 -->
+              <template v-else-if="isMultiMaterial && activeTab === 'text'">
+                <div v-for="(textRes, index) in textResults" :key="'txt-' + index" class="resource-grid-item text-item pa-2"
+                  :class="{ 'active': currentResourceIndex === index }" @click="handleResourceSelect(index)">
+                  <v-icon :color="textRes.is_fake ? 'error' : 'success'" size="32" class="mb-1">
+                    {{ textRes.is_fake ? 'mdi-file-document-alert' : 'mdi-file-document-check' }}
+                  </v-icon>
+                  <div class="text-caption text-truncate" style="width: 100%;">文本 {{ index + 1 }}</div>
+                </div>
+              </template>
+              <!-- 纯图片列表 -->
+              <template v-else-if="!isTextTask && !isMultiMaterial">
                 <div v-for="(image, index) in images" :key="index" class="resource-grid-item"
                   :class="{ 'active': currentResourceIndex === index }" @click="handleResourceSelect(index)">
                   <v-img :src="getImageUrl(image.img_url)" cover width="100%" height="100%" class="rounded-lg"></v-img>
                 </div>
               </template>
-              <!-- 文本列表项 -->
-              <template v-else>
+              <!-- 纯文本列表 -->
+              <template v-else-if="isTextTask && !isMultiMaterial">
                 <div v-for="(textRes, index) in textResults" :key="index" class="resource-grid-item text-item pa-2"
                   :class="{ 'active': currentResourceIndex === index }" @click="handleResourceSelect(index)">
                   <v-icon :color="textRes.is_fake ? 'error' : 'success'" size="32" class="mb-1">
@@ -116,16 +157,16 @@
 
           <!-- 动态预览区域：图片预览或文本检测结果展示 -->
           <div class="preview-section">
-            <div class="preview-box" :class="{'pa-4': isTextTask, 'bg-grey-lighten-4': isTextTask, 'rounded-lg': isTextTask}">
-              <!-- 图片预览 -->
-              <template v-if="!isTextTask">
+            <div class="preview-box" :class="{'pa-4': isTextTask || (isMultiMaterial && activeTab === 'text'), 'bg-grey-lighten-4': isTextTask || (isMultiMaterial && activeTab === 'text'), 'rounded-lg': isTextTask || (isMultiMaterial && activeTab === 'text')}">
+              <!-- 图片预览 (纯图片 或 multi_material 图片 tab) -->
+              <template v-if="(!isTextTask && !isMultiMaterial) || (isMultiMaterial && activeTab === 'image')">
                 <v-img v-if="currentImage" :src="getImageUrl(currentImage.img_url)" contain height="100%"
                   class="rounded-lg"></v-img>
                 <span v-else class="text-h4">PIC</span>
               </template>
-              
-              <!-- 文本检测结果展示 -->
-              <template v-else>
+
+              <!-- 文本检测结果展示 (纯文本 或 multi_material 文本 tab) -->
+              <template v-else-if="isTextTask || (isMultiMaterial && activeTab === 'text')">
                 <v-card v-if="currentTextResult" flat class="w-100 h-100 overflow-y-auto" color="transparent">
                   <div v-if="currentTextResult.status === 'in_progress'" class="d-flex flex-column align-center justify-center h-100">
                     <v-progress-circular indeterminate color="primary" size="64" class="mb-4"></v-progress-circular>
@@ -184,7 +225,7 @@
                 <v-btn icon="mdi-chevron-left" variant="flat" @click="handlePrevResource"
                   :disabled="currentResourceIndex <= 0" class="control-btn" color="black" size="x-large"></v-btn>
                 <v-btn icon="mdi-chevron-right" variant="flat" @click="handleNextResource"
-                  :disabled="currentResourceIndex >= (isTextTask ? textResults.length : images.length) - 1" class="control-btn" color="black"
+                  :disabled="currentResourceIndex >= (isTextTask || (isMultiMaterial && activeTab === 'text') ? textResults.length : images.length) - 1" class="control-btn" color="black"
                   size="x-large"></v-btn>
               </div>
             </div>
@@ -247,13 +288,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useTheme } from 'vuetify'
 import { useUserStore } from '@/stores/user'
 import { useSnackbarStore } from '@/stores/snackbar'
 import ResultComponent from '@/components/result.vue'
 import publisher from '@/api/publisher'
+import { resolveImageUrl } from '@/utils/preview-url'
 
 const router = useRouter()
 const route = useRoute()
@@ -314,6 +356,8 @@ const images = ref<Image[]>([])
 const textResults = ref<TextResult[]>([])
 const taskType = ref<string>('image')
 const isTextTask = computed(() => ['paper_text', 'review_text'].includes(taskType.value))
+const isMultiMaterial = computed(() => taskType.value === 'multi_material')
+const activeTab = ref<'image' | 'text'>('image')
 const currentResourceIndex = ref(0)
 const done = ref(0)
 const process = ref(0)
@@ -325,8 +369,14 @@ const scores = ref<number[]>([])
 const annotations = ref<Array<Array<{ points: { x: number; y: number; }[]; color: string; }>>>([])
 const detection_results = ref<dimension[]>([])
 
-const currentImage = computed(() => images.value[currentResourceIndex.value])
-const currentTextResult = computed(() => textResults.value[currentResourceIndex.value])
+const currentImage = computed(() => {
+  if (isMultiMaterial.value && activeTab.value !== 'image') return undefined
+  return images.value[currentResourceIndex.value]
+})
+const currentTextResult = computed(() => {
+  if (isMultiMaterial.value && activeTab.value !== 'text') return undefined
+  return textResults.value[currentResourceIndex.value]
+})
 
 const convert = (index: number) => {
   switch (index) {
@@ -351,7 +401,8 @@ const convert = (index: number) => {
 // 获取检测结果
 const fetchDetectionResults = async () => {
   try {
-    if (isTextTask.value) {
+    const isTextMode = isTextTask.value || (isMultiMaterial.value && activeTab.value === 'text')
+    if (isTextMode) {
       // 获取当前选中文本的详细大模型结果
       if (currentTextResult.value && currentTextResult.value.resource_id) {
         const res = await publisher.getSingleTextResult(currentTextResult.value.resource_id)
@@ -371,18 +422,29 @@ const fetchDetectionResults = async () => {
         }
       }
     } else {
-      const id = await (await publisher.getDetectionID({ img_id: currentImage.value.img_id })).data.detection_result_id
-      const response = (await publisher.getSingleImageResult(id)).data
-      detection_results.value = response.sub_methods
+      if (currentImage.value) {
+        const id = await (await publisher.getDetectionID({ img_id: currentImage.value.img_id })).data.detection_result_id
+        const response = (await publisher.getSingleImageResult(id)).data
+        detection_results.value = response.sub_methods
+      }
     }
   } catch (error) {
     snackbar.showMessage('获取检测结果失败', 'error')
   }
 }
 
+// 当 multi_material 模式下切换 tab 时重置索引
+watch(activeTab, () => {
+  if (isMultiMaterial.value) {
+    currentResourceIndex.value = 0
+    handleResourceSelect(0)
+  }
+})
+
 const fetchReview = async (img: Image) => {
   try {
     if (isTextTask.value) return // 文本任务暂不展示细粒度人工审核列表
+    if (isMultiMaterial.value && activeTab.value === 'text') return // 文本tab不获取图片审核
     review_results.value = (await publisher.getImageReviewAll({ review_request_id: review_request_id.value, img_id: img.img_id })).data.reviewers_results
   } catch (error) {
     snackbar.showMessage('获取人工审核结果失败', 'error')
@@ -391,6 +453,7 @@ const fetchReview = async (img: Image) => {
 
 const fetchReviewDetail = async (review: Review) => {
   try {
+    if (!currentImage.value) return
     const response = (await publisher.getImageReviewDetail({ review_request_id: review_request_id.value, img_id: currentImage.value.img_id, reviewer_id: review.id })).data
     reasons.value = response.reasons
     result.value = response.result
@@ -404,7 +467,11 @@ const fetchReviewDetail = async (review: Review) => {
 
 const handleResourceSelect = (index: number) => {
   currentResourceIndex.value = index
-  if (!isTextTask.value) {
+  if (isMultiMaterial.value) {
+    if (activeTab.value === 'image' && currentImage.value) {
+      fetchReview(currentImage.value)
+    }
+  } else if (!isTextTask.value && currentImage.value) {
     fetchReview(currentImage.value)
   }
   fetchDetectionResults()
@@ -426,7 +493,12 @@ const handlePrevResource = () => {
 }
 
 const handleNextResource = () => {
-  const maxLen = isTextTask.value ? textResults.value.length : images.value.length
+  let maxLen: number
+  if (isMultiMaterial.value) {
+    maxLen = activeTab.value === 'text' ? textResults.value.length : images.value.length
+  } else {
+    maxLen = isTextTask.value ? textResults.value.length : images.value.length
+  }
   if (currentResourceIndex.value < maxLen - 1) {
     currentResourceIndex.value++
     handleResourceSelect(currentResourceIndex.value)
@@ -434,7 +506,7 @@ const handleNextResource = () => {
 }
 
 const getImageUrl = (url: string) => {
-  return import.meta.env.VITE_API_URL + url
+  return resolveImageUrl(url)
 }
 
 
@@ -495,41 +567,68 @@ onMounted(async () => {
   const hasPermission = true
   if (!hasPermission) return
   try {
-    // 假设这里的 review_request_id 就是 task_id（前端目前通过此 ID 请求数据）
-    // 为了支持文本和图片分支，我们先通过通用的任务状态接口或者直接请求尝试识别任务类型
-    try {
-      const taskTextRes = await publisher.getTaskTextResults(review_request_id.value)
-      if (taskTextRes.data && taskTextRes.data.task_type && taskTextRes.data.task_type.includes('text')) {
-        taskType.value = taskTextRes.data.task_type
-        textResults.value = taskTextRes.data.results || []
-        
-        // 模拟一些基本统计数据
-        done.value = textResults.value.filter(t => t.status === 'completed').length
-        process.value = textResults.value.length - done.value
-        if (textResults.value.length > 0) {
-          AI_detection.value = textResults.value[0].confidence_score || 0
-        }
-
-        currentResourceIndex.value = 0
-        fetchDetectionResults()
-        return // 结束挂载逻辑
-      }
-    } catch (e) {
-      // 报错说明不是文本任务，继续走原有的图片逻辑
-    }
-
-    // 原始的图片审核逻辑
-    taskType.value = 'image'
+    // 使用 getRequestDetail 获取审核请求详情，该接口同时返回 images 和 texts 数组
     const response = (await publisher.getRequestDetail({ review_request_id: review_request_id.value })).data
+    const hasImages = response.images && response.images.length > 0
+    const hasTexts = response.texts && response.texts.length > 0
+
     done.value = response.status.done
     process.value = response.status.process
-    AI_detection.value = response.ai_detection_result.confidence_score
-    images.value = response.images
-    if(images.value.length > 0) {
-      review_results.value = (await publisher.getImageReviewAll({ review_request_id: review_request_id.value, img_id: images.value[0].img_id })).data.reviewers_results
+    AI_detection.value = response.ai_detection_result?.confidence_score || 0
+
+    if (hasImages && hasTexts) {
+      // multi_material: 既有图片又有文本
+      taskType.value = 'multi_material'
+      images.value = response.images
+      activeTab.value = 'image'
+
+      // 使用 request detail 返回的文本信息构建列表，详细数据在选中时通过 getSingleTextResult 获取
+      textResults.value = response.texts.map((t: any) => ({
+        result_id: t.text_id,
+        resource_id: t.text_id,
+        text_type: t.source_type,
+        status: 'completed',
+        is_fake: false,
+        confidence_score: 0,
+      }))
+
+      // 获取第一张图片的审核结果
+      if (images.value.length > 0) {
+        review_results.value = (await publisher.getImageReviewAll({ review_request_id: review_request_id.value, img_id: images.value[0].img_id })).data.reviewers_results
+      }
+      currentResourceIndex.value = 0
+      fetchDetectionResults()
+    } else if (hasImages) {
+      // 纯图片任务
+      taskType.value = 'image'
+      images.value = response.images
+      if (images.value.length > 0) {
+        review_results.value = (await publisher.getImageReviewAll({ review_request_id: review_request_id.value, img_id: images.value[0].img_id })).data.reviewers_results
+      }
+      currentResourceIndex.value = 0
+      fetchDetectionResults()
+    } else if (hasTexts) {
+      // 纯文本任务
+      taskType.value = 'paper_text' // 默认为论文检测
+      // 使用 request detail 返回的文本信息构建列表，详细数据在选中时获取
+      textResults.value = response.texts.map((t: any) => ({
+        result_id: t.text_id,
+        resource_id: t.text_id,
+        text_type: t.source_type,
+        status: 'completed',
+        is_fake: false,
+        confidence_score: 0,
+      }))
+      done.value = textResults.value.filter(t => t.status === 'completed').length
+      process.value = textResults.value.length - done.value
+      if (textResults.value.length > 0) {
+        AI_detection.value = textResults.value[0].confidence_score || 0
+      }
+      currentResourceIndex.value = 0
+      fetchDetectionResults()
+    } else {
+      taskType.value = 'image'
     }
-    currentResourceIndex.value = 0
-    fetchDetectionResults()
   } catch (error) {
     snackbar.showMessage('获取数据失败', 'error')
   }

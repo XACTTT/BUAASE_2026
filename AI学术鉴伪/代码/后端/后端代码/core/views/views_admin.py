@@ -1685,7 +1685,7 @@ class AdminLoginView(views.APIView):
                 'avatar': _safe_avatar_url(user)
             })
         log_action(None, 'login', result='failure', error_msg=f'Admin login failed: {str(serializer.errors)}', ip=get_client_ip(request))
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        return Response(serializer.errors, status=status.HTTP_401_UNAUTHORIZED)
 
 
 @api_view(['POST'])
@@ -1958,14 +1958,29 @@ def get_review_request_detail(request, manual_review_id):
             "url": serialize_value(img.image, request) if img.image else None,
         })
 
-    # 获取 texts 数据
+    # 获取 texts 数据（包含完整文本和AI检测结果，供审核员查看）
+    from core.models import TextDetectionResult
     texts = []
     for text in manual_review.text_resources.all():
-        texts.append({
+        text_data = {
             "id": text.id,
-            "raw_text": text.raw_text[:200] + '...' if len(text.raw_text) > 200 else text.raw_text,
+            "raw_text": text.raw_text,
             "source_type": text.source_type,
-        })
+        }
+        # 获取该文本资源的AI检测结果
+        try:
+            text_det = TextDetectionResult.objects.get(text_resource=text)
+            text_data["ai_detection"] = {
+                "is_fake": text_det.is_fake,
+                "confidence_score": text_det.confidence_score,
+                "ai_generated_paragraphs": text_det.ai_generated_paragraphs,
+                "factual_fake_reason": text_det.factual_fake_reason,
+                "template_tendency_score": text_det.template_tendency_score,
+                "template_analysis_reason": text_det.template_analysis_reason,
+            }
+        except TextDetectionResult.DoesNotExist:
+            text_data["ai_detection"] = None
+        texts.append(text_data)
 
     # 获取 persons 数据：所有参与该请求的 reviewer（来自 ManualReview 表）
     persons = []
@@ -2015,6 +2030,26 @@ def handle_review_request(request, reviewRequest_id):
 
     if choice == 0:
         review_request.status2 = 'refused'
+        # 推导 task_type
+        det_task = None
+        if review_request.detection_result and review_request.detection_result.detection_task_id:
+            try:
+                det_task = DetectionTask.objects.get(id=review_request.detection_result.detection_task_id)
+            except DetectionTask.DoesNotExist:
+                pass
+        task_type = det_task.task_type if det_task else None
+
+        log_action(
+            user=request.user,
+            operation_type='reject_review_request',
+            target_type='review_request',
+            target_id=review_request.id,
+            ip=get_client_ip(request),
+            detail={
+                'task_type': task_type,
+                'reason': reason,
+            },
+        )
     elif choice == 1:
         review_request.status2 = 'accepted'
         
@@ -2069,6 +2104,28 @@ def handle_review_request(request, reviewRequest_id):
                 content=f'出版社 {review_request.user.username} 给您分配了新任务，请及时处理',
                 url=f'/task/detail/{manual_review.id}'
             )
+
+        # 记录审核通过日志
+        det_task = None
+        if review_request.detection_result and review_request.detection_result.detection_task_id:
+            try:
+                det_task = DetectionTask.objects.get(id=review_request.detection_result.detection_task_id)
+            except DetectionTask.DoesNotExist:
+                pass
+        task_type = det_task.task_type if det_task else None
+        reviewer_count = review_request.reviewers.count()
+
+        log_action(
+            user=request.user,
+            operation_type='approve_review_request',
+            target_type='review_request',
+            target_id=review_request.id,
+            ip=get_client_ip(request),
+            detail={
+                'task_type': task_type,
+                'reviewer_count': reviewer_count,
+            },
+        )
 
     # 更新审核请求的状态和理由
     review_request.check_reason = reason

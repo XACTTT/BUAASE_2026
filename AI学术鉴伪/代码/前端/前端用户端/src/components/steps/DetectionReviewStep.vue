@@ -318,6 +318,7 @@ import publisher from '@/api/publisher'
 import { useRouter } from 'vue-router'
 import axios from 'axios'
 import { useUserStore } from '@/stores/user'
+import { resolveImageUrl } from '@/utils/preview-url'
 
 interface Image {
   result_id: string
@@ -361,7 +362,7 @@ const taskLlmAnalysis = ref<any>(null)
 const taskLlmAnalysisText = computed(() => formatLlmAnalysis(taskLlmAnalysis.value))
 const ela = ref()
 const urn = ref<SubMethod[]>([])
-const exif = ref()
+const exif = ref({ photoshop_edited: false, time_modified: false, detection_time: null })
 const activeOverlay = ref()
 const isOverlayVisible = ref(false)
 
@@ -370,7 +371,6 @@ const searchQuery = ref('')
 const isSearching = ref(false)
 const allPeople = ref<Person[]>([])
 const selectedPeopleList = ref<Person[]>([])
-const apiBaseUrl = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000').replace(/\/$/, '')
 
 // 计算是否可以提交
 const canSubmit = computed(() => {
@@ -548,7 +548,7 @@ const toggleOverlay = (dimension: SubMethod) => {
   // 显示当前覆盖层
   dimension.visible = true
   isOverlayVisible.value = true
-  activeOverlay.value = dimension.mask_image
+  activeOverlay.value = resolveImageUrl(dimension.mask_image)
 }
 
 const getProbabilityColor = (probability: number): string => {
@@ -565,15 +565,11 @@ const getSelectedImageUrl = (selectedImage: Image | null) => {
 }
 
 const getImageUrl = (url: string) => {
-  if (!url) return ''
-  if (/^https?:\/\//.test(url)) return url
-  return `${apiBaseUrl}${url}`
+  return resolveImageUrl(url)
 }
 
 const getAvatar = (url: string) => {
-  if (!url) return ''
-  if (/^https?:\/\//.test(url)) return url
-  return `${apiBaseUrl}${url}`
+  return resolveImageUrl(url)
 }
 
 const selectedFakeCount = ref(0)

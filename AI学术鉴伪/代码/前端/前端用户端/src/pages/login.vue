@@ -89,18 +89,6 @@
 
             <v-text-field v-model="password" label="输入密码" variant="outlined" density="comfortable" class="mb-4"
               type="password" prepend-inner-icon="mdi-lock" :rules="loginRules.password"></v-text-field>
-
-            <!-- 验证码区域 -->
-            <div class="captcha-section mb-6">
-              <v-text-field v-model="captchaInput" label="请输入验证码" variant="outlined" density="comfortable"
-                :error-messages="captchaError" class="captcha-input" prepend-inner-icon="mdi-shield-check">
-                <template v-slot:append>
-                  <DynamicCaptcha ref="captchaRef" @update:code="code => captchaCode = code" />
-                </template>
-              </v-text-field>
-            </div>
-
-            <v-checkbox v-model="agreement" label="我已阅读《隐私政策》和《使用协议》" hide-details class="mb-6"></v-checkbox>
           </template>
 
           <!-- 注册表单 -->
@@ -128,18 +116,6 @@
             <v-text-field v-model="registerFormData.inviteCode" label="请输入邀请码" variant="outlined" density="comfortable"
               class="mb-4" prepend-inner-icon="mdi-key" :rules="[(v: string) => !!v || '邀请码不能为空']"
               required></v-text-field>
-
-            <!-- 验证码区域 -->
-            <div class="captcha-section mb-6">
-              <v-text-field v-model="captchaInput" label="请输入验证码" variant="outlined" density="comfortable"
-                :error-messages="captchaError" class="captcha-input" prepend-inner-icon="mdi-shield-check">
-                <template v-slot:append>
-                  <DynamicCaptcha ref="captchaRef" @update:code="code => captchaCode = code" />
-                </template>
-              </v-text-field>
-            </div>
-
-            <v-checkbox v-model="agreement" label="我已阅读《隐私政策》和《使用协议》" hide-details class="mb-6"></v-checkbox>
 
             <!-- 创建组织按钮 -->
             <v-btn v-if="selectedRole === 'publisher'" block color="secondary" size="large" class="mb-4"
@@ -316,8 +292,6 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, watch, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
-import DynamicCaptcha from '@/components/DynamicCaptcha.vue'
-import ForgotPassword from '@/components/ForgotPassword.vue'
 import { useSnackbarStore } from '@/stores/snackbar';
 const snackbar = useSnackbarStore();
 import user from '@/api/user'
@@ -326,12 +300,10 @@ const userStore = useUserStore();
 import VerificationCodeInput from '@/components/VerificationCodeInput.vue'
 
 const router = useRouter()
-const captchaRef = ref()
 const loginType = ref('login')
 const selectedRole = ref('reviewer')
 const email = ref('')
 const password = ref('')
-const agreement = ref(false)
 const showForgotPasswordDialog = ref(false)
 const showCreateOrgDialog = ref(false)
 const creatingOrg = ref(false)
@@ -359,11 +331,6 @@ const orgFormData = ref({
   adminPassword: '',
   adminConfirmPassword: ''
 })
-
-// 验证码相关
-const captchaInput = ref('')
-const captchaCode = ref('')
-const captchaError = ref('')
 
 // 表单验证规则
 const loginRules = {
@@ -427,25 +394,7 @@ const orgRules = {
   ]
 }
 
-const validateCaptcha = () => {
-  if (!captchaInput.value) {
-    captchaError.value = '请输入验证码'
-    return false
-  }
-  if (captchaInput.value.toLowerCase() !== captchaCode.value.toLowerCase()) {
-    captchaError.value = '验证码错误'
-    captchaInput.value = ''
-    captchaRef.value?.refreshCaptcha()
-    return false
-  }
-  captchaError.value = ''
-  return true
-}
-
 const isFormValid = computed(() => {
-  if (!agreement.value) return false
-  if (!captchaInput.value) return false
-
   if (loginType.value === 'login') {
     return email.value && password.value &&
       /.+@.+\..+/.test(email.value) &&
@@ -459,10 +408,6 @@ const isFormValid = computed(() => {
 })
 
 const handleSubmit = async () => {
-  if (!validateCaptcha()) {
-    return
-  }
-  // 继续登录/注册流程...
   if (loginType.value === 'login') {
     const response = await user.login({
       email: email.value,
@@ -473,7 +418,6 @@ const handleSubmit = async () => {
       localStorage.setItem("2-refresh", res.data.refresh)
       localStorage.setItem("2-isLoggedIn", "true")
 
-      // 获取用户信息并存储到 user store
       await userStore.fetchUserInfo();
 
       snackbar.showMessage('登录成功', 'success')
@@ -486,7 +430,7 @@ const handleSubmit = async () => {
           case 401:
             errorMessage = '账号/密码错误'
             break
-          default://400
+          default:
             errorMessage = '请联系管理员'
             break
         }
@@ -508,7 +452,6 @@ const handleSubmit = async () => {
       let errorMessage = '注册失败，请稍后重试'
       if (error.response) {
         if (error.response.status === 400) {
-          // 处理字段验证错误
           const errors = error.response.data
           const errorMessages = []
 
@@ -535,7 +478,6 @@ const resettingPassword = ref(false)
 const countdown = ref(0)
 const countdownTimer = ref<number | null>(null)
 
-// 密码重置表单验证
 const isPasswordResetValid = computed(() => {
   return forgotPasswordForm.value.email &&
     /.+@.+\..+/.test(forgotPasswordForm.value.email) &&
@@ -545,10 +487,8 @@ const isPasswordResetValid = computed(() => {
     forgotPasswordForm.value.newPassword.length >= 6
 })
 
-// 关闭忘记密码对话框
 const closeForgotPasswordDialog = () => {
   showForgotPasswordDialog.value = false
-  // 重置表单
   setTimeout(() => {
     forgotPasswordForm.value = {
       email: '',
@@ -556,7 +496,6 @@ const closeForgotPasswordDialog = () => {
       newPassword: '',
       confirmPassword: ''
     }
-    // 清除倒计时
     if (countdownTimer.value) {
       clearInterval(countdownTimer.value)
       countdownTimer.value = null
@@ -565,7 +504,6 @@ const closeForgotPasswordDialog = () => {
   }, 300)
 }
 
-// 开始倒计时
 const startCountdown = () => {
   countdown.value = 60
   if (countdownTimer.value) {
@@ -582,7 +520,6 @@ const startCountdown = () => {
   }, 1000)
 }
 
-// 请求重置密码邮件
 const requestResetEmail = async () => {
   try {
     sendingEmail.value = true
@@ -598,7 +535,6 @@ const requestResetEmail = async () => {
   }
 }
 
-// 重置密码
 const resetPassword = async () => {
   if (!isPasswordResetValid.value) {
     snackbar.showMessage('请确保两次输入的密码一致且长度不少于6位', 'error')
@@ -623,7 +559,6 @@ const resetPassword = async () => {
   }
 }
 
-// 组件卸载时清除定时器
 onUnmounted(() => {
   if (countdownTimer.value) {
     clearInterval(countdownTimer.value)
@@ -631,7 +566,6 @@ onUnmounted(() => {
   }
 })
 
-// 处理Logo预览
 const handleLogoChange = (file: File | null) => {
   if (file && file instanceof File) {
     try {
@@ -657,10 +591,8 @@ const handleLogoChange = (file: File | null) => {
   }
 }
 
-// 关闭创建组织对话框
 const closeCreateOrgDialog = () => {
   showCreateOrgDialog.value = false
-  // 重置表单
   setTimeout(() => {
     orgFormData.value = {
       name: '',
@@ -676,7 +608,6 @@ const closeCreateOrgDialog = () => {
   }, 300)
 }
 
-// 创建组织
 const handleCreateOrg = async () => {
   if (!isOrgFormValid.value) return
 
@@ -709,9 +640,7 @@ const handleCreateOrg = async () => {
   }
 }
 
-// 组织表单验证
 const isOrgFormValid = computed(() => {
-  // 检查所有必填字段是否都已填写
   const hasName = orgFormData.value.name && orgFormData.value.name.length >= 2
   const hasDescription = orgFormData.value.description && orgFormData.value.description.length >= 10
   const hasLogo = orgFormData.value.logo !== null
@@ -721,14 +650,9 @@ const isOrgFormValid = computed(() => {
   const hasAdminPassword = orgFormData.value.adminPassword && orgFormData.value.adminPassword.length >= 6
   const hasAdminConfirmPassword = orgFormData.value.adminConfirmPassword === orgFormData.value.adminPassword
 
-  // 所有字段都必须填写且符合验证规则
   return hasName && hasDescription && hasLogo && hasCertificate &&
     hasAdminUsername && hasAdminEmail && hasAdminPassword && hasAdminConfirmPassword
 })
-
-// 在 script setup 部分添加
-const isRegisterFormValid = ref(false)
-const registering = ref(false)
 </script>
 
 <style scoped>
@@ -864,14 +788,6 @@ const registering = ref(false)
 .v-btn.v-btn--size-large:active {
   background-color: var(--v-theme-primary-dark);
   transform: translateY(0);
-}
-
-.captcha-section {
-  width: 100%;
-}
-
-.captcha-input {
-  width: 100%;
 }
 
 :deep(.v-field__append-inner) {

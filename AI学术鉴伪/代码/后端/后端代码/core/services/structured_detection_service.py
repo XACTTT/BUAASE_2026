@@ -234,7 +234,7 @@ class StructuredDetectionService:
         return max(0.0, min(1.0, 1.0 - (variance ** 0.5) / mean))
 
     @staticmethod
-    def _aggregate_bert_batch(batch_response, detect_type, snapshot):
+    def _aggregate_bert_batch(batch_response, detect_type, snapshot, text_items):
         batch_results = batch_response.get('batch_results', [])
         aggregate = batch_response.get('aggregate', {})
         n = len(batch_results)
@@ -245,16 +245,52 @@ class StructuredDetectionService:
         risk_level = 'high' if avg_aigc >= 0.75 else 'medium' if avg_aigc >= 0.45 else 'low'
         is_fake = avg_aigc >= 0.60
 
-        per_section = [
-            {
-                'item_id': r.get('item_id'),
+        text_lookup = {item['id']: item for item in text_items}
+        section_meta = {}
+        if detect_type in ('paper', 'multi'):
+            for file_idx, paper_file in enumerate(snapshot.get('paper_files', [])):
+                file_name = paper_file.get('file_name', '')
+                for sec_idx, section in enumerate(paper_file.get('sections', [])):
+                    sid = f"{detect_type}_paper_{file_idx}_{sec_idx}"
+                    section_meta[sid] = {
+                        'title': section.get('title', ''),
+                        'page_number': section.get('page_number'),
+                        'source_file': file_name,
+                    }
+        if detect_type in ('review', 'multi'):
+            for file_idx, review_file in enumerate(snapshot.get('review_files', [])):
+                file_name = review_file.get('file_name', '')
+                for sec_idx, section in enumerate(review_file.get('sections', [])):
+                    sid = f"{detect_type}_review_file_{file_idx}_{sec_idx}"
+                    section_meta[sid] = {
+                        'title': section.get('title', ''),
+                        'page_number': section.get('page_number'),
+                        'source_file': file_name,
+                    }
+            for text_idx in range(len(snapshot.get('review_texts', []))):
+                sid = f"{detect_type}_review_text_{text_idx}"
+                section_meta[sid] = {
+                    'title': f'评审文本 {text_idx + 1}',
+                    'page_number': None,
+                    'source_file': '',
+                }
+
+        per_section = []
+        for r in batch_results:
+            item_id = r.get('item_id')
+            text_item = text_lookup.get(item_id, {})
+            meta = section_meta.get(item_id, {})
+            per_section.append({
+                'item_id': item_id,
                 'is_aigc': r.get('is_aigc'),
                 'label_name': r.get('label_name'),
                 'confidence_score': r.get('confidence_score'),
                 'probabilities': r.get('probabilities'),
-            }
-            for r in batch_results
-        ]
+                'text': text_item.get('text', ''),
+                'title': meta.get('title', ''),
+                'page_number': meta.get('page_number'),
+                'source_file': meta.get('source_file', ''),
+            })
 
         consistency = StructuredDetectionService._score_consistency(scores)
 
@@ -535,7 +571,7 @@ class StructuredDetectionService:
             raise ValueError(f'No extractable text found for detect_type={task.detect_type}')
         batch_response = BertTextAIDetectionBridge.submit_batch(text_items)
         ai_response = StructuredDetectionService._aggregate_bert_batch(
-            batch_response, task.detect_type, snapshot
+            batch_response, task.detect_type, snapshot, text_items
         )
         result_payload = StructuredDetectionService.normalize_result_payload(task, snapshot, ai_response)
 

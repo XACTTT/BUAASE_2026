@@ -30,8 +30,9 @@ instance.interceptors.response.use(response=>{
     return response
 },
  error=>{
-    // 处理401错误，尝试刷新token
-    if (error.response && error.response.status === 401) {
+    // 处理401错误，尝试刷新token（排除登录接口）
+    const isLoginRequest = error.config?.url?.includes('admin-login') || error.config?.url?.includes('token/refresh')
+    if (error.response && error.response.status === 401 && !isLoginRequest) {
         return refreshToken().then(newToken => {
             // 更新请求头中的token
             error.config.headers['Authorization'] = 'Bearer ' + newToken

@@ -25,9 +25,8 @@ urlpatterns = [
 
 from django.conf import settings
 
-# runserver 调试环境下，即使 DEBUG=False 也允许直接访问 media。
-if settings.DEBUG or 'runserver' in sys.argv:
-    media_prefix = settings.MEDIA_URL.lstrip('/').rstrip('/')
-    urlpatterns += [
-        re_path(rf'^{media_prefix}/(?P<path>.*)$', serve, {'document_root': settings.MEDIA_ROOT})
-    ]
+# Always serve media files
+media_prefix = settings.MEDIA_URL.lstrip('/').rstrip('/')
+urlpatterns += [
+    re_path(rf'^{media_prefix}/(?P<path>.*)$', serve, {'document_root': settings.MEDIA_ROOT})
+]
