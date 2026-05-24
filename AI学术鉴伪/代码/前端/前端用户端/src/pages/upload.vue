@@ -448,6 +448,20 @@
       </v-card-actions>
     </v-card>
   </div>
+
+  <v-dialog v-model="showDetectionDisabledDialog" max-width="480">
+    <v-card rounded="lg">
+      <v-card-title class="text-h6 font-weight-bold">检测方式未启用</v-card-title>
+      <v-card-text>
+        <p class="text-body-1">{{ detectionDisabledMessage }}</p>
+        <p class="text-body-2 text-medium-emphasis mt-2">请联系软件管理员在模型管理页面启用相应鉴伪方式。</p>
+      </v-card-text>
+      <v-card-actions>
+        <v-spacer />
+        <v-btn color="primary" variant="tonal" @click="showDetectionDisabledDialog = false">知道了</v-btn>
+      </v-card-actions>
+    </v-card>
+  </v-dialog>
 </template>
 
 <script setup lang="ts">
@@ -579,6 +593,32 @@ const fileIdsByCategory = ref<Record<UploadCategoryKey, number[]>>({
 })
 const loading = ref<boolean>(false)
 const snackbar = useSnackbarStore()
+const showDetectionDisabledDialog = ref(false)
+const detectionDisabledMessage = ref('')
+
+async function checkDetectionEnabled(): Promise<boolean> {
+  try {
+    const res = await publisher.getDetectionMethods()
+    const config = (res.data as any).config || {}
+    const type = selectedModule.value
+    const cfg = config[type]
+    if (!cfg || !cfg.enabled) {
+      const labels: Record<string, string> = {
+        image: '图片检测',
+        paper: '论文检测',
+        review: 'Review检测',
+        multi: '多材料综合检测',
+      }
+      detectionDisabledMessage.value = `「${labels[type] || type}」当前暂未启用，无法提交检测任务。`
+      showDetectionDisabledDialog.value = true
+      return false
+    }
+    return true
+  } catch {
+    // 查询失败时不阻止提交，由后端兜底校验
+    return true
+  }
+}
 
 // 进度页面相关状态
 const showProgress = ref(false)
@@ -929,6 +969,8 @@ const handleTag = async (tag: string) => {
 const handleNext = async () => {
   await handleTag(currentTag.value)
   if (canProceed.value) {
+    const enabled = await checkDetectionEnabled()
+    if (!enabled) return
     try {
       const token = localStorage.getItem('2-token')
       if (!token) {

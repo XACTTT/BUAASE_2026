@@ -111,5 +111,8 @@ mlruns/
 !.env.example
 !.env.template
 
+# Claude AI
+.claude/
+
 # Others------------------------
 test_resource/

@@ -2,6 +2,7 @@ import json
 from urllib import error as url_error
 from urllib import request as url_request
 
+from django.core.cache import cache
 from django.utils import timezone
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAdminUser, IsAuthenticated
@@ -626,4 +627,78 @@ def chat_with_ai_model(request):
         'parsed': parsed,
         'raw': result,
         'run_id': run_record.id if run_record else None,
+    })
+
+
+# ── 全局鉴伪模型配置（Redis 存储） ──
+
+GLOBAL_DETECTION_CONFIG_KEY = 'global_detection_config'
+
+DETECTION_METHODS = {
+    'image': [{'value': 'urn', 'label': 'URN'}],
+    'paper': [
+        {'value': 'bert_text', 'label': 'BERT'},
+        {'value': 'fast_detect_gpt', 'label': 'Fast-DetectGPT'},
+    ],
+    'review': [
+        {'value': 'bert_text', 'label': 'BERT'},
+        {'value': 'fast_detect_gpt', 'label': 'Fast-DetectGPT'},
+    ],
+    'multi': [
+        {'value': 'bert_text', 'label': 'BERT'},
+        {'value': 'fast_detect_gpt', 'label': 'Fast-DetectGPT'},
+    ],
+}
+
+DEFAULT_DETECTION_CONFIG = {
+    'image': {'enabled': True, 'method': 'urn'},
+    'paper': {'enabled': True, 'method': 'bert_text'},
+    'review': {'enabled': True, 'method': 'bert_text'},
+    'multi': {'enabled': True, 'method': 'bert_text'},
+}
+
+
+def get_global_detection_config():
+    cfg = cache.get(GLOBAL_DETECTION_CONFIG_KEY)
+    if cfg is None:
+        return dict(DEFAULT_DETECTION_CONFIG)
+    return cfg
+
+
+def set_global_detection_config(config):
+    cache.set(GLOBAL_DETECTION_CONFIG_KEY, config, timeout=None)
+
+
+@api_view(['GET'])
+@permission_classes([IsAdminUser])
+def detection_methods_list(request):
+    config = get_global_detection_config()
+    return Response({
+        'config': config,
+        'methods': DETECTION_METHODS,
+    })
+
+
+@api_view(['PUT'])
+@permission_classes([IsAdminUser])
+def detection_methods_update(request):
+    if not _is_software_admin(request.user):
+        return Response({'error': '仅软件管理员可修改全局鉴伪配置'}, status=403)
+
+    payload = request.data
+    config = get_global_detection_config()
+
+    for detect_type in DETECTION_METHODS:
+        if detect_type in payload:
+            entry = payload[detect_type]
+            if isinstance(entry, dict):
+                config[detect_type] = {
+                    'enabled': bool(entry.get('enabled', True)),
+                    'method': str(entry.get('method', DEFAULT_DETECTION_CONFIG[detect_type]['method'])),
+                }
+
+    set_global_detection_config(config)
+    return Response({
+        'message': '全局鉴伪配置已更新',
+        'config': config,
     })

@@ -130,6 +130,10 @@ export default {
 
   deleteDetectionTask(data: any) {
     return http.delete(`/detection-task-delete/${data.task_id}/`)
+  },
+
+  getDetectionMethods() {
+    return http.get('/detection/methods/')
   }
 
 }

@@ -190,7 +190,10 @@
                     <v-list-item>
                       <template #prepend><v-icon color="primary">mdi-view-list</v-icon></template>
                       <v-list-item-title>模型数量</v-list-item-title>
-                      <v-list-item-subtitle>{{ selectedSource.models.length }} 个</v-list-item-subtitle>
+                      <v-list-item-subtitle>
+                        {{ selectedSource.models.length }} 个
+                        <span v-if="canManageSources" class="text-caption text-medium-emphasis">（按组织配置）</span>
+                      </v-list-item-subtitle>
                     </v-list-item>
                   </v-list>
                 </v-card>
@@ -360,6 +363,43 @@
             <div class="text-h6 mt-4">暂无可用模型源</div>
             <div class="text-body-2 text-medium-emphasis mt-2">软件管理员可以先新增一个模型源。</div>
           </v-card-text>
+        </v-card>
+      </v-col>
+    </v-row>
+
+    <v-row v-if="canManageSources" class="mt-6">
+      <v-col cols="12" md="8" lg="9" offset-md="4" offset-lg="3">
+        <v-card variant="outlined" rounded="lg" class="pa-4">
+          <div class="d-flex align-center gap-2 mb-4">
+            <v-icon color="primary">mdi-shield-check</v-icon>
+            <span class="text-subtitle-1 font-weight-bold">全局鉴伪模型</span>
+            <v-chip size="x-small" color="primary" variant="tonal">软件管理员</v-chip>
+          </div>
+          <div class="text-body-2 text-medium-emphasis mb-4">控制各检测类型是否可用及使用哪种鉴伪方式，对所有组织生效。</div>
+
+          <v-row dense>
+            <v-col v-for="item in detectionConfigItems" :key="item.type" cols="12" sm="6" md="4">
+              <v-card variant="flat" border class="pa-3">
+                <div class="d-flex align-center justify-space-between mb-2">
+                  <span class="font-weight-medium">{{ item.label }}</span>
+                  <v-switch v-model="item.enabled" color="primary" density="compact" hide-details @update:model-value="onDetectionConfigChange" />
+                </div>
+                <div class="text-caption text-medium-emphasis mb-2" v-if="item.disabledHint">始终使用 URN</div>
+                <v-select
+                  v-else
+                  v-model="item.method"
+                  :items="item.methods"
+                  item-title="label"
+                  item-value="value"
+                  density="compact"
+                  variant="outlined"
+                  hide-details
+                  :disabled="!item.enabled"
+                  @update:model-value="onDetectionConfigChange"
+                />
+              </v-card>
+            </v-col>
+          </v-row>
         </v-card>
       </v-col>
     </v-row>
@@ -557,6 +597,58 @@ const editingModel = ref<ManagedModel | null>(null)
 const selectedProviderTemplate = ref(providerTemplateOptions[0].value)
 const verifyingModelKeys = ref<string[]>([])
 
+const DETECTION_TYPE_LABELS: Record<string, string> = {
+  image: '图像检测',
+  paper: '论文检测',
+  review: 'Review检测',
+  multi: '多材料综合检测',
+}
+
+interface DetectionConfigItem {
+  type: string
+  label: string
+  enabled: boolean
+  method: string
+  methods: { value: string; label: string }[]
+  disabledHint?: string
+}
+
+const detectionConfigItems = ref<DetectionConfigItem[]>([])
+
+async function loadDetectionConfig() {
+  try {
+    const res = await modelApi.getDetectionMethods()
+    const config = (res.data as any).config || {}
+    const methods = (res.data as any).methods || {}
+    detectionConfigItems.value = Object.keys(DETECTION_TYPE_LABELS).map((type) => {
+      const cfg = config[type] || { enabled: false, method: '' }
+      const availableMethods = methods[type] || []
+      return {
+        type,
+        label: DETECTION_TYPE_LABELS[type],
+        enabled: cfg.enabled !== false,
+        method: cfg.method || (availableMethods[0]?.value ?? ''),
+        methods: availableMethods,
+        disabledHint: availableMethods.length === 1 ? `始终使用 ${availableMethods[0]?.label ?? ''}` : undefined,
+      }
+    })
+  } catch {
+    // fallback: all disabled
+  }
+}
+
+function onDetectionConfigChange() {
+  const payload: Record<string, { enabled: boolean; method: string }> = {}
+  detectionConfigItems.value.forEach((item) => {
+    payload[item.type] = { enabled: item.enabled, method: item.method }
+  })
+  modelApi.updateDetectionMethods(payload).then(() => {
+    snackbar.showMessage('全局鉴伪配置已更新', 'success')
+  }).catch(() => {
+    snackbar.showMessage('保存失败，请重试', 'error')
+  })
+}
+
 const newSourceForm = ref({
   name: '',
   vendor: '',
@@ -565,7 +657,11 @@ const newSourceForm = ref({
   description: ''
 })
 
-const selectedSource = computed(() => sources.value.find((source) => source.id === selectedSourceId.value) ?? null)
+const selectedSource = ref<ModelSource | null>(null)
+
+watch([selectedSourceId, sources], ([sid, srcs]) => {
+  selectedSource.value = srcs.find((source) => source.id === sid) ?? null
+}, { immediate: true })
 const MODEL_LIBRARY_PAGE_SIZE = 10
 
 
@@ -639,6 +735,9 @@ onMounted(async () => {
     await userStore.fetchUserInfo()
   }
   await loadSources()
+  if (canManageSources.value) {
+    await loadDetectionConfig()
+  }
 })
 
 async function loadSources() {

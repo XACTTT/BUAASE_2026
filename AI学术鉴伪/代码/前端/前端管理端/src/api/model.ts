@@ -155,5 +155,13 @@ export default {
   chatWithModel(data: ChatModelPayload, timeoutMs?: number) {
     const config = timeoutMs ? { timeout: timeoutMs } : undefined
     return http.post('/admin/models/chat/', data, config)
+  },
+
+  getDetectionMethods() {
+    return http.get('/admin/models/detection-methods/')
+  },
+
+  updateDetectionMethods(data: Record<string, { enabled: boolean; method: string }>) {
+    return http.put('/admin/models/detection-methods/update/', data)
   }
 }

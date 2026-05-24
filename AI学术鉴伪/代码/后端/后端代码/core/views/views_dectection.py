@@ -331,6 +331,14 @@ def submit_detection2(request):
         return Response({"错误": "该用户没有提交检测的权限"}, status=403)
 
     detect_type = (request.data.get('detect_type') or 'image').strip().lower()
+
+    # 全局鉴伪模型配置校验
+    from .views_model_management import get_global_detection_config
+    global_cfg = get_global_detection_config()
+    detect_cfg = global_cfg.get(detect_type)
+    if detect_cfg is None or not detect_cfg.get('enabled', False):
+        return Response({'error': f'检测类型 "{detect_type}" 暂未启用，请联系管理员'}, status=400)
+
     # 兼容三种提交流程：image_ids（旧）/ file_id / file_ids（新）
     def _to_int_list(raw_value):
         if raw_value is None:
@@ -638,6 +646,16 @@ def submit_text_detection(request):
         "task_type": detection_task.task_type
     })
 
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def public_detection_methods(request):
+    from .views_model_management import get_global_detection_config, DETECTION_METHODS
+    config = get_global_detection_config()
+    return Response({
+        'config': config,
+        'methods': DETECTION_METHODS,
+    })
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
