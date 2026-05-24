@@ -1,6 +1,8 @@
 import { useMessageStore } from "@/stores/message"
 
-const url = 'ws://122.9.45.122:80/ws/notifications/'
+const httpBase = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'
+const wsBase = httpBase.replace(/^http/, 'ws')
+const url = wsBase + '/ws/notifications/'
 
 let ws: WebSocket | null = null
 let reconnectTimer: number | null = null

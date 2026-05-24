@@ -363,7 +363,7 @@ const fetchTasks = async (page: number, pageSize: number) => {
       manual_review_id: task.manual_review_id,
       manual_review_time: task.manual_review_time,
       publisher_username: task.publisher_username,
-      publisher_avatar: 'http://122.9.45.122' + task.publisher_avatar || '',
+      publisher_avatar: task.publisher_avatar ? import.meta.env.VITE_API_URL + task.publisher_avatar : '',
       image_count: task.image_count,
       status: task.status
     }))

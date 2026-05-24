@@ -179,7 +179,9 @@ const clearAllWebSockets = () => {
 const connectTaskWebSocket = (task: Task) => {
   if (taskWebSockets.has(task.task_id)) return
 
-  const wsUrl = `ws://122.9.45.122:80/ws/task/${task.task_id}/`
+  const httpBase = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'
+  const wsBase = httpBase.replace(/^http/, 'ws')
+  const wsUrl = `${wsBase}/ws/task/${task.task_id}/`
   const ws = new WebSocket(wsUrl)
 
   ws.onmessage = (e) => {
