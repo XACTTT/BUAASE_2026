@@ -90,7 +90,7 @@
               <template v-slot:activator="{ props }">
                 <v-text-field
                   v-bind="props"
-                  :model-value="filters.detectionResult === 'real' ? '真实' : (filters.detectionResult === 'fake' ? '虚假' : '')"
+                  :model-value="detectionResultOptions.find(o => o.value === filters.detectionResult)?.title || ''"
                   label="检测结果"
                   variant="outlined"
                   density="comfortable"
@@ -114,8 +114,8 @@
                   @click="filters.detectionResult = item.value; detectionResultMenu = false; handleFilterChange()"
                 >
                   <v-list-item-title>
-                    <v-icon size="small" class="mr-2" :color="item.value === 'real' ? 'success' : 'error'">
-                      {{ item.value === 'real' ? 'mdi-check-circle' : 'mdi-alert-circle' }}
+                    <v-icon size="small" class="mr-2" :color="item.color">
+                      {{ item.icon }}
                     </v-icon>
                     {{ item.title }}
                   </v-list-item-title>
@@ -270,9 +270,24 @@
                   <div class="text-body-2 success--text font-weight-bold">{{ getDetectionResultCount('real') }}</div>
                 </div>
 
-                <div>
+                <div class="mb-2">
                   <div class="text-caption text-medium-emphasis">虚假资源</div>
                   <div class="text-body-2 error--text font-weight-bold">{{ getDetectionResultCount('fake') }}</div>
+                </div>
+
+                <div class="mb-2">
+                  <div class="text-caption text-medium-emphasis">未检测</div>
+                  <div class="text-body-2 grey--text font-weight-bold">{{ getDetectionResultCount('undetected') }}</div>
+                </div>
+
+                <div class="mb-2">
+                  <div class="text-caption text-medium-emphasis">检测失败</div>
+                  <div class="text-body-2 warning--text font-weight-bold">{{ getDetectionResultCount('failed') }}</div>
+                </div>
+
+                <div>
+                  <div class="text-caption text-medium-emphasis">检测中</div>
+                  <div class="text-body-2 info--text font-weight-bold">{{ getDetectionResultCount('detecting') }}</div>
                 </div>
               </div>
 
@@ -389,6 +404,12 @@
                 <span class="text-truncate">{{ item.title || item.file_name || '-' }}</span>
               </template>
 
+              <template v-slot:item.type="{ item }">
+                <v-chip :color="getTypeColor(item.type)" size="small">
+                  {{ getTypeName(item.type) }}
+                </v-chip>
+              </template>
+
               <template v-slot:item.author="{ item }">
                 <span>{{ item.author || item.uploader_name || '-' }}</span>
               </template>
@@ -405,10 +426,10 @@
 
               <template v-slot:item.detection_result="{ item }">
                 <v-chip
-                  :color="item.detection_result === 'real' ? 'success' : 'error'"
+                  :color="getDetectionResultColor(item)"
                   size="small"
                 >
-                  {{ item.detection_result === 'real' ? '真实' : (item.detection_result === 'fake' ? '虚假' : '-') }}
+                  {{ getDetectionResultText(item) }}
                 </v-chip>
               </template>
 
@@ -440,13 +461,6 @@
               </template>
 
               <template v-slot:item.actions="{ item }">
-                <v-tooltip text="查看详情" location="top">
-                  <template v-slot:activator="{ props }">
-                    <v-btn icon variant="text" size="small" color="primary" v-bind="props" @click="viewResource(item.id)">
-                      <v-icon>mdi-eye</v-icon>
-                    </v-btn>
-                  </template>
-                </v-tooltip>
                 <v-tooltip text="资源预览" location="top">
                   <template v-slot:activator="{ props }">
                     <v-btn icon variant="text" size="small" color="info" v-bind="props" @click="previewResource(item)">
@@ -698,16 +712,14 @@
               <span class="font-weight-medium">{{ item.id }}</span>
             </template>
             <template v-slot:item.title="{ item }">
-              <span>{{ item.title }}</span>
+              <span>{{ item.title || item.file_name || '-' }}</span>
+            </template>
+            <template v-slot:item.type="{ item }">
+              <v-chip :color="getTypeColor(item.type)" size="small">
+                {{ getTypeName(item.type) }}
+              </v-chip>
             </template>
             <template v-slot:item.actions="{ item }">
-              <v-tooltip text="查看详情" location="top">
-                <template v-slot:activator="{ props }">
-                  <v-btn icon variant="text" size="small" color="primary" v-bind="props" @click="viewRelatedDetail(item)">
-                    <v-icon>mdi-eye</v-icon>
-                  </v-btn>
-                </template>
-              </v-tooltip>
               <v-tooltip text="资源预览" location="top">
                 <template v-slot:activator="{ props }">
                   <v-btn icon variant="text" size="small" color="info" v-bind="props" @click="previewRelatedResource(item)">
@@ -805,6 +817,7 @@ const showRelatedResourcesDialog = ref(false)
 const relatedResourceHeaders = [
   { title: '资源ID', key: 'id', align: 'center' as const, sortable: true, width: '120px' },
   { title: '资源标题', key: 'title', align: 'start' as const, sortable: true },
+  { title: '资源类型', key: 'type', align: 'center' as const, sortable: true },
   { title: '操作', key: 'actions', align: 'center' as const, sortable: false, width: '200px' },
 ]
 const relatedResourcesList = ref<any[]>([])
@@ -826,8 +839,11 @@ const subjectOptions = [
 ]
 
 const detectionResultOptions = [
-  { title: '真实', value: 'real' },
-  { title: '虚假', value: 'fake' }
+  { title: '真实', value: 'real', icon: 'mdi-check-circle', color: 'success' },
+  { title: '虚假', value: 'fake', icon: 'mdi-alert-circle', color: 'error' },
+  { title: '未检测', value: 'undetected', icon: 'mdi-minus-circle', color: 'grey' },
+  { title: '检测失败', value: 'failed', icon: 'mdi-close-circle', color: 'warning' },
+  { title: '检测中', value: 'detecting', icon: 'mdi-progress-clock', color: 'info' },
 ]
 
 // 资源类型配置
@@ -843,6 +859,7 @@ const resourceTypes = computed(() => [
 const resourceTableHeaders = [
   { title: '资源 ID', key: 'id', align: 'start' as const, sortable: true },
   { title: '资源标题', key: 'title', align: 'start' as const, sortable: true },
+  { title: '资源类型', key: 'type', align: 'center' as const, sortable: true },
   { title: '作者信息', key: 'author', align: 'start' as const, sortable: true },
   { title: '所属组织', key: 'organization', align: 'start' as const, sortable: true },
   { title: '学科', key: 'subject', align: 'center' as const, sortable: true },
@@ -868,7 +885,16 @@ const filteredResources = computed(() => {
   }
   
   if (filters.value.detectionResult) {
-    filtered = filtered.filter(r => r.detection_result === filters.value.detectionResult)
+    const dr = filters.value.detectionResult
+    if (dr === 'undetected') {
+      filtered = filtered.filter(r => r.detection_result === null && r.detection_status === 'pending')
+    } else if (dr === 'detecting') {
+      filtered = filtered.filter(r => r.detection_status === 'detecting')
+    } else if (dr === 'failed') {
+      filtered = filtered.filter(r => r.detection_result === 'failed' || r.detection_status === 'failed')
+    } else {
+      filtered = filtered.filter(r => r.detection_result === dr)
+    }
   }
   
   if (filters.value.startTime) {
@@ -1207,7 +1233,26 @@ const getTypeCount = (type: string) => {
 }
 
 // 获取特定检测结果的数量
+const getDetectionResultColor = (item: Resource) => {
+  if (item.detection_result === 'real') return 'success'
+  if (item.detection_result === 'fake') return 'error'
+  if (item.detection_status === 'detecting') return 'info'
+  if (item.detection_status === 'failed' || item.detection_result === 'failed') return 'warning'
+  return 'grey'
+}
+
+const getDetectionResultText = (item: Resource) => {
+  if (item.detection_result === 'real') return '真实'
+  if (item.detection_result === 'fake') return '虚假'
+  if (item.detection_status === 'detecting') return '检测中'
+  if (item.detection_status === 'failed' || item.detection_result === 'failed') return '检测失败'
+  return '未检测'
+}
+
 const getDetectionResultCount = (result: string) => {
+  if (result === 'undetected') return filteredResources.value.filter(r => r.detection_result === null && r.detection_status === 'pending').length
+  if (result === 'detecting') return filteredResources.value.filter(r => r.detection_status === 'detecting').length
+  if (result === 'failed') return filteredResources.value.filter(r => r.detection_result === 'failed' || r.detection_status === 'failed').length
   return filteredResources.value.filter(r => r.detection_result === result).length
 }
 

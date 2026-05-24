@@ -199,8 +199,15 @@ def admin_resources(request):
     if resource_type:
         serialized = [item for item in serialized if item['type'] == resource_type]
 
-    if detection_result in ('real', 'fake'):
-        serialized = [item for item in serialized if item['detection_result'] == detection_result]
+    if detection_result in ('real', 'fake', 'undetected', 'failed', 'detecting'):
+        if detection_result == 'undetected':
+            serialized = [item for item in serialized if item['detection_result'] is None and item['detection_status'] == 'pending']
+        elif detection_result == 'failed':
+            serialized = [item for item in serialized if item['detection_result'] == 'failed' or item['detection_status'] == 'failed']
+        elif detection_result == 'detecting':
+            serialized = [item for item in serialized if item['detection_status'] == 'detecting']
+        else:
+            serialized = [item for item in serialized if item['detection_result'] == detection_result]
 
     total_count = len(serialized)
     total_pages = (total_count + page_size - 1) // page_size if total_count else 0
