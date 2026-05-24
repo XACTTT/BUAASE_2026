@@ -5,7 +5,7 @@
       <v-btn icon="mdi-arrow-left" variant="text" @click="router.back()" class="mr-2 return-btn">
         <v-icon>mdi-arrow-left</v-icon>
       </v-btn>
-      <span class="text-h6 font-weight-medium">杩斿洖妫€娴嬪巻鍙?/span>
+      <span class="text-h6 font-weight-medium">返回检测历史</span>
     </div>
 
     <!-- 涓昏鍐呭鍖哄煙 -->
@@ -28,21 +28,21 @@
                 </v-btn>
                 <!-- 娣诲姞鐨剉-card鏂囨湰鍖哄煙 -->
                 <v-card class="ml-4 pa-2 elevation-1" flat rounded="lg" width="250">
-                  <v-card-title class="pa-2 pb-1 text-subtitle-2 font-weight-bold">AI 妫€娴嬬粨鏋?/v-card-title>
+                  <v-card-title class="pa-2 pb-1 text-subtitle-2 font-weight-bold">AI 检测结果</v-card-title>
                   <v-card-text class="pa-2 pt-1">
                     <template v-if="isMultiMaterial">
                       <div class="d-flex flex-column text-body-2 text-grey">
                         <div class="d-flex justify-space-between mb-1">
                           <span class="font-weight-medium">浠诲姟绫诲瀷:</span>
-                          <span class="text-primary">缁煎悎妫€娴?/span>
+                          <span class="text-primary">综合检测</span>
                         </div>
                         <div class="d-flex justify-space-between mb-1">
                           <span class="font-weight-medium">鍥剧墖鏁伴噺:</span>
-                          <span class="text-primary">{{ images.length }} 寮?/span>
+                          <span class="text-primary">{{ images.length }} 张</span>
                         </div>
                         <div class="d-flex justify-space-between">
                           <span class="font-weight-medium">鏂囨湰鏁伴噺:</span>
-                          <span class="text-primary">{{ textResults.length }} 浠?/span>
+                          <span class="text-primary">{{ textResults.length }} 份</span>
                         </div>
                       </div>
                     </template>
@@ -57,11 +57,11 @@
                       <div class="d-flex flex-column text-body-2 text-grey">
                         <div class="d-flex justify-space-between mb-1">
                           <span class="font-weight-medium">褰撳墠浠诲姟绫诲瀷:</span>
-                          <span class="text-primary">{{ taskType === 'paper_text' ? '璁烘枃妫€娴? : 'Review妫€娴? }}</span>
+                          <span class="text-primary">{{ taskType === 'paper_text' ? '论文检测' : 'Review检测' }}</span>
                         </div>
                         <div class="d-flex justify-space-between">
                           <span class="font-weight-medium">鍖呭惈鏂囨湰鏁伴噺:</span>
-                          <span class="text-primary">{{ textResults.length }} 浠?/span>
+                          <span class="text-primary">{{ textResults.length }} 份</span>
                         </div>
                       </div>
                     </template>
@@ -79,7 +79,7 @@
                       鏈鐞?
                     </v-chip>
                   </div>
-                  <div class="text-h6 font-weight-bold">{{ process }}浠?/div>
+                  <div class="text-h6 font-weight-bold">{{ process }}份</div>
                 </div>
                 <div class="stat-item">
                   <div class="text-subtitle-1 d-flex justify-center">
@@ -88,7 +88,7 @@
                       宸插彂閫?
                     </v-chip>
                   </div>
-                  <div class="text-h6 font-weight-bold">{{ done }}浠?/div>
+                  <div class="text-h6 font-weight-bold">{{ done }}份</div>
                 </div>
               </div>
             </div>
@@ -276,7 +276,7 @@
           <v-btn icon dark @click="showDetailDialog = false">
             <v-icon>mdi-close</v-icon>
           </v-btn>
-          <v-toolbar-title>妫€娴嬭鎯?/v-toolbar-title>
+          <v-toolbar-title>检测详情</v-toolbar-title>
           <v-spacer></v-spacer>
         </v-toolbar>
         <template v-if="!isTextTask">
@@ -396,19 +396,19 @@ const currentTextResult = computed(() => {
 const convert = (index: number) => {
   switch (index) {
     case 0:
-      return '楂樻柉妯＄硦'
+      return '高斯模糊'
     case 1:
-      return '浜害/瀵规瘮搴﹁皟鑺?
+      return '亮度/对比度调节'
     case 2:
-      return '鏅鸿兘淇'
+      return '智能修复'
     case 3:
-      return '鏆村姏瑕嗙洊'
+      return '暴力覆盖'
     case 4:
-      return '鍚屽浘澶嶅埗'
+      return '同图复制'
     case 5:
-      return '閲嶅彔鍒囧壊'
+      return '重录切割'
     case 6:
-      return '璺ㄥ浘鎷兼帴'
+      return '跨图拼接'
   }
 }
 
@@ -453,7 +453,7 @@ const fetchDetectionResults = async () => {
     if (axios.isAxiosError(error) && error.response?.status === 404) {
       return
     }
-    snackbar.showMessage('鑾峰彇妫€娴嬬粨鏋滃け璐?, 'error')
+    snackbar.showMessage('获取检测结果失败', 'error')
   }
 }
 
@@ -507,9 +507,9 @@ const handleResourceSelect = (index: number) => {
 
 const getResult = (result: boolean) => {
   if (result === true) {
-    return '鍋?
+    return '假'
   } else {
-    return '鐪?
+    return '真'
   }
 }
 

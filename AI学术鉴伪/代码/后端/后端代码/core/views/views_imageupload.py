@@ -97,7 +97,8 @@ import os
 import mimetypes
 import threading
 from django.conf import settings
-from django.http import FileResponse
+from django.http import FileResponse, HttpResponse, StreamingHttpResponse
+from django.utils.http import content_disposition_header
 from django.views.decorators.clickjacking import xframe_options_exempt
 import fitz
 
@@ -322,19 +323,103 @@ def get_extracted_images(request, file_id):
         return Response({"message": "File not found"}, status=404)
 
 
+def _normalize_preview_token(raw_token):
+    if not raw_token:
+        return None
+
+    token = str(raw_token).strip().strip('"').strip("'")
+    for prefix in ('Bearer ', 'JWT ', 'Token '):
+        if token.lower().startswith(prefix.lower()):
+            token = token[len(prefix):].strip()
+            break
+    return token or None
+
+
 def _resolve_auth_user(request):
-    """兼容 Header 与 query token 两种鉴权来源。"""
+    """兼容 Header 与 iframe query token 两种鉴权来源。"""
     auth_user = request.user if getattr(request.user, 'is_authenticated', False) else None
-    if not auth_user:
-        raw_token = request.query_params.get('token')
-        if raw_token:
-            try:
-                jwt_auth = JWTAuthentication()
-                validated_token = jwt_auth.get_validated_token(raw_token)
-                auth_user = jwt_auth.get_user(validated_token)
-            except Exception:
-                auth_user = None
-    return auth_user
+    if auth_user:
+        return auth_user
+
+    auth_header = request.META.get('HTTP_AUTHORIZATION') or request.headers.get('Authorization')
+    raw_token = (
+        request.query_params.get('token')
+        or request.query_params.get('access')
+        or request.query_params.get('access_token')
+        or auth_header
+    )
+    token = _normalize_preview_token(raw_token)
+    if not token:
+        return None
+
+    try:
+        jwt_auth = JWTAuthentication()
+        validated_token = jwt_auth.get_validated_token(token)
+        return jwt_auth.get_user(validated_token)
+    except Exception:
+        return None
+
+
+def _range_file_iterator(file_obj, start, length, chunk_size=8192):
+    file_obj.seek(start)
+    remaining = length
+    try:
+        while remaining > 0:
+            data = file_obj.read(min(chunk_size, remaining))
+            if not data:
+                break
+            remaining -= len(data)
+            yield data
+    finally:
+        file_obj.close()
+
+
+def _file_preview_response(request, full_path, content_type, filename, force_download=False):
+    file_size = os.path.getsize(full_path)
+    range_header = request.META.get('HTTP_RANGE', '').strip()
+
+    if force_download or not range_header:
+        response = FileResponse(
+            open(full_path, 'rb'),
+            content_type=content_type,
+            as_attachment=force_download,
+            filename=filename,
+        )
+        response['Accept-Ranges'] = 'bytes'
+        response['Content-Length'] = str(file_size)
+        return response
+
+    if not range_header.startswith('bytes='):
+        return HttpResponse(status=416, headers={'Content-Range': f'bytes */{file_size}'})
+
+    byte_range = range_header.removeprefix('bytes=').split(',', 1)[0].strip()
+    start_text, _, end_text = byte_range.partition('-')
+    try:
+        if start_text:
+            start = int(start_text)
+            end = int(end_text) if end_text else file_size - 1
+        else:
+            suffix_length = int(end_text)
+            start = max(file_size - suffix_length, 0)
+            end = file_size - 1
+    except (TypeError, ValueError):
+        return HttpResponse(status=416, headers={'Content-Range': f'bytes */{file_size}'})
+
+    if start < 0 or end < start or start >= file_size:
+        return HttpResponse(status=416, headers={'Content-Range': f'bytes */{file_size}'})
+
+    end = min(end, file_size - 1)
+    length = end - start + 1
+    response = StreamingHttpResponse(
+        _range_file_iterator(open(full_path, 'rb'), start, length),
+        status=206,
+        content_type=content_type,
+    )
+    response['Accept-Ranges'] = 'bytes'
+    response['Content-Length'] = str(length)
+    response['Content-Range'] = f'bytes {start}-{end}/{file_size}'
+    response['Content-Disposition'] = content_disposition_header(False, filename)
+    return response
 
 
 @api_view(['GET'])
@@ -427,11 +512,12 @@ def preview_resource(request, resource_type, resource_id):
         guessed_type, _ = mimetypes.guess_type(full_path)
         content_type = guessed_type or file_management.mime_type or 'application/octet-stream'
         force_download = str(request.query_params.get('download', '')).lower() in ('1', 'true', 'yes')
-        return FileResponse(
-            open(full_path, 'rb'),
+        return _file_preview_response(
+            request=request,
+            full_path=full_path,
             content_type=content_type,
-            as_attachment=force_download,
-            filename=file_management.file_name,
+            filename=file_management.file_name or os.path.basename(full_path),
+            force_download=force_download,
         )
 
     if resource_type == 'detection':

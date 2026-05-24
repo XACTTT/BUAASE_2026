@@ -27,7 +27,7 @@
                   <v-btn value="text" size="small">鏂囨湰</v-btn>
                 </v-btn-toggle>
                 <v-card class="ml-4 pa-2 elevation-1" flat rounded="lg" width="250">
-                  <v-card-title class="pa-2 pb-1 text-subtitle-2 font-weight-bold">AI 妫€娴嬬粨鏋?/v-card-title>
+                  <v-card-title class="pa-2 pb-1 text-subtitle-2 font-weight-bold">AI 检测结果</v-card-title>
                   <v-card-text class="pa-2 pt-1">
                     <template v-if="!isTextMode">
                       <div v-for="(dimension, index) in detection_results" :key="index"
@@ -37,7 +37,7 @@
                       </div>
                     </template>
                     <template v-else>
-                      <div class="text-body-2 text-grey">鏂囨湰浜哄伐瀹℃牳涓嶅睍绀哄浘鐗囩淮搴︺€?/div>
+                      <div class="text-body-2 text-grey">文本人工审核不展示图片维度。</div>
                     </template>
                   </v-card-text>
                 </v-card>
@@ -147,7 +147,7 @@
           <div v-if="!isTextMode" class="dimension-section rounded-lg elevation-1">
             <div class="text-h6 font-weight-medium mb-4">璇勫垎缁村害</div>
             <div class="text-caption text-medium-emphasis mb-4">
-              璇锋牴鎹浘鐗囩壒寰侊紝瀵规瘡涓€犲亣鏂瑰紡杩涜鍙兘鎬ц瘎浼帮紝鍒嗗€艰秺澶ц〃绀虹浉搴旂淮搴﹂€犲亣鍙兘鎬ц秺澶э紝蹇呰鏃跺彲浣跨敤缁樺埗鏍囨敞鍔熻兘鏍囪鍏蜂綋浣嶇疆銆?/div>
+              请根据图片特征，对每一种造假方式进行可能性评估，必要时可使用绘制标注功能标记具体位置。</div>
             <div class="dimension-list">
               <div v-for="(dimension, index) in dimensionsPerImage[currentImageIndex]" :key="index"
                 class="dimension-item mb-6">
@@ -176,7 +176,7 @@
                     </v-btn>
                   </v-btn-group>
                 </div>
-                <v-text-field v-model="dimension.reason" :label="'璇疯緭鍏? + dimension.name + '鐨勭悊鐢?" variant="outlined"
+                <v-text-field v-model="dimension.reason" :label="`请输入${dimension.name}的理由`" variant="outlined"
                   density="compact" hide-details class="mt-2"></v-text-field>
               </div>
 
@@ -197,7 +197,7 @@
           </div>
           <div v-else class="dimension-section rounded-lg elevation-1">
             <div class="text-h6 font-weight-medium mb-4">鏂囨湰瀹℃牳</div>
-            <div class="text-caption text-medium-emphasis mb-4">璇峰褰撳墠鏂囨湰缁欏嚭浜哄伐瀹℃牳缁撹涓庤鏄庛€?/div>
+            <div class="text-caption text-medium-emphasis mb-4">请对当前文本给出人工审核结论与说明。</div>
             <v-textarea v-model="textComments[currentTextIndex]" label="瀹℃牳璇存槑" variant="outlined" rows="6"
               hide-details class="mb-4"></v-textarea>
             <v-text-field v-if="isReviewText" v-model.number="textTemplateScores[currentTextIndex]" type="number"
@@ -373,19 +373,19 @@ interface dimension {
 const convert = (index: number) => {
   switch (index) {
     case 0:
-      return '楂樻柉妯＄硦'
+      return '高斯模糊'
     case 1:
-      return '浜害/瀵规瘮搴﹁皟鑺?
+      return '亮度/对比度调节'
     case 2:
-      return '鏅鸿兘淇'
+      return '智能修复'
     case 3:
-      return '鏆村姏瑕嗙洊'
+      return '暴力覆盖'
     case 4:
-      return '鍚屽浘澶嶅埗'
+      return '同图复制'
     case 5:
-      return '閲嶅彔鍒囧壊'
+      return '重录切割'
     case 6:
-      return '璺ㄥ浘鎷兼帴'
+      return '跨图拼接'
   }
 }
 
@@ -399,7 +399,7 @@ const fetchDetectionResults = async () => {
     const response = (await publisher.getSingleImageResult(id)).data
     detection_results.value = response.sub_methods
   } catch (error) {
-    snackbar.showMessage('鑾峰彇妫€娴嬬粨鏋滃け璐?, 'error')
+    snackbar.showMessage('获取检测结果失败', 'error')
   }
 }
 
@@ -442,13 +442,13 @@ onMounted(async () => {
 
     // 涓烘瘡涓浘鐗囩殑姣忎釜缁村害鍒濆鍖栫嫭绔嬬殑鏁版嵁
     dimensionsPerImage.value = images.value.map(() => [
-      { name: '楂樻柉妯＄硦', value: null, reason: '', showFakeArea: false, drawingPaths: [] },
-      { name: '浜害/瀵规瘮搴﹁皟鑺?, value: null, reason: '', showFakeArea: false, drawingPaths: [] },
-      { name: '鏅鸿兘淇', value: null, reason: '', showFakeArea: false, drawingPaths: [] },
-      { name: '鏆村姏瑕嗙洊', value: null, reason: '', showFakeArea: false, drawingPaths: [] },
-      { name: '鍚屽浘澶嶅埗', value: null, reason: '', showFakeArea: false, drawingPaths: [] },
-      { name: '閲嶅彔鍒囧壊', value: null, reason: '', showFakeArea: false, drawingPaths: [] },
-      { name: '璺ㄥ浘鎷兼帴', value: null, reason: '', showFakeArea: false, drawingPaths: [] }
+      { name: '高斯模糊', value: null, reason: '', showFakeArea: false, drawingPaths: [] },
+      { name: '亮度/对比度调节', value: null, reason: '', showFakeArea: false, drawingPaths: [] },
+      { name: '智能修复', value: null, reason: '', showFakeArea: false, drawingPaths: [] },
+      { name: '暴力覆盖', value: null, reason: '', showFakeArea: false, drawingPaths: [] },
+      { name: '同图复制', value: null, reason: '', showFakeArea: false, drawingPaths: [] },
+      { name: '重录切割', value: null, reason: '', showFakeArea: false, drawingPaths: [] },
+      { name: '跨图拼接', value: null, reason: '', showFakeArea: false, drawingPaths: [] }
     ])
     if (images.value.length) {
       fetchMaskImage()
@@ -660,11 +660,11 @@ onUnmounted(() => {
 })
 
 const degreeOptions = [
-  { value: 1, label: '杞诲井' },
-  { value: 2, label: '涓€鑸? },
-  { value: 3, label: '涓瓑' },
-  { value: 4, label: '鏄庢樉' },
-  { value: 5, label: '涓ラ噸' }
+  { value: 1, label: '轻微' },
+  { value: 2, label: '一般' },
+  { value: 3, label: '中等' },
+  { value: 4, label: '明显' },
+  { value: 5, label: '严重' }
 ]
 
 const getDegreeColor = (value: number) => {
@@ -748,13 +748,13 @@ const checkTextCompletion = () => {
     if (textJudgements.value[i] === null) {
       return {
         complete: false,
-        message: `绗?${i + 1} 娈垫枃鏈皻鏈畬鎴愮湡鍋囧垽瀹歚
+        message: `第 ${i + 1} 段文本尚未完成真假判定`
       }
     }
     if (!textComments.value[i]) {
       return {
         complete: false,
-        message: `绗?${i + 1} 娈垫枃鏈皻鏈～鍐欏鏍歌鏄巂
+        message: `第 ${i + 1} 段文本尚未填写审核说明`
       }
     }
 
@@ -763,7 +763,7 @@ const checkTextCompletion = () => {
     if (hasPendingItem) {
       return {
         complete: false,
-        message: `绗?${i + 1} 娈垫枃鏈殑缁嗗垎椤瑰皻鏈畬鎴愬鏍竊
+        message: `第 ${i + 1} 段文本的细分项尚未完成审核`
       }
     }
   }

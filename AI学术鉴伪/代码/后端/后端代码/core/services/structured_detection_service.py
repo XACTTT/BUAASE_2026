@@ -1,4 +1,5 @@
 import json
+import re
 
 from django.db import transaction
 from django.utils import timezone
@@ -14,8 +15,12 @@ from core.models import (
 )
 from core.services.content_extraction_service import ContentExtractionService
 from core.services.material_validation_service import MaterialValidationService
-from core.services.bert_text_ai_bridge import BertTextAIDetectionBridge
+from core.services.bert_text_ai_bridge import BertTextAIDetectionBridge, BertTextAIPermanentError
 from core.services.llm_service import build_chat_completion_payload, call_openai_compatible_chat
+
+
+STRUCTURED_BERT_MAX_CHARS = 900
+STRUCTURED_BERT_MAX_LENGTH = 512
 
 
 STAGE_PROMPT_TEMPLATES = {
@@ -224,6 +229,64 @@ class StructuredDetectionService:
         return items
 
     @staticmethod
+    def _split_text_for_bert(text, max_chars=STRUCTURED_BERT_MAX_CHARS):
+        normalized = (text or '').replace('\r\n', '\n').replace('\r', '\n').strip()
+        if not normalized:
+            return []
+        if len(normalized) <= max_chars:
+            return [normalized]
+
+        parts = [
+            part.strip()
+            for part in re.split(r'(?<=[。！？!?；;])\s*|\n\s*\n+', normalized)
+            if part.strip()
+        ]
+        if not parts:
+            parts = [normalized]
+
+        chunks = []
+        current = ''
+        for part in parts:
+            if len(part) > max_chars:
+                if current:
+                    chunks.append(current)
+                    current = ''
+                chunks.extend(part[index:index + max_chars] for index in range(0, len(part), max_chars))
+                continue
+
+            candidate = f'{current}\n{part}'.strip() if current else part
+            if len(candidate) <= max_chars:
+                current = candidate
+            else:
+                if current:
+                    chunks.append(current)
+                current = part
+
+        if current:
+            chunks.append(current)
+        return [chunk for chunk in chunks if chunk.strip()]
+
+    @staticmethod
+    def _chunk_text_items_for_bert(text_items):
+        chunked_items = []
+        for item in text_items:
+            chunks = StructuredDetectionService._split_text_for_bert(item.get('text') or '')
+            if len(chunks) <= 1:
+                chunked_items.append(item)
+                continue
+
+            for index, chunk in enumerate(chunks, start=1):
+                chunked_items.append({
+                    **item,
+                    'id': f"{item.get('id')}_chunk_{index}",
+                    'text': chunk,
+                    'source_item_id': item.get('id'),
+                    'chunk_index': index,
+                    'chunk_count': len(chunks),
+                })
+        return chunked_items
+
+    @staticmethod
     def _score_consistency(scores):
         if not scores or len(scores) < 2:
             return 1.0
@@ -279,15 +342,20 @@ class StructuredDetectionService:
         for r in batch_results:
             item_id = r.get('item_id')
             text_item = text_lookup.get(item_id, {})
-            meta = section_meta.get(item_id, {})
+            source_item_id = text_item.get('source_item_id') or item_id
+            meta = section_meta.get(source_item_id, {})
+            title = meta.get('title', '')
+            if text_item.get('chunk_count'):
+                title = f"{title} ({text_item.get('chunk_index')}/{text_item.get('chunk_count')})".strip()
             per_section.append({
                 'item_id': item_id,
+                'source_item_id': source_item_id,
                 'is_aigc': r.get('is_aigc'),
                 'label_name': r.get('label_name'),
                 'confidence_score': r.get('confidence_score'),
                 'probabilities': r.get('probabilities'),
                 'text': text_item.get('text', ''),
-                'title': meta.get('title', ''),
+                'title': title,
                 'page_number': meta.get('page_number'),
                 'source_file': meta.get('source_file', ''),
             })
@@ -363,6 +431,107 @@ class StructuredDetectionService:
                 'per_section': per_section,
             },
         }
+
+    @staticmethod
+    def _run_bert_detection(text_items):
+        try:
+            return BertTextAIDetectionBridge.submit_batch(text_items, max_length=STRUCTURED_BERT_MAX_LENGTH)
+        except (BertTextAIPermanentError, IndexError) as exc:
+            if not StructuredDetectionService._is_bert_batch_index_error(exc):
+                raise
+
+        batch_results = []
+        model_dir = None
+        base_model_dir = None
+        lang = None
+        for item in text_items:
+            single_response = StructuredDetectionService._run_single_bert_detection(item)
+            result = StructuredDetectionService._normalize_single_bert_result(item, single_response)
+            batch_results.append(result)
+            model_dir = model_dir or single_response.get('model_dir')
+            base_model_dir = base_model_dir or single_response.get('base_model_dir')
+            lang = lang or single_response.get('lang')
+
+        if not batch_results:
+            raise BertTextAIPermanentError('bert text detection returned no batch results')
+
+        scores = [item.get('confidence_score', 0) or 0 for item in batch_results]
+        aigc_probs = [item.get('probabilities', {}).get('aigc', 0) or 0 for item in batch_results]
+        n = len(batch_results)
+        return {
+            'batch_results': batch_results,
+            'item_count': n,
+            'aggregate': {
+                'aigc_ratio': sum(1 for item in batch_results if item.get('is_aigc')) / n if n else 0.0,
+                'mean_aigc_probability': sum(aigc_probs) / n if n else 0.0,
+                'mean_confidence': sum(scores) / n if n else 0.0,
+                'max_confidence': max(scores) if scores else 0.0,
+                'min_confidence': min(scores) if scores else 0.0,
+            },
+            'model_dir': model_dir,
+            'base_model_dir': base_model_dir,
+            'lang': lang,
+            'fallback': 'single_item_after_batch_index_error',
+        }
+
+    @staticmethod
+    def _is_bert_batch_index_error(exc):
+        return isinstance(exc, IndexError) or 'list index out of range' in str(exc)
+
+    @staticmethod
+    def _run_single_bert_detection(item):
+        try:
+            return BertTextAIDetectionBridge.submit_batch([item], max_length=STRUCTURED_BERT_MAX_LENGTH)
+        except (BertTextAIPermanentError, IndexError) as exc:
+            if not StructuredDetectionService._is_bert_batch_index_error(exc):
+                raise
+
+        try:
+            return BertTextAIDetectionBridge.submit_text(
+                item.get('text') or '',
+                language=item.get('language'),
+                max_length=STRUCTURED_BERT_MAX_LENGTH,
+            )
+        except (BertTextAIPermanentError, IndexError) as exc:
+            if not StructuredDetectionService._is_bert_batch_index_error(exc):
+                raise
+            text = item.get('text') or ''
+            raise BertTextAIPermanentError(
+                f"bert single text failed with list index out of range; "
+                f"item_id={item.get('id')}, source_item_id={item.get('source_item_id')}, "
+                f"text_length={len(text)}, max_length={STRUCTURED_BERT_MAX_LENGTH}"
+            ) from exc
+
+    @staticmethod
+    def _normalize_single_bert_result(item, single_response):
+        if not isinstance(single_response, dict):
+            raise BertTextAIPermanentError('bert text detection returned invalid single result')
+
+        batch_results = single_response.get('batch_results')
+        if isinstance(batch_results, list) and batch_results:
+            result = dict(batch_results[0])
+        elif isinstance(single_response.get('items'), list) and single_response['items']:
+            result = BertTextAIDetectionBridge._normalize_batch_result_item(single_response['items'][0])
+        else:
+            result = dict(single_response)
+
+        result['item_id'] = result.get('item_id') or item.get('id')
+        probabilities = result.get('probabilities') or {}
+        result['probabilities'] = probabilities
+        result['input_summary'] = result.get('input_summary') or {}
+
+        if result.get('confidence_score') is None:
+            probability_values = [value for value in probabilities.values() if isinstance(value, (int, float))]
+            result['confidence_score'] = max(probability_values) if probability_values else 0.0
+
+        if result.get('is_aigc') is None:
+            label = str(result.get('label_name') or result.get('label') or '').strip().lower()
+            result['is_aigc'] = label in {'aigc', 'ai', 'generated', 'machine'}
+
+        if not result.get('label_name'):
+            result['label_name'] = 'aigc' if result.get('is_aigc') else 'human'
+
+        return result
 
     @staticmethod
     def _normalize_overall(ai_response):
@@ -567,9 +736,10 @@ class StructuredDetectionService:
                 raise ValueError(validation.get('message') or '多材料校验失败')
 
         text_items = StructuredDetectionService._extract_text_items_from_snapshot(snapshot, task.detect_type)
+        text_items = StructuredDetectionService._chunk_text_items_for_bert(text_items)
         if not text_items:
             raise ValueError(f'No extractable text found for detect_type={task.detect_type}')
-        batch_response = BertTextAIDetectionBridge.submit_batch(text_items)
+        batch_response = StructuredDetectionService._run_bert_detection(text_items)
         ai_response = StructuredDetectionService._aggregate_bert_batch(
             batch_response, task.detect_type, snapshot, text_items
         )
