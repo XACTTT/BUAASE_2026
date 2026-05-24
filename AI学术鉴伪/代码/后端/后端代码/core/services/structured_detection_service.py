@@ -881,32 +881,46 @@ class StructuredDetectionService:
         return detection_results
 
     @staticmethod
-    def _wait_for_image_uploads(task: DetectionTask, timeout: int = 90, interval: int = 3):
-        """Poll until ImageUpload records appear, or timeout.
+    def _wait_for_image_uploads(task: DetectionTask, timeout: int = 120, interval: int = 3):
+        """Poll until ImageUpload records stabilize, or timeout.
 
         parse_uploaded_file_task runs async and may not have finished yet.
-        This ensures we don't build a snapshot with zero images.
+        Waits until the image count is stable (same across two consecutive checks),
+        ensuring both PDF-extracted and manually-uploaded images are ready.
         """
         file_ids = task.extra_payload.get('file_ids', [])
         container_id = task.extra_payload.get('container_id')
 
         target_file_ids = set(int(fid) for fid in file_ids if fid)
-        elapsed = 0
-        while elapsed < timeout:
+
+        def _count_images():
             if target_file_ids:
-                count = ImageUpload.objects.filter(file_management_id__in=target_file_ids).count()
-            elif container_id:
-                count = ImageUpload.objects.filter(container_id=container_id).count()
+                return ImageUpload.objects.filter(file_management_id__in=target_file_ids).count()
+            if container_id:
+                return ImageUpload.objects.filter(container_id=container_id).count()
+            return 0
+
+        elapsed = 0
+        last_count = 0
+        stable_rounds = 0
+        while elapsed < timeout:
+            count = _count_images()
+            if count > 0 and count == last_count:
+                stable_rounds += 1
+                if stable_rounds >= 2:
+                    logger.info('ImageUpload records stable for task %s after %ds (%d images)',
+                                task.id, elapsed, count)
+                    return count
             else:
-                break
-
-            if count > 0:
-                logger.info('ImageUpload records ready for task %s after %ds (%d images)',
-                            task.id, elapsed, count)
-                return count
-
+                stable_rounds = 0
+            last_count = count
             time.sleep(interval)
             elapsed += interval
+
+        if last_count > 0:
+            logger.warning('ImageUpload records for task %s not fully stable after %ds, proceeding with %d images',
+                           task.id, timeout, last_count)
+            return last_count
 
         logger.warning('No ImageUpload records found for task %s after %ds wait', task.id, timeout)
         return 0

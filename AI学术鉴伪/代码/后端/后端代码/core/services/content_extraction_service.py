@@ -163,7 +163,8 @@ class ContentExtractionService:
 
     @staticmethod
     def serialize_image_material(image: ImageUpload):
-        image_url = image.image.url if image.image else None
+        # Use authenticated preview URL so frontend resolveImageUrl appends JWT token
+        image_url = f'/api/preview/image/{image.id}/' if image.id else None
         return {
             'image_id': image.id,
             'file_management_id': image.file_management_id,
