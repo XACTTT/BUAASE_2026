@@ -708,247 +708,31 @@
             <div class="text-h6 mt-4">未获取到检测结果</div>
           </div>
 
-          <!-- 检测结果内容 -->
-          <div v-else class="pa-2">
-            <!-- 顶部概览 -->
-            <v-card class="mb-4 pa-4" variant="outlined" rounded="lg">
-              <v-row align="center">
-                <v-col cols="12" sm="3" class="text-center">
-                  <v-progress-circular
-                    :model-value="detectionResultData.confidence_score != null ? detectionResultData.confidence_score * 100 : 0"
-                    :size="120"
-                    :width="10"
-                    :color="detectionResultData.overall_is_fake ? 'error' : 'success'"
-                  >
-                    <div>
-                      <div class="text-h5 font-weight-bold">
-                        {{ detectionResultData.confidence_score != null ? (detectionResultData.confidence_score * 100).toFixed(1) + '%' : '-' }}
-                      </div>
-                      <div class="text-caption">
-                        {{ detectionResultData.overall_is_fake ? 'AI/造假概率' : '可信度' }}
-                      </div>
-                    </div>
-                  </v-progress-circular>
-                </v-col>
-                <v-col cols="12" sm="9">
-                  <div class="d-flex flex-column gap-2">
-                    <div class="d-flex align-center">
-                      <v-icon class="mr-2" color="primary">mdi-tag-outline</v-icon>
-                      <span class="text-body-1">
-                        检测类型：
-                        <v-chip size="small" color="primary">
-                          {{ getTaskTypeName(detectionResultData.task_type) }}
-                        </v-chip>
-                      </span>
-                    </div>
-                    <div v-if="detectionResultData.overall_is_fake !== undefined" class="d-flex align-center">
-                      <v-icon class="mr-2" :color="detectionResultData.overall_is_fake ? 'error' : 'success'">
-                        {{ detectionResultData.overall_is_fake ? 'mdi-alert-circle' : 'mdi-check-circle' }}
-                      </v-icon>
-                      <span class="text-body-1 font-weight-bold" :class="detectionResultData.overall_is_fake ? 'error--text' : 'success--text'">
-                        {{ detectionResultData.overall_is_fake ? '检测到异常内容' : '未检测到异常内容' }}
-                      </span>
-                    </div>
-                    <div v-if="detectionResultData.detection_time" class="d-flex align-center">
-                      <v-icon class="mr-2" color="grey">mdi-clock-outline</v-icon>
-                      <span class="text-body-1">检测时间：{{ formatTime(detectionResultData.detection_time) }}</span>
-                    </div>
-                  </div>
-                </v-col>
-              </v-row>
-            </v-card>
-
-            <!-- 图片类型检测结果 -->
-            <template v-if="detectionResultData.task_type === 'image'">
-              <!-- 图片列表 -->
-              <v-card class="mb-4" variant="outlined" rounded="lg">
-                <v-card-title class="pa-4">
-                  <v-icon color="error" class="mr-2">mdi-alert-circle</v-icon>
-                  疑似造假图片
-                  <v-chip size="small" color="error" class="ml-2">
-                    {{ detectionResultData.result?.fake_images?.length || 0 }}
-                  </v-chip>
-                </v-card-title>
-                <v-card-text class="pa-4">
-                  <div v-if="!detectionResultData.result?.fake_images?.length" class="text-center text-grey py-4">
-                    无造假图片
-                  </div>
-                  <v-row v-else>
-                    <v-col v-for="(img, idx) in detectionResultData.result.fake_images" :key="idx" cols="6" sm="4" md="3">
-                      <v-card variant="outlined" rounded="lg" class="overflow-hidden">
-                        <v-img
-                          :src="getImageUrl(img.image_url)"
-                          height="150"
-                          cover
-                        >
-                          <template v-slot:placeholder>
-                            <div class="d-flex align-center justify-center fill-height">
-                              <v-progress-circular indeterminate color="primary"></v-progress-circular>
-                            </div>
-                          </template>
-                        </v-img>
-                        <v-card-text class="pa-2 text-center text-caption">
-                          ID: {{ img.image_id }}
-                        </v-card-text>
-                      </v-card>
-                    </v-col>
-                  </v-row>
-                </v-card-text>
-              </v-card>
-
-              <v-card variant="outlined" rounded="lg">
-                <v-card-title class="pa-4">
-                  <v-icon color="success" class="mr-2">mdi-check-circle</v-icon>
-                  正常图片
-                  <v-chip size="small" color="success" class="ml-2">
-                    {{ detectionResultData.result?.normal_images?.length || 0 }}
-                  </v-chip>
-                </v-card-title>
-                <v-card-text class="pa-4">
-                  <div v-if="!detectionResultData.result?.normal_images?.length" class="text-center text-grey py-4">
-                    无正常图片
-                  </div>
-                  <v-row v-else>
-                    <v-col v-for="(img, idx) in detectionResultData.result.normal_images" :key="idx" cols="6" sm="4" md="3">
-                      <v-card variant="outlined" rounded="lg" class="overflow-hidden">
-                        <v-img
-                          :src="getImageUrl(img.image_url)"
-                          height="150"
-                          cover
-                        >
-                          <template v-slot:placeholder>
-                            <div class="d-flex align-center justify-center fill-height">
-                              <v-progress-circular indeterminate color="primary"></v-progress-circular>
-                            </div>
-                          </template>
-                        </v-img>
-                        <v-card-text class="pa-2 text-center text-caption">
-                          ID: {{ img.image_id }}
-                        </v-card-text>
-                      </v-card>
-                    </v-col>
-                  </v-row>
-                </v-card-text>
-              </v-card>
-            </template>
-
-            <!-- 文本/综合类型检测结果 -->
-            <template v-if="detectionResultData.task_type === 'paper_text' || detectionResultData.task_type === 'review_text' || detectionResultData.task_type === 'multi_material'">
-              <!-- 检测维度 -->
-              <v-card v-if="detectionResultData.result?.dimensions?.length" class="mb-4" variant="outlined" rounded="lg">
-                <v-card-title class="pa-4">
-                  <v-icon color="primary" class="mr-2">mdi-chart-box</v-icon>
-                  检测维度分析
-                </v-card-title>
-                <v-card-text class="pa-4">
-                  <v-row>
-                    <v-col v-for="(dim, idx) in detectionResultData.result.dimensions" :key="idx" cols="12" sm="6" md="4">
-                      <v-card variant="tonal" rounded="lg" class="pa-3">
-                        <div class="text-subtitle-2 font-weight-bold mb-1">{{ dim.name || ('维度 ' + (idx + 1)) }}</div>
-                        <v-chip
-                          v-if="dim.score !== undefined"
-                          :color="dim.score > 0.7 ? 'error' : dim.score > 0.4 ? 'warning' : 'success'"
-                          size="small"
-                          class="mb-1"
-                        >
-                          评分: {{ (dim.score * 100).toFixed(1) }}%
-                        </v-chip>
-                        <div v-if="dim.summary" class="text-body-2 text-grey mt-1">{{ dim.summary }}</div>
-                      </v-card>
-                    </v-col>
-                  </v-row>
-                </v-card-text>
-              </v-card>
-
-              <!-- 证据 -->
-              <v-card v-if="detectionResultData.result?.evidence" class="mb-4" variant="outlined" rounded="lg">
-                <v-card-title class="pa-4">
-                  <v-icon color="info" class="mr-2">mdi-file-document</v-icon>
-                  检测证据
-                </v-card-title>
-                <v-card-text class="pa-4">
-                  <v-card variant="outlined" class="pa-3">
-                    <pre style="white-space: pre-wrap; word-break: break-word; margin: 0; font-size: 0.85rem;">{{ formatEvidence(detectionResultData.result.evidence) }}</pre>
-                  </v-card>
-                </v-card-text>
-              </v-card>
-            </template>
-
-            <!-- LLM 分析 -->
-            <v-card v-if="getLlmAnalysis()" class="mb-4" variant="outlined" rounded="lg">
-              <v-card-title class="pa-4">
-                <v-icon color="purple" class="mr-2">mdi-robot</v-icon>
-                大模型分析
-              </v-card-title>
-              <v-card-text class="pa-4">
-                <div v-if="typeof getLlmAnalysis() === 'string'" class="text-body-1" style="line-height: 1.8;">
-                  {{ getLlmAnalysis() }}
-                </div>
-                <div v-else-if="typeof getLlmAnalysis() === 'object'">
-                  <v-row>
-                    <v-col v-for="(value, key) in (getLlmAnalysis() as Record<string, any>)" :key="String(key)" cols="12" sm="6">
-                      <div class="mb-2">
-                        <div class="text-subtitle-2 font-weight-bold mb-1">{{ String(key) }}</div>
-                        <v-card variant="outlined" class="pa-2">
-                          <div class="text-body-2">{{ formatLlmValue(value) }}</div>
-                        </v-card>
-                      </div>
-                    </v-col>
-                  </v-row>
-                </div>
-              </v-card-text>
-            </v-card>
-
-            <!-- 图片列表(综合类型) -->
-            <template v-if="detectionResultData.task_type === 'multi_material'">
-              <v-card v-if="detectionResultData.result?.fake_images?.length" class="mb-4" variant="outlined" rounded="lg">
-                <v-card-title class="pa-4">
-                  <v-icon color="error" class="mr-2">mdi-alert-circle</v-icon>
-                  疑似造假图片
-                  <v-chip size="small" color="error" class="ml-2">{{ detectionResultData.result.fake_images.length }}</v-chip>
-                </v-card-title>
-                <v-card-text class="pa-4">
-                  <v-row>
-                    <v-col v-for="(img, idx) in detectionResultData.result.fake_images" :key="idx" cols="6" sm="4" md="3">
-                      <v-card variant="outlined" rounded="lg" class="overflow-hidden">
-                        <v-img :src="getImageUrl(img.image_url)" height="150" cover>
-                          <template v-slot:placeholder>
-                            <div class="d-flex align-center justify-center fill-height">
-                              <v-progress-circular indeterminate color="primary"></v-progress-circular>
-                            </div>
-                          </template>
-                        </v-img>
-                        <v-card-text class="pa-2 text-center text-caption">ID: {{ img.image_id }}</v-card-text>
-                      </v-card>
-                    </v-col>
-                  </v-row>
-                </v-card-text>
-              </v-card>
-
-              <v-card v-if="detectionResultData.result?.normal_images?.length" variant="outlined" rounded="lg">
-                <v-card-title class="pa-4">
-                  <v-icon color="success" class="mr-2">mdi-check-circle</v-icon>
-                  正常图片
-                  <v-chip size="small" color="success" class="ml-2">{{ detectionResultData.result.normal_images.length }}</v-chip>
-                </v-card-title>
-                <v-card-text class="pa-4">
-                  <v-row>
-                    <v-col v-for="(img, idx) in detectionResultData.result.normal_images" :key="idx" cols="6" sm="4" md="3">
-                      <v-card variant="outlined" rounded="lg" class="overflow-hidden">
-                        <v-img :src="getImageUrl(img.image_url)" height="150" cover>
-                          <template v-slot:placeholder>
-                            <div class="d-flex align-center justify-center fill-height">
-                              <v-progress-circular indeterminate color="primary"></v-progress-circular>
-                            </div>
-                          </template>
-                        </v-img>
-                        <v-card-text class="pa-2 text-center text-caption">ID: {{ img.image_id }}</v-card-text>
-                      </v-card>
-                    </v-col>
-                  </v-row>
-                </v-card-text>
-              </v-card>
-            </template>
+          <!-- 检测结果内容 - 使用专用组件 -->
+          <div v-else>
+            <!-- 图片检测 -->
+            <ImageDetectionResult
+              v-if="detectionResultData.task_type === 'image'"
+              :task_id="String(detectionResultData.task_id)"
+              :detection_time="detectionResultData.detection_time || ''"
+            />
+            <!-- 论文/Review 文本检测 -->
+            <TextDetectionResult
+              v-else-if="detectionResultData.task_type === 'paper_text' || detectionResultData.task_type === 'review_text'"
+              :task-meta="detectionResultData"
+              :task-id="detectionResultData.task_id"
+            />
+            <!-- 综合材料检测 -->
+            <MultiMaterialResult
+              v-else-if="detectionResultData.task_type === 'multi_material'"
+              :task-meta="detectionResultData"
+              :task-id="detectionResultData.task_id"
+            />
+            <!-- 未知类型兜底 -->
+            <div v-else class="text-center pa-8 text-grey">
+              <v-icon size="64" color="grey-lighten-1">mdi-help-circle-outline</v-icon>
+              <div class="text-h6 mt-4">未知检测类型：{{ detectionResultData.task_type }}</div>
+            </div>
           </div>
         </v-card-text>
 
@@ -1035,6 +819,9 @@
 import { ref, computed, onMounted } from 'vue'
 import { useSnackbarStore } from '@/stores/snackbar'
 import resourceApi, { type Resource, type StructuredResult } from '@/api/resource'
+import ImageDetectionResult from '@/components/detection/ImageDetectionResult.vue'
+import TextDetectionResult from '@/components/detection/TextDetectionResult.vue'
+import MultiMaterialResult from '@/components/detection/MultiMaterialResult.vue'
 
 const snackbar = useSnackbarStore()
 
@@ -1400,62 +1187,6 @@ const getDetectionResultCount = (result: string) => {
 // 获取特定状态的资源数量
 const getStatusCount = (status: string) => {
   return filteredResources.value.filter(r => r.status === status).length
-}
-
-// 获取图片完整 URL
-const getImageUrl = (url: string) => {
-  if (!url) return ''
-  if (url.startsWith('http')) return url
-  const baseUrl = import.meta.env.VITE_API_URL || ''
-  return baseUrl + url
-}
-
-// 获取任务类型中文名称
-const getTaskTypeName = (type: string) => {
-  const names: Record<string, string> = {
-    image: '图片检测',
-    paper_text: '论文文本检测',
-    review_text: 'Review文本检测',
-    multi_material: '综合材料检测'
-  }
-  return names[type] || type
-}
-
-// 获取 LLM 分析内容
-const getLlmAnalysis = () => {
-  if (!detectionResultData.value) return null
-  // 优先从 result.llm_analysis 取
-  if (detectionResultData.value.result?.llm_analysis) {
-    return detectionResultData.value.result.llm_analysis
-  }
-  // 兜底从 ai_response 取
-  if (detectionResultData.value.ai_response) {
-    return detectionResultData.value.ai_response
-  }
-  return null
-}
-
-// 格式化证据为字符串
-const formatEvidence = (evidence: any) => {
-  if (!evidence) return ''
-  if (typeof evidence === 'string') return evidence
-  try {
-    return JSON.stringify(evidence, null, 2)
-  } catch {
-    return String(evidence)
-  }
-}
-
-// 格式化 LLM 分析值
-const formatLlmValue = (value: any) => {
-  if (value === null || value === undefined) return ''
-  if (typeof value === 'string') return value
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
-  try {
-    return JSON.stringify(value, null, 2)
-  } catch {
-    return String(value)
-  }
 }
 
 // 查看检测结果

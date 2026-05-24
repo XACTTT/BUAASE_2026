@@ -10,14 +10,17 @@ declare module 'vue' {
     ActiveOrgTrend: typeof import('./components/analytics/ActiveOrgTrend.vue')['default']
     ActiveUserTrend: typeof import('./components/analytics/ActiveUserTrend.vue')['default']
     DynamicCaptcha: typeof import('./components/DynamicCaptcha.vue')['default']
+    ImageDetectionResult: typeof import('./components/detection/ImageDetectionResult.vue')['default']
     ImageTagStats: typeof import('./components/analytics/ImageTagStats.vue')['default']
     LogStats: typeof import('./components/analytics/LogStats.vue')['default']
     MethodStats: typeof import('./components/analytics/MethodStats.vue')['default']
+    MultiMaterialResult: typeof import('./components/detection/MultiMaterialResult.vue')['default']
     OrgRanking: typeof import('./components/analytics/OrgRanking.vue')['default']
     PublisherRanking: typeof import('./components/analytics/PublisherRanking.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
     Snackbar: typeof import('./components/Snackbar.vue')['default']
     TaskTrend: typeof import('./components/analytics/TaskTrend.vue')['default']
+    TextDetectionResult: typeof import('./components/detection/TextDetectionResult.vue')['default']
   }
 }

@@ -113,4 +113,46 @@ export default {
   previewResource(resourceId: number, resourceType: string = 'file') {
     return http.get<Blob>(`/preview/${resourceType}/${resourceId}/`, { responseType: 'blob' })
   },
+
+  // ========== 检测结果详情 API（从用户端迁移） ==========
+
+  // 获取疑似造假图片列表
+  getFakeImages(taskId: number | string) {
+    return http.get(`/tasks/${taskId}/fake_results/`, { params: { include_image: 1 } })
+  },
+
+  // 获取正常图片列表
+  getNormalImages(taskId: number | string) {
+    return http.get(`/tasks/${taskId}/normal_results/`, { params: { include_image: 1 } })
+  },
+
+  // 获取单张图片检测结果详情
+  getSingleImageResult(resultId: string | number) {
+    return http.get(`/results/${resultId}/`)
+  },
+
+  // 获取任务级LLM分析
+  getTaskLlmAnalysis(taskId: number | string) {
+    return http.get(`/tasks/${taskId}/llm-analysis/`)
+  },
+
+  // 获取任务文本检测结果列表
+  getTaskTextResults(taskId: number | string) {
+    return http.get(`/tasks/${taskId}/text_results/`)
+  },
+
+  // 获取单条文本检测结果
+  getSingleTextResult(resourceId: number | string) {
+    return http.get(`/detection/text/${resourceId}/`)
+  },
+
+  // 通过image_id获取检测结果
+  getImageDetectionByImageId(imageId: number | string) {
+    return http.get(`/results_image/${imageId}/`)
+  },
+
+  // 下载检测报告
+  downloadReport(taskId: number | string) {
+    return http.get(`/tasks/${taskId}/report/`, { responseType: 'blob' })
+  },
 }
