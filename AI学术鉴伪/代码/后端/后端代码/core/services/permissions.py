@@ -40,3 +40,15 @@ def can_edit_container(user: User, container) -> bool:
     if _is_org_admin(user):
         return True
     return container.owner_id == user.id
+
+
+def can_access_detection_task(user: User, task) -> bool:
+    if not user or not user.is_authenticated:
+        return False
+    if _is_super_admin(user):
+        return True
+    if task.user_id == user.id:
+        return True
+    if _is_org_admin(user) and user.organization_id and task.organization_id == user.organization_id:
+        return True
+    return False

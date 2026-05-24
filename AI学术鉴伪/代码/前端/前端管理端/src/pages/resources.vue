@@ -579,24 +579,34 @@
               </template>
 
               <template v-slot:item.actions="{ item }">
-                <v-btn
-                  icon
-                  variant="text"
-                  size="small"
-                  color="primary"
-                  @click="viewResource(item.id)"
-                >
-                  <v-icon>mdi-eye</v-icon>
-                </v-btn>
-                <v-btn
-                  icon
-                  variant="text"
-                  size="small"
-                  color="error"
-                  @click="openDeleteDialog(item)"
-                >
-                  <v-icon>mdi-delete</v-icon>
-                </v-btn>
+                <v-tooltip text="查看详情" location="top">
+                  <template v-slot:activator="{ props }">
+                    <v-btn icon variant="text" size="small" color="primary" v-bind="props" @click="viewResource(item.id)">
+                      <v-icon>mdi-eye</v-icon>
+                    </v-btn>
+                  </template>
+                </v-tooltip>
+                <v-tooltip text="资源预览" location="top">
+                  <template v-slot:activator="{ props }">
+                    <v-btn icon variant="text" size="small" color="info" v-bind="props" @click="previewResource(item)">
+                      <v-icon>mdi-file-find</v-icon>
+                    </v-btn>
+                  </template>
+                </v-tooltip>
+                <v-tooltip text="检测结果" location="top">
+                  <template v-slot:activator="{ props }">
+                    <v-btn icon variant="text" size="small" color="warning" v-bind="props" @click="viewDetectionResult(item)" :disabled="!item.task_id">
+                      <v-icon>mdi-magnify-scan</v-icon>
+                    </v-btn>
+                  </template>
+                </v-tooltip>
+                <v-tooltip text="删除" location="top">
+                  <template v-slot:activator="{ props }">
+                    <v-btn icon variant="text" size="small" color="error" v-bind="props" @click="openDeleteDialog(item)">
+                      <v-icon>mdi-delete</v-icon>
+                    </v-btn>
+                  </template>
+                </v-tooltip>
               </template>
             </v-data-table>
           </v-card-text>
@@ -967,6 +977,57 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
+
+    <!-- 资源预览对话框 -->
+    <v-dialog v-model="showPreviewDialog" max-width="900" scrollable>
+      <v-card>
+        <v-card-title class="d-flex justify-space-between align-center">
+          <span class="text-h5 font-weight-bold">资源预览</span>
+          <v-btn icon @click="showPreviewDialog = false">
+            <v-icon>mdi-close</v-icon>
+          </v-btn>
+        </v-card-title>
+        <v-divider></v-divider>
+        <v-card-text style="max-height: 75vh;">
+          <!-- 加载中 -->
+          <div v-if="previewLoading" class="d-flex justify-center align-center pa-8">
+            <v-progress-circular indeterminate color="primary" size="48"></v-progress-circular>
+            <span class="ml-4 text-body-1">正在加载资源预览...</span>
+          </div>
+          <!-- 无数据 -->
+          <div v-else-if="!previewUrl" class="text-center pa-8 text-grey">
+            <v-icon size="64" color="grey-lighten-1">mdi-file-question-outline</v-icon>
+            <div class="text-h6 mt-4">无法预览该资源</div>
+          </div>
+          <!-- 图片预览 -->
+          <div v-else-if="previewType === 'image'" class="text-center">
+            <v-img :src="previewUrl" contain max-height="65vh"></v-img>
+          </div>
+          <!-- PDF预览 -->
+          <div v-else-if="previewType === 'pdf'" class="text-center">
+            <iframe :src="previewUrl" width="100%" height="65vh" style="border: none;"></iframe>
+          </div>
+          <!-- 文本预览 -->
+          <div v-else-if="previewType === 'text'" class="pa-4">
+            <pre class="text-body-2" style="white-space: pre-wrap; word-break: break-word; max-height: 60vh; overflow-y: auto;">{{ previewTextContent }}</pre>
+          </div>
+          <!-- 其他文件：提供下载 -->
+          <div v-else class="text-center pa-8">
+            <v-icon size="64" color="primary">mdi-file-download-outline</v-icon>
+            <div class="text-h6 mt-4 mb-2">{{ previewFileName }}</div>
+            <div class="text-body-2 text-grey mb-4">该文件格式不支持在线预览</div>
+            <v-btn color="primary" :href="previewUrl" target="_blank">
+              <v-icon class="mr-2">mdi-download</v-icon>
+              下载文件
+            </v-btn>
+          </div>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer></v-spacer>
+          <v-btn color="primary" variant="text" @click="showPreviewDialog = false">关闭</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </v-container>
 </template>
 
@@ -1017,6 +1078,14 @@ const showDetectionResultDialog = ref(false)
 const detectionResultLoading = ref(false)
 const detectionResultData = ref<StructuredResult | null>(null)
 
+// 资源预览对话框
+const showPreviewDialog = ref(false)
+const previewLoading = ref(false)
+const previewUrl = ref<string | null>(null)
+const previewType = ref<'image' | 'pdf' | 'text' | 'other'>('other')
+const previewTextContent = ref('')
+const previewFileName = ref('')
+
 // 选项配置
 const subjectOptions = [
   { title: '全部学科', value: 'all' },
@@ -1058,7 +1127,7 @@ const resourceTypes = computed(() => [
 // 资源表格表头
 const resourceTableHeaders = [
   { title: '论文 ID', key: 'id', align: 'start' as const, sortable: true },
-  { title: '论文标题', key: 'title', align: 'start' as const, sortable: true },
+  { title: '资源标题', key: 'title', align: 'start' as const, sortable: true },
   { title: '作者信息', key: 'author', align: 'start' as const, sortable: true },
   { title: '所属组织', key: 'organization', align: 'start' as const, sortable: true },
   { title: '编辑负责人', key: 'editor', align: 'start' as const, sortable: true },
@@ -1406,6 +1475,51 @@ const viewDetectionResult = async (resource: Resource) => {
     snackbar.showMessage('获取检测结果失败', 'error')
   } finally {
     detectionResultLoading.value = false
+  }
+}
+
+// 预览资源
+const previewResource = async (resource: Resource) => {
+  showPreviewDialog.value = true
+  previewLoading.value = true
+  previewUrl.value = null
+  previewType.value = 'other'
+  previewTextContent.value = ''
+  previewFileName.value = resource.file_name || resource.title || ''
+
+  try {
+    const fileType = resource.type === 'image' ? 'image' : 'file'
+    const response = await resourceApi.previewResource(resource.id, fileType)
+
+    const blob = response.data as any
+    const contentType = blob.type || ''
+
+    // 根据资源类型和 Content-Type 判断预览方式
+    if (resource.type === 'image' || contentType.startsWith('image/')) {
+      previewType.value = 'image'
+      previewUrl.value = URL.createObjectURL(blob)
+    } else if (contentType === 'application/pdf' || (resource.file_name && resource.file_name.toLowerCase().endsWith('.pdf'))) {
+      previewType.value = 'pdf'
+      previewUrl.value = URL.createObjectURL(blob)
+    } else if (contentType.startsWith('text/') || (resource.file_name && /\.(txt|md|csv|json|xml)$/i.test(resource.file_name))) {
+      previewType.value = 'text'
+      previewUrl.value = URL.createObjectURL(blob)
+      const text = await blob.text()
+      previewTextContent.value = text
+    } else {
+      previewType.value = 'other'
+      previewUrl.value = URL.createObjectURL(blob)
+    }
+  } catch (error: any) {
+    console.error('预览资源失败:', error)
+    if (error?.response?.status === 404) {
+      snackbar.showMessage('资源文件不存在或已被删除', 'warning')
+    } else {
+      snackbar.showMessage('预览资源失败', 'error')
+    }
+    previewUrl.value = null
+  } finally {
+    previewLoading.value = false
   }
 }
 

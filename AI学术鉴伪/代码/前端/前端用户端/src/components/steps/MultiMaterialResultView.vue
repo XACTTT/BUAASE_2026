@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useTheme } from 'vuetify'
 import { useSnackbarStore } from '@/stores/snackbar'
 import { useUserStore } from '@/stores/user'
@@ -112,8 +112,29 @@ const paperParagraphs = computed(() => {
       confidence: s.confidence_score,
       aigcProb: s.probabilities?.aigc || 0,
       humanProb: s.probabilities?.human || 0,
+      text: s.text || '',
+      title: s.title || '',
+      pageNumber: s.page_number ?? null,
+      sourceFile: s.source_file || '',
+      labelName: s.label_name || '',
     }))
-    .sort((a: any, b: any) => b.aigcProb - a.aigcProb)
+})
+
+const paperSortMode = ref<'order' | 'risk'>('order')
+const sortedPaperParagraphs = computed(() => {
+  if (paperSortMode.value === 'risk') {
+    return [...paperParagraphs.value].sort((a, b) => b.aigcProb - a.aigcProb)
+  }
+  return paperParagraphs.value
+})
+
+const selectedPaperId = ref<string | null>(null)
+function selectPaperParagraph(id: string) {
+  selectedPaperId.value = selectedPaperId.value === id ? null : id
+}
+const selectedPaperParagraph = computed(() => {
+  if (!selectedPaperId.value) return null
+  return paperParagraphs.value.find(p => p.id === selectedPaperId.value) || null
 })
 
 const paperStatistics = computed(() => {
@@ -140,7 +161,29 @@ const reviewParagraphs = computed(() => {
       confidence: s.confidence_score,
       aigcProb: s.probabilities?.aigc || 0,
       humanProb: s.probabilities?.human || 0,
+      text: s.text || '',
+      title: s.title || '',
+      pageNumber: s.page_number ?? null,
+      sourceFile: s.source_file || '',
+      labelName: s.label_name || '',
     }))
+})
+
+const reviewSortMode = ref<'order' | 'risk'>('order')
+const sortedReviewParagraphs = computed(() => {
+  if (reviewSortMode.value === 'risk') {
+    return [...reviewParagraphs.value].sort((a, b) => b.aigcProb - a.aigcProb)
+  }
+  return reviewParagraphs.value
+})
+
+const selectedReviewId = ref<string | null>(null)
+function selectReviewParagraph(id: string) {
+  selectedReviewId.value = selectedReviewId.value === id ? null : id
+}
+const selectedReviewParagraph = computed(() => {
+  if (!selectedReviewId.value) return null
+  return reviewParagraphs.value.find(p => p.id === selectedReviewId.value) || null
 })
 
 const avgReviewAigc = computed(() => {
@@ -170,6 +213,37 @@ const imageItems = computed(() => {
   return imageCard.value.images || imageCard.value.results || []
 })
 
+// --- Image detail dialog ---
+interface ImageItem {
+  image_id: number
+  image_url: string
+  result_id?: number
+  is_fake?: boolean
+  confidence?: number
+}
+
+interface SubMethod {
+  method: string
+  probability: number
+  mask_image: string
+  mask_matrix: any
+  visible: boolean
+}
+
+const showImageDetail = ref(false)
+const selectedImage = ref<ImageItem | null>(null)
+const imageDetailLoading = ref(false)
+const imageDetailError = ref('')
+const hasDetectionResult = ref(false)
+const activeTab = ref('analysis')
+const llm = ref('')
+const llm_image = ref('')
+const ela = ref('')
+const urn = ref<SubMethod[]>([])
+const exif = ref({ photoshop_edited: false, time_modified: false, detection_time: null as string | null })
+const activeOverlay = ref('')
+const isOverlayVisible = ref(false)
+
 // --- Reviewer selection ---
 interface Reviewer {
   id: number
@@ -191,6 +265,98 @@ const filteredReviewers = computed(() => {
   const q = reviewSearchQuery.value.toLowerCase()
   return allReviewers.value.filter(r => r.username.toLowerCase().includes(q))
 })
+
+// --- Image detail functions ---
+const viewImageDetail = (img: ImageItem) => {
+  selectedImage.value = img
+  showImageDetail.value = true
+  imageDetailError.value = ''
+  if (img.image_id) {
+    fetchImageDetection(img.image_id)
+  }
+}
+
+const fetchImageDetection = async (imageId: number) => {
+  imageDetailLoading.value = true
+  imageDetailError.value = ''
+  hasDetectionResult.value = false
+  try {
+    const response = (await publisher.getImageDetectionByImageId(imageId)).data
+    hasDetectionResult.value = true
+    llm.value = response.llm || ''
+    llm_image.value = response.llm_image || ''
+    ela.value = response.ela_image || ''
+    urn.value = (response.sub_methods || []).map((item: any) => ({
+      ...item,
+      visible: false,
+    }))
+    if (response.exif) {
+      exif.value = {
+        photoshop_edited: response.exif.photoshop_edited || false,
+        time_modified: response.exif.time_modified || false,
+        detection_time: response.timestamps || null,
+      }
+    }
+  } catch (error: any) {
+    if (error?.response?.status === 404) {
+      hasDetectionResult.value = false
+    } else {
+      imageDetailError.value = '获取图片检测结果失败'
+    }
+    llm.value = ''
+    llm_image.value = ''
+    ela.value = ''
+    urn.value = []
+  } finally {
+    imageDetailLoading.value = false
+  }
+}
+
+const toggleOverlay = (dimension: SubMethod) => {
+  if (dimension.visible) {
+    dimension.visible = false
+    isOverlayVisible.value = false
+    activeOverlay.value = ''
+    return
+  }
+  urn.value.forEach(d => {
+    if (d !== dimension) d.visible = false
+  })
+  dimension.visible = true
+  isOverlayVisible.value = true
+  activeOverlay.value = resolveImageUrl(dimension.mask_image)
+}
+
+const toggleImageDetailClose = () => {
+  showImageDetail.value = false
+  selectedImage.value = null
+  llm.value = ''
+  llm_image.value = ''
+  ela.value = ''
+  urn.value = []
+  exif.value = { photoshop_edited: false, time_modified: false, detection_time: null }
+  activeOverlay.value = ''
+  isOverlayVisible.value = false
+  activeTab.value = 'analysis'
+  imageDetailError.value = ''
+  hasDetectionResult.value = false
+}
+
+const getSelectedImageUrl = (img: ImageItem | null) => {
+  if (!img) return ''
+  return resolveImageUrl(img.image_url)
+}
+
+const showRawJson = ref(false)
+
+const copyRawJson = () => {
+  const text = JSON.stringify(result.value, null, 2)
+  navigator.clipboard.writeText(text).then(() => {
+    snackbar.showMessage('已复制到剪贴板', 'success')
+  }).catch(() => {
+    snackbar.showMessage('复制失败', 'error')
+  })
+}
 
 // --- Helpers ---
 function getProbabilityColor(probability: number): string {
@@ -321,6 +487,14 @@ const submitReview = async () => {
 // --- Data loading ---
 const loading = ref(true)
 
+watch(activeTab, () => {
+  urn.value.forEach(dimension => {
+    dimension.visible = false
+  })
+  isOverlayVisible.value = false
+  activeOverlay.value = ''
+})
+
 onMounted(async () => {
   loading.value = true
   try {
@@ -450,6 +624,124 @@ onMounted(async () => {
       </v-col>
     </v-row>
 
+    <!-- ========== Validation Info ========== -->
+    <v-row v-if="validation">
+      <v-col cols="12">
+        <v-alert
+          :type="validation.valid !== false ? 'success' : 'warning'"
+          variant="tonal"
+          class="mb-6"
+          rounded="lg"
+        >
+          <div class="d-flex align-center mb-2">
+            <v-icon :color="validation.valid !== false ? 'success' : 'warning'" class="mr-2">
+              {{ validation.valid !== false ? 'mdi-check-decagram' : 'mdi-alert-decagram' }}
+            </v-icon>
+            <span class="text-subtitle-1 font-weight-bold">
+              {{ validation.valid !== false ? '材料验证通过' : '材料验证未通过' }}
+            </span>
+          </div>
+          <div v-if="validation.message" class="text-body-2 mb-2">{{ validation.message }}</div>
+          <div class="d-flex flex-wrap gap-2">
+            <v-chip
+              v-for="mt in (validation.material_types_present || [])"
+              :key="mt"
+              size="small"
+              color="success"
+              variant="outlined"
+            >
+              <v-icon start size="x-small">mdi-check</v-icon>
+              {{ mt }}
+            </v-chip>
+            <v-chip
+              v-for="mm in (validation.missing_required || [])"
+              :key="mm"
+              size="small"
+              color="error"
+              variant="outlined"
+            >
+              <v-icon start size="x-small">mdi-close</v-icon>
+              {{ mm }}
+            </v-chip>
+          </div>
+        </v-alert>
+      </v-col>
+    </v-row>
+
+    <!-- ========== Evidence Statistics Card ========== -->
+    <v-row v-if="evidence && (evidence.model_dir || evidence.aggregate || evidence.section_count !== undefined)">
+      <v-col cols="12">
+        <v-card class="mb-6" elevation="2" rounded="lg">
+          <v-card-title class="pa-6">
+            <v-icon color="info" class="mr-2">mdi-chart-bar</v-icon>
+            <span class="text-h6">检测统计信息</span>
+          </v-card-title>
+          <v-card-text class="pa-6">
+            <v-row>
+              <v-col v-if="evidence.model_dir" cols="12" sm="6" md="3">
+                <v-card variant="outlined" rounded="lg" class="pa-3 text-center">
+                  <div class="text-caption text-grey mb-1">检测模型</div>
+                  <div class="text-body-2 font-weight-medium">{{ evidence.model_dir }}</div>
+                </v-card>
+              </v-col>
+              <v-col v-if="evidence.lang" cols="12" sm="6" md="3">
+                <v-card variant="outlined" rounded="lg" class="pa-3 text-center">
+                  <div class="text-caption text-grey mb-1">检测语言</div>
+                  <div class="text-body-2 font-weight-medium">{{ evidence.lang }}</div>
+                </v-card>
+              </v-col>
+              <v-col v-if="evidence.section_count !== undefined" cols="12" sm="6" md="3">
+                <v-card variant="outlined" rounded="lg" class="pa-3 text-center">
+                  <div class="text-caption text-grey mb-1">总段落数</div>
+                  <div class="text-h5 primary--text">{{ evidence.section_count }}</div>
+                </v-card>
+              </v-col>
+              <v-col v-if="evidence.aigc_section_count !== undefined" cols="12" sm="6" md="3">
+                <v-card variant="outlined" rounded="lg" class="pa-3 text-center">
+                  <div class="text-caption text-grey mb-1">AIGC段落数</div>
+                  <div class="text-h5" :class="evidence.aigc_section_count > 0 ? 'error--text' : 'success--text'">{{ evidence.aigc_section_count }}</div>
+                </v-card>
+              </v-col>
+            </v-row>
+            <v-row v-if="evidence.aggregate" class="mt-2">
+              <v-col v-if="evidence.aggregate.aigc_ratio !== undefined" cols="12" sm="6" md="3">
+                <v-card variant="outlined" rounded="lg" class="pa-3 text-center">
+                  <div class="text-caption text-grey mb-1">AIGC比例</div>
+                  <div class="text-h5" :class="getProbabilityColor(evidence.aggregate.aigc_ratio) + '--text'">
+                    {{ (evidence.aggregate.aigc_ratio * 100).toFixed(1) }}%
+                  </div>
+                </v-card>
+              </v-col>
+              <v-col v-if="evidence.aggregate.mean_aigc_probability !== undefined" cols="12" sm="6" md="3">
+                <v-card variant="outlined" rounded="lg" class="pa-3 text-center">
+                  <div class="text-caption text-grey mb-1">平均AIGC概率</div>
+                  <div class="text-h5" :class="getProbabilityColor(evidence.aggregate.mean_aigc_probability) + '--text'">
+                    {{ (evidence.aggregate.mean_aigc_probability * 100).toFixed(1) }}%
+                  </div>
+                </v-card>
+              </v-col>
+              <v-col v-if="evidence.aggregate.mean_confidence !== undefined" cols="12" sm="6" md="3">
+                <v-card variant="outlined" rounded="lg" class="pa-3 text-center">
+                  <div class="text-caption text-grey mb-1">平均置信度</div>
+                  <div class="text-h5 info--text">{{ (evidence.aggregate.mean_confidence * 100).toFixed(1) }}%</div>
+                </v-card>
+              </v-col>
+              <v-col v-if="evidence.aggregate.max_confidence !== undefined || evidence.aggregate.min_confidence !== undefined" cols="12" sm="6" md="3">
+                <v-card variant="outlined" rounded="lg" class="pa-3 text-center">
+                  <div class="text-caption text-grey mb-1">置信度范围</div>
+                  <div class="text-body-2 font-weight-medium">
+                    <span v-if="evidence.aggregate.min_confidence !== undefined">{{ (evidence.aggregate.min_confidence * 100).toFixed(1) }}%</span>
+                    <span v-if="evidence.aggregate.min_confidence !== undefined && evidence.aggregate.max_confidence !== undefined"> ~ </span>
+                    <span v-if="evidence.aggregate.max_confidence !== undefined">{{ (evidence.aggregate.max_confidence * 100).toFixed(1) }}%</span>
+                  </div>
+                </v-card>
+              </v-col>
+            </v-row>
+          </v-card-text>
+        </v-card>
+      </v-col>
+    </v-row>
+
     <!-- ========== Material Cards Overview ========== -->
     <v-row v-if="materialCards.length > 0" class="mb-6">
       <v-col
@@ -477,6 +769,13 @@ onMounted(async () => {
           </v-chip>
           <div v-if="card.file_count" class="text-caption text-grey mt-1">
             文件数: {{ card.file_count }}
+          </div>
+          <div v-if="card.files && card.files.length > 0" class="text-left mt-3">
+            <div class="text-caption text-grey mb-1">包含文件：</div>
+            <div v-for="(file, fi) in card.files" :key="fi" class="d-flex align-center mb-1">
+              <v-icon size="x-small" color="grey" class="mr-1">mdi-file-outline</v-icon>
+              <span class="text-caption text-truncate">{{ file.file_name || file.name || file }}</span>
+            </div>
           </div>
         </v-card>
       </v-col>
@@ -595,43 +894,128 @@ onMounted(async () => {
                 </v-col>
               </v-row>
 
-              <!-- Paragraph list -->
+              <!-- Paragraph list: left-right split -->
               <div v-if="paperParagraphs.length > 0">
-                <div class="text-subtitle-1 font-weight-bold mb-3">段落AI生成分析</div>
-                <div class="paragraph-container">
-                  <div
-                    v-for="(para, index) in paperParagraphs"
-                    :key="index"
-                    class="paragraph-item"
-                    :class="para.aigcProb > 0.8 ? 'high-probability' : para.aigcProb > 0.5 ? 'medium-probability' : 'low-probability'"
-                  >
-                    <div class="paragraph-header">
-                      <div class="paragraph-number">
-                        <v-chip :color="getProbabilityColor(para.aigcProb)" size="small" label>
-                          {{ para.id }}
-                        </v-chip>
-                      </div>
-                      <div class="paragraph-probability">
-                        <v-chip :color="getProbabilityColor(para.aigcProb)" size="small" variant="outlined">
-                          <v-icon start size="small">mdi-brain</v-icon>
-                          AI概率: {{ (para.aigcProb * 100).toFixed(1) }}%
-                        </v-chip>
-                      </div>
-                    </div>
-                    <div class="d-flex align-center gap-2 mt-2">
-                      <v-progress-linear
-                        :model-value="para.aigcProb * 100"
-                        :color="getProbabilityColor(para.aigcProb)"
-                        height="8"
-                        rounded
-                        class="flex-grow-1"
-                      />
-                      <v-chip :color="getProbabilityColor(para.aigcProb)" size="small">
-                        {{ getProbabilityLevel(para.aigcProb) }}
-                      </v-chip>
-                    </div>
-                  </div>
+                <div class="d-flex align-center mb-3">
+                  <span class="text-subtitle-1 font-weight-bold">段落AI生成分析</span>
+                  <v-spacer />
+                  <v-btn-toggle v-model="paperSortMode" mandatory density="compact" variant="outlined" divided>
+                    <v-btn value="order" size="small">按顺序</v-btn>
+                    <v-btn value="risk" size="small">按风险</v-btn>
+                  </v-btn-toggle>
                 </div>
+                <v-row>
+                  <!-- Left: paragraph list -->
+                  <v-col cols="12" md="5">
+                    <v-card variant="outlined" rounded="lg" class="section-list-card">
+                      <div class="section-list-container">
+                        <div
+                          v-for="para in sortedPaperParagraphs"
+                          :key="para.id"
+                          class="section-list-item"
+                          :class="{ 'section-selected': selectedPaperId === para.id }"
+                          @click="selectPaperParagraph(para.id)"
+                        >
+                          <div class="d-flex align-center mb-1">
+                            <v-icon :color="getProbabilityColor(para.confidence)" class="mr-2" size="small">
+                              {{ para.confidence > 0.5 ? 'mdi-alert-circle' : 'mdi-check-circle' }}
+                            </v-icon>
+                            <span class="text-body-2 font-weight-medium text-truncate flex-grow-1">
+                              {{ para.title || para.id }}
+                            </span>
+                            <v-chip :color="getProbabilityColor(para.aigcProb)" size="x-small" class="ml-1">
+                              {{ (para.aigcProb * 100).toFixed(0) }}%
+                            </v-chip>
+                          </div>
+                          <div v-if="para.sourceFile" class="text-caption text-grey text-truncate ml-6">
+                            {{ para.sourceFile }}
+                            <span v-if="para.pageNumber !== null"> · 第{{ para.pageNumber }}页</span>
+                          </div>
+                          <v-progress-linear :model-value="para.aigcProb * 100" :color="getProbabilityColor(para.aigcProb)" height="2" rounded class="mt-1" />
+                        </div>
+                      </div>
+                    </v-card>
+                  </v-col>
+                  <!-- Right: detail panel -->
+                  <v-col cols="12" md="7">
+                    <template v-if="!selectedPaperParagraph">
+                      <v-card variant="outlined" rounded="lg" class="pa-8 text-center">
+                        <v-icon size="64" color="grey">mdi-cursor-default-click</v-icon>
+                        <div class="text-h6 text-grey mt-4">点击左侧段落查看详情</div>
+                      </v-card>
+                    </template>
+                    <template v-else>
+                      <!-- Detail header -->
+                      <v-card variant="outlined" rounded="lg" class="mb-3">
+                        <v-card-title class="d-flex align-center flex-wrap ga-2">
+                          <v-icon :color="getProbabilityColor(selectedPaperParagraph.confidence)">
+                            {{ selectedPaperParagraph.confidence > 0.5 ? 'mdi-alert-circle' : 'mdi-check-circle' }}
+                          </v-icon>
+                          <span class="text-h6">{{ selectedPaperParagraph.title || selectedPaperParagraph.id }}</span>
+                          <v-chip :color="getProbabilityColor(selectedPaperParagraph.confidence)" size="small">
+                            {{ getProbabilityLevel(selectedPaperParagraph.confidence) }}
+                          </v-chip>
+                          <v-chip v-if="selectedPaperParagraph.isAigc" color="error" size="small">
+                            <v-icon start size="x-small">mdi-robot</v-icon> AI生成
+                          </v-chip>
+                          <v-chip v-else color="success" size="small">
+                            <v-icon start size="x-small">mdi-account</v-icon> 人类撰写
+                          </v-chip>
+                        </v-card-title>
+                        <v-card-text>
+                          <span v-if="selectedPaperParagraph.sourceFile" class="text-body-2 text-grey mr-4">
+                            <v-icon size="small" class="mr-1">mdi-file-document</v-icon>{{ selectedPaperParagraph.sourceFile }}
+                          </span>
+                          <span v-if="selectedPaperParagraph.pageNumber !== null" class="text-body-2 text-grey mr-4">
+                            <v-icon size="small" class="mr-1">mdi-book-open-page-variant</v-icon>第 {{ selectedPaperParagraph.pageNumber }} 页
+                          </span>
+                          <span class="text-caption text-grey">{{ selectedPaperParagraph.id }}</span>
+                        </v-card-text>
+                      </v-card>
+                      <!-- BERT detection result -->
+                      <v-card variant="outlined" rounded="lg" class="mb-3 pa-4">
+                        <div class="text-subtitle-2 font-weight-bold mb-2">BERT检测结果</div>
+                        <div class="mb-2">
+                          <div class="text-caption text-grey mb-1">AI生成置信度</div>
+                          <v-progress-linear :model-value="selectedPaperParagraph.confidence * 100" :color="getProbabilityColor(selectedPaperParagraph.confidence)" height="24" rounded>
+                            <template #default>
+                              <span class="text-caption font-weight-bold" style="color: white">{{ (selectedPaperParagraph.confidence * 100).toFixed(1) }}%</span>
+                            </template>
+                          </v-progress-linear>
+                        </div>
+                        <v-row dense>
+                          <v-col cols="6">
+                            <div class="text-caption text-grey mb-1">人类撰写</div>
+                            <v-progress-linear :model-value="selectedPaperParagraph.humanProb * 100" color="success" height="12" rounded />
+                            <div class="text-caption text-right mt-1">{{ (selectedPaperParagraph.humanProb * 100).toFixed(1) }}%</div>
+                          </v-col>
+                          <v-col cols="6">
+                            <div class="text-caption text-grey mb-1">AI生成</div>
+                            <v-progress-linear :model-value="selectedPaperParagraph.aigcProb * 100" color="error" height="12" rounded />
+                            <div class="text-caption text-right mt-1">{{ (selectedPaperParagraph.aigcProb * 100).toFixed(1) }}%</div>
+                          </v-col>
+                        </v-row>
+                        <div class="mt-2">
+                          <v-chip size="small">{{ selectedPaperParagraph.labelName }}</v-chip>
+                        </div>
+                      </v-card>
+                      <!-- Original text -->
+                      <v-card variant="outlined" rounded="lg">
+                        <v-card-title class="d-flex align-center">
+                          <v-icon color="info" class="mr-2">mdi-text-box</v-icon>
+                          <span class="text-subtitle-1">段落内容</span>
+                        </v-card-title>
+                        <v-card-text>
+                          <div v-if="selectedPaperParagraph.text" class="paragraph-detail-text">{{ selectedPaperParagraph.text }}</div>
+                          <div v-else class="text-center py-6">
+                            <v-icon size="48" color="grey-lighten-1">mdi-text-box-remove-outline</v-icon>
+                            <div class="text-body-1 text-grey mt-2">该段落文本内容未保存</div>
+                          </div>
+                        </v-card-text>
+                      </v-card>
+                    </template>
+                  </v-col>
+                </v-row>
               </div>
               <div v-else class="text-center text-grey py-4">
                 暂无论文段落分析数据
@@ -692,43 +1076,128 @@ onMounted(async () => {
                 </div>
               </v-alert>
 
-              <!-- Review paragraphs detail -->
+              <!-- Review paragraphs detail: left-right split -->
               <div v-if="reviewParagraphs.length > 0" class="mt-4">
-                <div class="text-subtitle-1 font-weight-bold mb-3">评审文本段落分析</div>
-                <div class="paragraph-container">
-                  <div
-                    v-for="(para, index) in reviewParagraphs"
-                    :key="index"
-                    class="paragraph-item"
-                    :class="para.aigcProb > 0.8 ? 'high-probability' : para.aigcProb > 0.5 ? 'medium-probability' : 'low-probability'"
-                  >
-                    <div class="paragraph-header">
-                      <div class="paragraph-number">
-                        <v-chip :color="getProbabilityColor(para.aigcProb)" size="small" label>
-                          {{ para.id }}
-                        </v-chip>
-                      </div>
-                      <div class="paragraph-probability">
-                        <v-chip :color="getProbabilityColor(para.aigcProb)" size="small" variant="outlined">
-                          <v-icon start size="small">mdi-brain</v-icon>
-                          AI概率: {{ (para.aigcProb * 100).toFixed(1) }}%
-                        </v-chip>
-                      </div>
-                    </div>
-                    <div class="d-flex align-center gap-2 mt-2">
-                      <v-progress-linear
-                        :model-value="para.aigcProb * 100"
-                        :color="getProbabilityColor(para.aigcProb)"
-                        height="8"
-                        rounded
-                        class="flex-grow-1"
-                      />
-                      <v-chip :color="getProbabilityColor(para.aigcProb)" size="small">
-                        {{ getProbabilityLevel(para.aigcProb) }}
-                      </v-chip>
-                    </div>
-                  </div>
+                <div class="d-flex align-center mb-3">
+                  <span class="text-subtitle-1 font-weight-bold">评审文本段落分析</span>
+                  <v-spacer />
+                  <v-btn-toggle v-model="reviewSortMode" mandatory density="compact" variant="outlined" divided>
+                    <v-btn value="order" size="small">按顺序</v-btn>
+                    <v-btn value="risk" size="small">按风险</v-btn>
+                  </v-btn-toggle>
                 </div>
+                <v-row>
+                  <!-- Left: paragraph list -->
+                  <v-col cols="12" md="5">
+                    <v-card variant="outlined" rounded="lg" class="section-list-card">
+                      <div class="section-list-container">
+                        <div
+                          v-for="para in sortedReviewParagraphs"
+                          :key="para.id"
+                          class="section-list-item"
+                          :class="{ 'section-selected': selectedReviewId === para.id }"
+                          @click="selectReviewParagraph(para.id)"
+                        >
+                          <div class="d-flex align-center mb-1">
+                            <v-icon :color="getProbabilityColor(para.confidence)" class="mr-2" size="small">
+                              {{ para.confidence > 0.5 ? 'mdi-alert-circle' : 'mdi-check-circle' }}
+                            </v-icon>
+                            <span class="text-body-2 font-weight-medium text-truncate flex-grow-1">
+                              {{ para.title || para.id }}
+                            </span>
+                            <v-chip :color="getProbabilityColor(para.aigcProb)" size="x-small" class="ml-1">
+                              {{ (para.aigcProb * 100).toFixed(0) }}%
+                            </v-chip>
+                          </div>
+                          <div v-if="para.sourceFile" class="text-caption text-grey text-truncate ml-6">
+                            {{ para.sourceFile }}
+                            <span v-if="para.pageNumber !== null"> · 第{{ para.pageNumber }}页</span>
+                          </div>
+                          <v-progress-linear :model-value="para.aigcProb * 100" :color="getProbabilityColor(para.aigcProb)" height="2" rounded class="mt-1" />
+                        </div>
+                      </div>
+                    </v-card>
+                  </v-col>
+                  <!-- Right: detail panel -->
+                  <v-col cols="12" md="7">
+                    <template v-if="!selectedReviewParagraph">
+                      <v-card variant="outlined" rounded="lg" class="pa-8 text-center">
+                        <v-icon size="64" color="grey">mdi-cursor-default-click</v-icon>
+                        <div class="text-h6 text-grey mt-4">点击左侧段落查看详情</div>
+                      </v-card>
+                    </template>
+                    <template v-else>
+                      <!-- Detail header -->
+                      <v-card variant="outlined" rounded="lg" class="mb-3">
+                        <v-card-title class="d-flex align-center flex-wrap ga-2">
+                          <v-icon :color="getProbabilityColor(selectedReviewParagraph.confidence)">
+                            {{ selectedReviewParagraph.confidence > 0.5 ? 'mdi-alert-circle' : 'mdi-check-circle' }}
+                          </v-icon>
+                          <span class="text-h6">{{ selectedReviewParagraph.title || selectedReviewParagraph.id }}</span>
+                          <v-chip :color="getProbabilityColor(selectedReviewParagraph.confidence)" size="small">
+                            {{ getProbabilityLevel(selectedReviewParagraph.confidence) }}
+                          </v-chip>
+                          <v-chip v-if="selectedReviewParagraph.isAigc" color="error" size="small">
+                            <v-icon start size="x-small">mdi-robot</v-icon> AI生成
+                          </v-chip>
+                          <v-chip v-else color="success" size="small">
+                            <v-icon start size="x-small">mdi-account</v-icon> 人类撰写
+                          </v-chip>
+                        </v-card-title>
+                        <v-card-text>
+                          <span v-if="selectedReviewParagraph.sourceFile" class="text-body-2 text-grey mr-4">
+                            <v-icon size="small" class="mr-1">mdi-file-document</v-icon>{{ selectedReviewParagraph.sourceFile }}
+                          </span>
+                          <span v-if="selectedReviewParagraph.pageNumber !== null" class="text-body-2 text-grey mr-4">
+                            <v-icon size="small" class="mr-1">mdi-book-open-page-variant</v-icon>第 {{ selectedReviewParagraph.pageNumber }} 页
+                          </span>
+                          <span class="text-caption text-grey">{{ selectedReviewParagraph.id }}</span>
+                        </v-card-text>
+                      </v-card>
+                      <!-- BERT detection result -->
+                      <v-card variant="outlined" rounded="lg" class="mb-3 pa-4">
+                        <div class="text-subtitle-2 font-weight-bold mb-2">BERT检测结果</div>
+                        <div class="mb-2">
+                          <div class="text-caption text-grey mb-1">AI生成置信度</div>
+                          <v-progress-linear :model-value="selectedReviewParagraph.confidence * 100" :color="getProbabilityColor(selectedReviewParagraph.confidence)" height="24" rounded>
+                            <template #default>
+                              <span class="text-caption font-weight-bold" style="color: white">{{ (selectedReviewParagraph.confidence * 100).toFixed(1) }}%</span>
+                            </template>
+                          </v-progress-linear>
+                        </div>
+                        <v-row dense>
+                          <v-col cols="6">
+                            <div class="text-caption text-grey mb-1">人类撰写</div>
+                            <v-progress-linear :model-value="selectedReviewParagraph.humanProb * 100" color="success" height="12" rounded />
+                            <div class="text-caption text-right mt-1">{{ (selectedReviewParagraph.humanProb * 100).toFixed(1) }}%</div>
+                          </v-col>
+                          <v-col cols="6">
+                            <div class="text-caption text-grey mb-1">AI生成</div>
+                            <v-progress-linear :model-value="selectedReviewParagraph.aigcProb * 100" color="error" height="12" rounded />
+                            <div class="text-caption text-right mt-1">{{ (selectedReviewParagraph.aigcProb * 100).toFixed(1) }}%</div>
+                          </v-col>
+                        </v-row>
+                        <div class="mt-2">
+                          <v-chip size="small">{{ selectedReviewParagraph.labelName }}</v-chip>
+                        </div>
+                      </v-card>
+                      <!-- Original text -->
+                      <v-card variant="outlined" rounded="lg">
+                        <v-card-title class="d-flex align-center">
+                          <v-icon color="info" class="mr-2">mdi-text-box</v-icon>
+                          <span class="text-subtitle-1">段落内容</span>
+                        </v-card-title>
+                        <v-card-text>
+                          <div v-if="selectedReviewParagraph.text" class="paragraph-detail-text">{{ selectedReviewParagraph.text }}</div>
+                          <div v-else class="text-center py-6">
+                            <v-icon size="48" color="grey-lighten-1">mdi-text-box-remove-outline</v-icon>
+                            <div class="text-body-1 text-grey mt-2">该段落文本内容未保存</div>
+                          </div>
+                        </v-card-text>
+                      </v-card>
+                    </template>
+                  </v-col>
+                </v-row>
               </div>
             </v-card-text>
           </v-card>
@@ -757,7 +1226,9 @@ onMounted(async () => {
                     width="200"
                     elevation="2"
                     rounded="lg"
-                    class="overflow-hidden"
+                    class="overflow-hidden cursor-pointer"
+                    hover
+                    @click="viewImageDetail(img)"
                   >
                     <v-img
                       v-if="img.image_url || img.url"
@@ -767,6 +1238,7 @@ onMounted(async () => {
                     >
                       <div class="image-verdict-overlay">
                         <v-chip
+                          v-if="img.result_id"
                           :color="img.is_fake ? 'error' : 'success'"
                           size="small"
                           class="ma-2"
@@ -774,15 +1246,19 @@ onMounted(async () => {
                           <v-icon start size="small">{{ img.is_fake ? 'mdi-alert' : 'mdi-check' }}</v-icon>
                           {{ img.is_fake ? '疑似造假' : '正常' }}
                         </v-chip>
+                        <v-chip v-else color="grey" size="small" class="ma-2">
+                          <v-icon start size="small">mdi-eye</v-icon>
+                          预览
+                        </v-chip>
                       </div>
                     </v-img>
                     <v-card-text class="pa-2 text-center">
-                      <div class="text-caption">
+                      <div v-if="img.result_id" class="text-caption">
                         <v-chip
-                          :color="getProbabilityColor(img.confidence || img.fake_probability || 0)"
+                          :color="getProbabilityColor(img.confidence || 0)"
                           size="small"
                         >
-                          {{ ((img.confidence || img.fake_probability || 0) * 100).toFixed(1) }}%
+                          {{ ((img.confidence || 0) * 100).toFixed(1) }}%
                         </v-chip>
                       </div>
                       <div v-if="img.image_id" class="text-caption text-grey mt-1">
@@ -929,6 +1405,212 @@ onMounted(async () => {
       </v-col>
     </v-row>
 
+    <!-- ========== Raw Result JSON ========== -->
+    <v-row>
+      <v-col cols="12">
+        <v-card class="mb-6" elevation="2" rounded="lg">
+          <v-card-title class="pa-6 d-flex align-center" @click="showRawJson = !showRawJson" style="cursor: pointer;">
+            <v-icon color="grey-darken-2" class="mr-2">mdi-code-json</v-icon>
+            <span class="text-h6">模型返回原始数据</span>
+            <v-spacer />
+            <v-btn :icon="showRawJson ? 'mdi-chevron-up' : 'mdi-chevron-down'" variant="text" size="small" />
+          </v-card-title>
+          <v-card-text v-if="showRawJson" class="pa-6">
+            <div class="d-flex justify-end mb-2">
+              <v-btn size="small" variant="outlined" prepend-icon="mdi-content-copy" @click="copyRawJson">
+                复制
+              </v-btn>
+            </div>
+            <pre class="raw-json-pre">{{ JSON.stringify(result, null, 2) }}</pre>
+          </v-card-text>
+        </v-card>
+      </v-col>
+    </v-row>
+
+    <!-- ========== Image Detail Dialog ========== -->
+    <v-dialog v-model="showImageDetail" max-width="1000">
+      <v-card rounded="lg">
+        <v-card-title class="pa-6 d-flex">
+          <h1 class="text-h5">图片详情</h1>
+          <v-spacer />
+          <v-btn icon="mdi-close" variant="text" @click="toggleImageDetailClose" />
+        </v-card-title>
+
+        <v-card-text class="pa-6">
+          <!-- Loading state -->
+          <div v-if="imageDetailLoading" class="text-center py-8">
+            <v-progress-circular indeterminate color="primary" size="48" class="mb-4" />
+            <div class="text-body-1 text-grey">正在加载检测结果...</div>
+          </div>
+
+          <!-- No detection result (expected for multi-material) -->
+          <div v-else-if="!hasDetectionResult && !imageDetailError" class="text-center py-6">
+            <div v-if="selectedImage" class="mb-4">
+              <v-img
+                :src="getSelectedImageUrl(selectedImage)"
+                max-height="500"
+                contain
+                class="rounded-lg mx-auto"
+                style="max-width: 600px"
+              />
+            </div>
+            <v-alert type="info" variant="tonal" class="mt-4 text-left" density="compact">
+              多材料检测仅分析文本内容，该图片未单独进行伪造检测。如需图片伪造检测，请单独提交图片检测任务。
+            </v-alert>
+          </div>
+
+          <!-- Actual error -->
+          <div v-else-if="imageDetailError" class="text-center py-8">
+            <v-icon size="64" color="grey-lighten-1" class="mb-4">mdi-image-off-outline</v-icon>
+            <div class="text-body-1 text-grey mb-2">{{ imageDetailError }}</div>
+          </div>
+
+          <!-- Full detection detail -->
+          <div v-else>
+            <v-row>
+              <!-- Left: image + overlay -->
+              <v-col cols="12" md="6" class="pr-md-6">
+                <div class="image-container">
+                  <v-img
+                    :src="getSelectedImageUrl(selectedImage)"
+                    max-height="500"
+                    contain
+                    class="rounded-lg"
+                  />
+                  <transition name="fade">
+                    <v-img
+                      v-if="activeOverlay && isOverlayVisible"
+                      :src="activeOverlay"
+                      class="rounded-lg overlay-image"
+                    />
+                  </transition>
+                </div>
+                <div class="mt-6">
+                  <div class="d-flex flex-column gap-2">
+                    <div v-if="exif.detection_time" class="info-item d-flex align-center">
+                      <v-icon color="grey" class="mr-2">mdi-clock-outline</v-icon>
+                      <span class="text-body-1">检测时间：{{ formatDateTime(exif.detection_time) }}</span>
+                    </div>
+                    <div class="info-item d-flex align-center">
+                      <v-icon color="grey" class="mr-2">mdi-pound</v-icon>
+                      <span class="text-body-1">图片编号：{{ selectedImage?.image_id }}</span>
+                    </div>
+                  </div>
+                </div>
+              </v-col>
+
+              <!-- Right: tabs -->
+              <v-col cols="12" md="6" class="pl-md-6">
+                <v-tabs v-model="activeTab" color="primary">
+                  <v-tab value="analysis" style="font-size: 16px;">大模型</v-tab>
+                  <v-tab value="history" style="font-size: 16px;">深度学习</v-tab>
+                  <v-tab value="comments" style="font-size: 16px;">传统方法</v-tab>
+                </v-tabs>
+                <v-divider />
+
+                <v-window v-model="activeTab" class="mt-4">
+                  <!-- Tab 1: LLM -->
+                  <v-window-item value="analysis">
+                    <div class="d-flex align-center justify-space-between mb-4">
+                      <div class="text-h6">大模型意见</div>
+                      <v-btn
+                        v-if="llm_image"
+                        size="small"
+                        variant="outlined"
+                        color="primary"
+                        prepend-icon="mdi-eye"
+                        @click="isOverlayVisible = !isOverlayVisible; activeOverlay = isOverlayVisible ? resolveImageUrl(llm_image) : ''"
+                      >
+                        {{ isOverlayVisible ? '隐藏造假区域' : '展示造假区域' }}
+                      </v-btn>
+                    </div>
+                    <v-card>
+                      <v-card-text>
+                        <div v-if="llm">{{ llm }}</div>
+                        <div v-else class="text-center text-grey py-4">暂无大模型分析结果</div>
+                      </v-card-text>
+                    </v-card>
+                  </v-window-item>
+
+                  <!-- Tab 2: Deep Learning -->
+                  <v-window-item value="history">
+                    <div class="text-h6 mb-4">深度学习模型结果</div>
+                    <v-list v-if="urn.length > 0" class="elevation-1 rounded-lg">
+                      <template v-for="(dimension, index) in urn" :key="dimension.method">
+                        <v-list-item class="py-2 px-3">
+                          <div class="d-flex align-center" style="gap: 24px; width: 100%;">
+                            <div class="text-body-1 font-weight-medium" style="min-width: 100px;">
+                              {{ dimension.method }}
+                            </div>
+                            <v-progress-circular
+                              :model-value="dimension.probability * 100"
+                              :color="getProbabilityColor(dimension.probability)"
+                              size="40"
+                              width="5"
+                            >
+                              <span class="text-caption">{{ (dimension.probability * 100).toFixed(0) }}%</span>
+                            </v-progress-circular>
+                            <v-btn
+                              size="small"
+                              :color="dimension.visible ? 'error' : 'grey'"
+                              variant="tonal"
+                              @click="toggleOverlay(dimension)"
+                              class="ml-4"
+                            >
+                              <v-icon size="small" :icon="dimension.visible ? 'mdi-eye-off' : 'mdi-eye'" class="mr-1" />
+                              {{ dimension.visible ? '隐藏造假区域' : '显示造假区域' }}
+                            </v-btn>
+                          </div>
+                        </v-list-item>
+                        <v-divider v-if="index < urn.length - 1" />
+                      </template>
+                    </v-list>
+                    <div v-else class="text-center text-grey py-4">暂无深度学习检测结果</div>
+                  </v-window-item>
+
+                  <!-- Tab 3: Traditional / EXIF -->
+                  <v-window-item value="comments">
+                    <div class="text-h6 mb-4">传统方法结果</div>
+                    <v-card class="mb-4" elevation="2">
+                      <v-card-text>
+                        <v-list-item>
+                          <template #prepend>
+                            <v-icon :color="exif.photoshop_edited ? 'error' : 'success'" class="mr-3">
+                              {{ exif.photoshop_edited ? 'mdi-alert-circle' : 'mdi-check-circle' }}
+                            </v-icon>
+                          </template>
+                          <v-list-item-title>是否经过PS处理</v-list-item-title>
+                          <v-list-item-subtitle>
+                            <span :class="exif.photoshop_edited ? 'error--text' : 'success--text'">
+                              {{ exif.photoshop_edited ? '检测到PS痕迹' : '未检测到PS痕迹' }}
+                            </span>
+                          </v-list-item-subtitle>
+                        </v-list-item>
+                        <v-divider class="my-2" />
+                        <v-list-item>
+                          <template #prepend>
+                            <v-icon :color="exif.time_modified ? 'error' : 'success'" class="mr-3">
+                              {{ exif.time_modified ? 'mdi-alert-circle' : 'mdi-check-circle' }}
+                            </v-icon>
+                          </template>
+                          <v-list-item-title>是否经过时间修改</v-list-item-title>
+                          <v-list-item-subtitle>
+                            <span :class="exif.time_modified ? 'error--text' : 'success--text'">
+                              {{ exif.time_modified ? '检测到时间篡改' : '未检测到时间修改' }}
+                            </span>
+                          </v-list-item-subtitle>
+                        </v-list-item>
+                      </v-card-text>
+                    </v-card>
+                  </v-window-item>
+                </v-window>
+              </v-col>
+            </v-row>
+          </div>
+        </v-card-text>
+      </v-card>
+    </v-dialog>
+
     <!-- ========== Review Submission Dialog ========== -->
     <v-dialog v-model="showReviewDialog" max-width="700" persistent>
       <v-card rounded="lg">
@@ -1036,55 +1718,50 @@ onMounted(async () => {
   background-color: rgba(255, 255, 255, 0.05);
 }
 
-.paragraph-container {
-  max-height: 600px;
+/* --- Interactive section list --- */
+.section-list-card {
+  min-height: 300px;
+}
+
+.section-list-container {
+  max-height: 500px;
   overflow-y: auto;
+  padding: 4px;
 }
 
-.paragraph-item {
-  padding: 16px;
-  margin-bottom: 12px;
+.section-list-item {
+  padding: 12px;
+  margin-bottom: 4px;
   border-radius: 8px;
-  cursor: default;
-  transition: all 0.3s ease;
-  border-left: 4px solid transparent;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border-left: 3px solid transparent;
 }
 
-.paragraph-item:hover {
-  transform: translateX(4px);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+.section-list-item:hover {
+  background-color: rgba(0, 0, 0, 0.04);
+  border-left-color: #1976d2;
 }
 
-.high-probability {
-  background-color: rgba(255, 0, 0, 0.05);
-  border-left: 4px solid #f44336;
+.section-list-item.section-selected {
+  background-color: rgba(25, 118, 210, 0.08);
+  border-left-color: #1976d2;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
 }
 
-.medium-probability {
-  background-color: rgba(255, 165, 0, 0.05);
-  border-left: 4px solid #ff9800;
+.paragraph-detail-text {
+  line-height: 1.8;
+  color: #333;
+  padding: 16px;
+  background-color: #f5f5f5;
+  border-radius: 8px;
+  max-height: 400px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
-.low-probability {
-  background-color: rgba(0, 128, 0, 0.05);
-  border-left: 4px solid #4caf50;
-}
-
-.paragraph-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 8px;
-}
-
-.paragraph-number {
-  font-weight: bold;
-}
-
-.paragraph-probability {
-  font-size: 14px;
-}
-
+/* --- Image section --- */
 .image-grid-container {
   width: 100%;
 }
@@ -1122,5 +1799,57 @@ onMounted(async () => {
 
 .gap-4 {
   gap: 16px;
+}
+
+/* --- Image detail dialog --- */
+.image-container {
+  position: relative;
+  width: 100%;
+}
+
+.overlay-image {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  mix-blend-mode: multiply;
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.3s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+
+.cursor-pointer {
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.cursor-pointer:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.raw-json-pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  padding: 16px;
+  background-color: #1e1e1e;
+  color: #d4d4d4;
+  border-radius: 8px;
+  font-family: "Courier New", Courier, monospace;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  max-height: 600px;
+  overflow-y: auto;
 }
 </style>

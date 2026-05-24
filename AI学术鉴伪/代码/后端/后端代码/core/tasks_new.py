@@ -1041,6 +1041,12 @@ def run_structured_detection_task(self, task_pk: int):
         )
         return
 
+    send_task_progress_update(
+        task_id=task_pk,
+        status='completed',
+        progress=100,
+        message='检测完成'
+    )
     send_task_completion_notification(task.user, task_pk)
 
 

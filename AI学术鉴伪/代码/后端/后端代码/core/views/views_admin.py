@@ -123,12 +123,12 @@ def admin_resources(request):
 
     if query:
         query_filter = (
-            models.Q(file_name__icontains=query)
-            | models.Q(user__username__icontains=query)
-            | models.Q(user__email__icontains=query)
+            Q(file_name__icontains=query)
+            | Q(user__username__icontains=query)
+            | Q(user__email__icontains=query)
         )
         if query.isdigit():
-            query_filter = query_filter | models.Q(id=int(query))
+            query_filter = query_filter | Q(id=int(query))
         resources = resources.filter(query_filter)
 
     if uploader_id:

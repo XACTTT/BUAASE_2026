@@ -107,5 +107,10 @@ export default {
   // 获取结构化检测结果
   getDetectionResult(taskId: number) {
     return http.get<StructuredResult>(`/tasks/${taskId}/structured-result/`)
-  }
+  },
+
+  // 获取资源预览
+  previewResource(resourceId: number, resourceType: string = 'file') {
+    return http.get<Blob>(`/preview/${resourceType}/${resourceId}/`, { responseType: 'blob' })
+  },
 }

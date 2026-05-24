@@ -15,6 +15,7 @@ from ..models import ReviewRequest, DetectionTask, ImageUpload, User, Log
 from core.util import send_notification
 from core.models import Notification
 from core.views.views_dectection import _build_text_resource_from_file
+from core.services.permissions import can_access_detection_task
 
 
 def _safe_avatar_url(user):
@@ -1442,16 +1443,15 @@ def post_review(request, manual_review_id):
 @permission_classes([IsAuthenticated])
 def if_publisher_can_access_dectection_task(request):
     """
-    只有这个detection_task是由这个publisher发布的，才可以访问
+    检查当前用户是否有权访问某个 detection_task
     """
-    user_id = request.user.id
-    user = User.objects.get(id=user_id)
-    if user.role != 'publisher':
-        return Response({'access': False})
     task_id = request.query_params.get('task_id')
     if not task_id:
         return Response({'error': 'task_id is required'}, status=400)
-    access = DetectionTask.objects.filter(id=task_id, user=user).exists()
+    task = DetectionTask.objects.filter(id=task_id).first()
+    if not task:
+        return Response({'access': False})
+    access = can_access_detection_task(request.user, task)
     return Response({'access': access})
 
 

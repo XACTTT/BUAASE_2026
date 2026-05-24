@@ -29,6 +29,7 @@ from core.models import (
 from core.services.material_validation_service import MaterialValidationService
 from core.services.content_extraction_service import ContentExtractionService
 from core.services.structured_detection_service import StructuredDetectionService
+from core.services.permissions import can_access_detection_task
 from ..utils.log_utils import action_log, log_action, get_client_ip
 from django.db.models import Q
 from ..utils.report_generator import generate_detection_task_report
@@ -39,8 +40,10 @@ from ..utils.serializers_safe import serialize_value
 def get_detection_result(request, image_id):
     try:
         # 获取检测结果
-        detection_result = DetectionResult.objects.get(image_upload_id=image_id,
-                                                       image_upload__file_management__user=request.user)
+        detection_result = DetectionResult.objects.select_related('detection_task').get(
+            image_upload_id=image_id)
+        if not can_access_detection_task(request.user, detection_result.detection_task):
+            return Response({"message": "Permission denied"}, status=403)
 
         # 检查状态并返回相应数据
         if detection_result.status == 'in_progress':
@@ -711,10 +714,11 @@ def get_text_detection_result(request, resource_id):
     """
     try:
         # 获取最新的检测结果
-        tdr = TextDetectionResult.objects.filter(
-            text_resource_id=resource_id,
-            detection_task__user=request.user
+        tdr = TextDetectionResult.objects.select_related('detection_task').filter(
+            text_resource_id=resource_id
         ).order_by('-detection_time').first()
+        if not tdr or not can_access_detection_task(request.user, tdr.detection_task):
+            return Response({"message": "Detection result not found"}, status=404)
 
         if not tdr:
             return Response({"message": "Detection result not found"}, status=404)
@@ -775,8 +779,10 @@ def get_task_text_results(request, task_id):
     获取某个检测任务下所有文本的检测结果列表
     """
     try:
-        task = DetectionTask.objects.get(id=task_id, user=request.user)
-        
+        task = DetectionTask.objects.get(id=task_id)
+        if not can_access_detection_task(request.user, task):
+            return Response({"message": "Permission denied"}, status=403)
+
         if task.task_type not in ['paper_text', 'review_text', 'multi_material']:
             if task.detect_type in ('paper', 'review', 'multi', 'multi_material'):
                 return Response({
@@ -832,7 +838,9 @@ def download_task_report(request, task_id):
     下载检测报告 PDF
     """
     try:
-        task = DetectionTask.objects.get(id=task_id, user=request.user)
+        task = DetectionTask.objects.get(id=task_id)
+        if not can_access_detection_task(request.user, task):
+            return Response({"detail": "Permission denied."}, status=403)
         # generate_detection_task_report(task)
     except DetectionTask.DoesNotExist:
         return Response({"detail": "Task not found."}, status=404)
@@ -921,7 +929,9 @@ def list_task_results(request, task_id):
     """
     ?include_image=1   —— 额外返回原始图像 URL
     """
-    task = get_object_or_404(DetectionTask, id=task_id, user=request.user)
+    task = get_object_or_404(DetectionTask, id=task_id)
+    if not can_access_detection_task(request.user, task):
+        return Response({"detail": "Permission denied."}, status=403)
 
     include_img = request.query_params.get("include_image", "0") in ("1", "true", "True")
     result_list = []
@@ -946,7 +956,9 @@ def get_task_llm_analysis(request, task_id):
     GET /api/tasks/<task_id>/llm-analysis/
     返回任务级的大模型分析结果
     """
-    task = get_object_or_404(DetectionTask, id=task_id, user=request.user)
+    task = get_object_or_404(DetectionTask, id=task_id)
+    if not can_access_detection_task(request.user, task):
+        return Response({'error': 'forbidden'}, status=403)
     extra_payload = task.extra_payload or {}
     structured_result = StructuredDetectionResult.objects.filter(detection_task=task).first()
     structured_payload = structured_result.result_payload if structured_result else {}
@@ -968,7 +980,9 @@ def list_fake_task_results(request, task_id):
     """
     ?include_image=1   —— 额外返回原始图像 URL
     """
-    task = get_object_or_404(DetectionTask, id=task_id, user=request.user)
+    task = get_object_or_404(DetectionTask, id=task_id)
+    if not can_access_detection_task(request.user, task):
+        return Response({'error': 'forbidden'}, status=403)
 
     include_img = request.query_params.get("include_image", "0") in ("1", "true", "True")
     result_list = []
@@ -993,7 +1007,9 @@ def list_normal_task_results(request, task_id):
     """
     ?include_image=1   —— 额外返回原始图像 URL
     """
-    task = get_object_or_404(DetectionTask, id=task_id, user=request.user)
+    task = get_object_or_404(DetectionTask, id=task_id)
+    if not can_access_detection_task(request.user, task):
+        return Response({'error': 'forbidden'}, status=403)
 
     include_img = request.query_params.get("include_image", "0") in ("1", "true", "True")
     result_list = []
@@ -1342,7 +1358,9 @@ def _serialize_structured_task_result(
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def structured_task_result(request, task_id):
-    task = get_object_or_404(DetectionTask, id=task_id, user=request.user)
+    task = get_object_or_404(DetectionTask, id=task_id)
+    if not can_access_detection_task(request.user, task):
+        return Response({'error': 'forbidden'}, status=403)
 
     # 优先检查结构化检测结果 — paper/review/multi 走 _submit_structured_detection 的任务
     structured_result = StructuredDetectionResult.objects.filter(detection_task=task).first()
@@ -1494,6 +1512,18 @@ def get_user_tasks(request):
     except Exception:
         return Response({'error': 'Invalid page number'}, status=400)
 
+    # 预取材料信息：按 container 批量查 FileManagement
+    container_ids = [task.container_id for task in page_obj.object_list if task.container_id]
+    file_map = {}  # container_id -> list of {file_name, tag}
+    subject_map = {}  # container_id -> tag (取第一个非空 tag)
+    if container_ids:
+        from ..models import FileManagement
+        files = FileManagement.objects.filter(container_id__in=container_ids).order_by('id').values_list('container_id', 'file_name', 'tag')
+        for cid, fname, ftag in files:
+            file_map.setdefault(cid, []).append({'file_name': fname, 'tag': ftag})
+            if cid not in subject_map and ftag:
+                subject_map[cid] = ftag
+
     task_data = [
         {
             'task_id': task.id,
@@ -1504,7 +1534,9 @@ def get_user_tasks(request):
             'upload_time': timezone.localtime(task.upload_time).strftime('%Y-%m-%d %H:%M:%S') if task.upload_time else None,
             'status': task.status,
             'failure_reason': task.failure_reason,
-            'completion_time': timezone.localtime(task.completion_time).strftime('%Y-%m-%d %H:%M:%S') if task.completion_time else None
+            'completion_time': timezone.localtime(task.completion_time).strftime('%Y-%m-%d %H:%M:%S') if task.completion_time else None,
+            'subject': subject_map.get(task.container_id, '') if task.container_id else '',
+            'materials': [f['file_name'] for f in file_map.get(task.container_id, [])] if task.container_id else [],
         } for task in page_obj.object_list
     ]
 

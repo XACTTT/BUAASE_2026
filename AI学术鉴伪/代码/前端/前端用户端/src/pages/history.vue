@@ -52,6 +52,32 @@
           <span>{{ item.task_id }}</span>
         </template>
 
+        <template v-slot:item.task_name="{ item }">
+          <span class="text-body-2" :title="item.task_name">{{ item.task_name || '-' }}</span>
+        </template>
+
+        <template v-slot:item.task_type="{ item }">
+          <v-chip size="small" :color="getTaskTypeColor(item.task_type)" variant="tonal">
+            {{ getTaskTypeLabel(item.task_type) }}
+          </v-chip>
+        </template>
+
+        <template v-slot:item.subject="{ item }">
+          <span class="text-body-2">{{ getSubjectLabel(item.subject) }}</span>
+        </template>
+
+        <template v-slot:item.materials="{ item }">
+          <div v-if="item.materials && item.materials.length" class="d-flex flex-wrap ga-1">
+            <v-chip v-for="(name, idx) in item.materials.slice(0, 3)" :key="idx" size="x-small" variant="outlined">
+              {{ name }}
+            </v-chip>
+            <v-chip v-if="item.materials.length > 3" size="x-small" variant="outlined" color="grey">
+              +{{ item.materials.length - 3 }}
+            </v-chip>
+          </div>
+          <span v-else class="text-grey text-caption">-</span>
+        </template>
+
         <template v-slot:item.upload_time="{ item }">
           <span>{{ formatDateTime(item.upload_time) }}</span>
         </template>
@@ -88,12 +114,10 @@
         <!-- 操作列自定义 -->
         <template v-slot:item.actions="{ item }">
           <div class="d-flex justify-center gap-2">
-            <v-btn size="small" color="primary" variant="text" @click="handleNext(item)"
-              :disabled="item.status !== 'completed'">
+            <v-btn size="small" color="primary" variant="text" @click="handleNext(item)">
               下一步
             </v-btn>
-            <v-btn size="small" color="error" variant="text" @click="handleDelete(item)"
-              :disabled="item.status !== 'completed'">
+            <v-btn size="small" color="error" variant="text" @click="handleDelete(item)">
               删除
             </v-btn>
           </div>
@@ -141,11 +165,15 @@ const loading = ref(false)
 
 // 表格列定义
 const headers = [
-  { title: '任务ID', key: 'task_id', align: 'center' as const, width: '120px' },
-  { title: '上传时间', key: 'upload_time', align: 'center' as const, width: '180px' },
-  { title: '完成时间', key: 'completion_time', align: 'center' as const, width: '180px' },
+  { title: '任务ID', key: 'task_id', align: 'center' as const, width: '80px' },
+  { title: '任务名称', key: 'task_name', align: 'center' as const, width: '140px' },
+  { title: '类型', key: 'task_type', align: 'center' as const, width: '110px' },
+  { title: '学科', key: 'subject', align: 'center' as const, width: '110px' },
+  { title: '材料', key: 'materials', align: 'start' as const, width: '180px' },
+  { title: '上传时间', key: 'upload_time', align: 'center' as const, width: '160px' },
+  { title: '完成时间', key: 'completion_time', align: 'center' as const, width: '160px' },
   { title: '检测状态', key: 'status', align: 'center' as const, width: '200px' },
-  { title: '操作', key: 'actions', sortable: false, align: 'center' as const, width: '350px' }
+  { title: '操作', key: 'actions', sortable: false, align: 'center' as const, width: '180px' }
 ]
 
 interface Task {
@@ -153,6 +181,8 @@ interface Task {
   task_name?: string
   task_type?: string
   detect_type?: string
+  subject?: string
+  materials?: string[]
   upload_time: string
   completion_time: string
   status: 'pending' | 'in_progress' | 'analyzing' | 'completed' | 'failed' | 'partially_completed'
@@ -326,10 +356,12 @@ const fetchTasks = async (page: number, pageSize: number) => {
         task_name: task.task_name,
         task_type: task.task_type,
         detect_type: task.detect_type,
+        subject: task.subject || '',
+        materials: task.materials || [],
         upload_time: task.upload_time,
         completion_time: task.completion_time,
         status: task.status,
-        progress: task.status === 'in_progress' ? 10 : 0, // 初始默认进度
+        progress: task.status === 'in_progress' ? 10 : 0,
         message: task.status === 'pending' ? '排队中' : '加载进度中...'
       }
       // 为正在进行的任务建立 WebSocket 监听
@@ -420,6 +452,52 @@ const getStatusColor = (status: string) => {
     default:
       return 'grey'
   }
+}
+
+const getTaskTypeLabel = (taskType?: string) => {
+  switch (taskType) {
+    case 'image':
+      return '图像检测'
+    case 'paper_text':
+      return '论文文本'
+    case 'review_text':
+      return 'Review文本'
+    case 'multi_material':
+      return '综合检测'
+    default:
+      return taskType || '-'
+  }
+}
+
+const getTaskTypeColor = (taskType?: string) => {
+  switch (taskType) {
+    case 'image':
+      return 'primary'
+    case 'paper_text':
+      return 'success'
+    case 'review_text':
+      return 'warning'
+    case 'multi_material':
+      return 'purple'
+    default:
+      return 'grey'
+  }
+}
+
+const getSubjectLabel = (subject?: string) => {
+  const map: Record<string, string> = {
+    computer_science: '计算机科学',
+    artificial_intelligence: '人工智能',
+    mathematics: '数学',
+    physics: '物理',
+    chemistry: '化学',
+    biology: '生物',
+    medicine: '医学',
+    engineering: '工程',
+    graphics: '图形学',
+    other: '其他'
+  }
+  return subject ? (map[subject] || subject) : '-'
 }
 
 // 选择相关状态
