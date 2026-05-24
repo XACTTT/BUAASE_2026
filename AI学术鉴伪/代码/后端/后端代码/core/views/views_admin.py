@@ -64,6 +64,8 @@ def _serialize_resource(file_obj):
 
     detection_result = None
     detection_time = None
+    task_id = None
+
     if latest_result is not None:
         if latest_result.is_fake is True:
             detection_result = 'fake'
@@ -71,6 +73,21 @@ def _serialize_resource(file_obj):
             detection_result = 'real'
         if latest_result.detection_time:
             detection_time = timezone.localtime(latest_result.detection_time).isoformat()
+        task_id = latest_result.detection_task_id
+
+    # Also check via container for structured/text detection tasks
+    if task_id is None and file_obj.container_id:
+        container_task = DetectionTask.objects.filter(
+            container_id=file_obj.container_id
+        ).order_by('-id').first()
+        if container_task:
+            task_id = container_task.id
+            if not detection_time and container_task.completion_time:
+                detection_time = timezone.localtime(container_task.completion_time).isoformat()
+            if container_task.status == 'completed':
+                detection_result = detection_result or 'real'
+            elif container_task.status == 'failed':
+                detection_result = 'failed'
 
     metadata = file_obj.extra_metadata or {}
 
@@ -87,7 +104,7 @@ def _serialize_resource(file_obj):
         'detection_time': detection_time,
         'detection_result': detection_result,
         'detection_status': _map_detection_status(file_obj.parse_status),
-        'task_id': latest_result.detection_task_id if latest_result else None,
+        'task_id': task_id,
         'title': metadata.get('title') or file_obj.file_name,
         'author': metadata.get('author'),
         'organization': file_obj.organization.name if file_obj.organization else None,
@@ -1917,12 +1934,39 @@ def get_review_request_detail_admin(request, reviewRequest_id):
                 "avatar": _safe_avatar_url(reviewer),
             })
 
+        # 获取关联的 DetectionTask
+        from core.models import DetectionTask
+        detection_task = None
+        if review_request.detection_result:
+            detection_task = review_request.detection_result.detection_task
+        elif review_request.text_detection_result:
+            detection_task = review_request.text_detection_result.detection_task
+        if not detection_task:
+            img = review_request.imgs.first()
+            if img and img.detection_task:
+                detection_task = img.detection_task
+        if not detection_task:
+            txt = review_request.text_resources.first()
+            if txt:
+                detection_task = DetectionTask.objects.filter(
+                    extra_payload__review_text_ids__contains=[txt.id]
+                ).first()
+                if not detection_task and txt.container:
+                    detection_task = DetectionTask.objects.filter(
+                        container=txt.container
+                    ).first()
+
+        task_id = detection_task.id if detection_task else None
+        task_type = detection_task.task_type if detection_task else None
+
         return Response({
             "imgs": imgs,
             "texts": texts,
             "persons": persons,
             "reason": review_request.reason,
             "organization": review_request.organization.name if review_request.organization else None,
+            "task_id": task_id,
+            "task_type": task_type,
         })
 
     except ReviewRequest.DoesNotExist:

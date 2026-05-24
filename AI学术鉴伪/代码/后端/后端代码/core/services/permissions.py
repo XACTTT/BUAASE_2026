@@ -2,7 +2,13 @@ from core.models import User
 
 
 def _is_super_admin(user: User) -> bool:
-    return bool(user and user.is_authenticated and user.email == 'admin@mail.com')
+    return bool(
+        user and user.is_authenticated and (
+            user.email == 'admin@mail.com'
+            or user.is_superuser
+            or (user.is_staff and not user.organization_id)
+        )
+    )
 
 
 def _is_org_admin(user: User) -> bool:
