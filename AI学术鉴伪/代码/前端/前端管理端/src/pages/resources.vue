@@ -815,9 +815,9 @@ const previewFileName = ref('')
 // 关联资源对话框
 const showRelatedResourcesDialog = ref(false)
 const relatedResourceHeaders = [
-  { title: '资源ID', key: 'id', align: 'center' as const, sortable: true, width: '120px' },
-  { title: '资源标题', key: 'title', align: 'start' as const, sortable: true },
-  { title: '资源类型', key: 'type', align: 'center' as const, sortable: true },
+  { title: 'ID', key: 'id', align: 'center' as const, sortable: true, width: '120px' },
+  { title: '标题', key: 'title', align: 'start' as const, sortable: true },
+  { title: '类型', key: 'type', align: 'center' as const, sortable: true },
   { title: '操作', key: 'actions', align: 'center' as const, sortable: false, width: '200px' },
 ]
 const relatedResourcesList = ref<any[]>([])
@@ -857,11 +857,11 @@ const resourceTypes = computed(() => [
 
 // 资源表格表头
 const resourceTableHeaders = [
-  { title: '资源 ID', key: 'id', align: 'start' as const, sortable: true },
-  { title: '资源标题', key: 'title', align: 'start' as const, sortable: true },
-  { title: '资源类型', key: 'type', align: 'center' as const, sortable: true },
-  { title: '作者信息', key: 'author', align: 'start' as const, sortable: true },
-  { title: '所属组织', key: 'organization', align: 'start' as const, sortable: true },
+  { title: 'ID', key: 'id', align: 'start' as const, sortable: true },
+  { title: '标题', key: 'title', align: 'start' as const, sortable: true },
+  { title: '类型', key: 'type', align: 'center' as const, sortable: true },
+  { title: '作者', key: 'author', align: 'start' as const, sortable: true },
+  { title: '组织', key: 'organization', align: 'start' as const, sortable: true },
   { title: '学科', key: 'subject', align: 'center' as const, sortable: true },
   { title: '检测结果', key: 'detection_result', align: 'center' as const, sortable: true },
   { title: '检测类型', key: 'detection_type', align: 'center' as const, sortable: true },

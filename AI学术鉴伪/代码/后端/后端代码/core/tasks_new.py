@@ -51,7 +51,11 @@ from core.services.fast_detect_gpt_ai_bridge import (
 from core.services.structured_detection_service import StructuredDetectionService
 from core.services.llm_service import build_chat_completion_payload, call_openai_compatible_chat
 from core.utils.log_utils import log_action
-from .utils.report_generator import generate_detection_task_report
+from .utils.report_generator import (
+    generate_detection_task_report,
+    generate_text_detection_report,
+    generate_structured_detection_report,
+)
 from .utils.image_saver import save_ndarray_as_image
 from .utils.fanyi import fanyi_text
 from .call_figure_detection import get_result, reconnect
@@ -979,8 +983,11 @@ def finalize_text_task(_chord_results: list | None, task_pk: int, text_num: int,
         task.completion_time = timezone.now()
         task.save(update_fields=["status", "completion_time"])
         
-        # TODO: generate_text_detection_task_report(task) 如果有针对文本的报告生成的话
-        # generate_detection_task_report(task)
+        try:
+            generate_text_detection_report(task)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception("Failed to generate text detection report for task %s", task_pk)
 
     log_action(
         user=task.user,
@@ -1022,6 +1029,11 @@ def run_structured_detection_task(self, task_pk: int):
 
     try:
         StructuredDetectionService.execute_task(task)
+        try:
+            generate_structured_detection_report(task)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception("Failed to generate structured detection report for task %s", task_pk)
     except BertTextAITransientError as exc:
         StructuredDetectionService.mark_failed(task, str(exc))
         send_task_progress_update(
