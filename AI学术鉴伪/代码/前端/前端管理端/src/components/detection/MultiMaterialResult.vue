@@ -1526,6 +1526,12 @@ watch(activeTab, () => {
                         </v-list-item>
                       </v-card-text>
                     </v-card>
+                    <div v-if="ela" class="mt-4">
+                      <div class="text-h6 mb-3">ELA 误差分析图</div>
+                      <v-card elevation="2" class="pa-2">
+                        <v-img :src="ela" max-height="400" contain class="rounded-lg" />
+                      </v-card>
+                    </div>
                   </v-window-item>
                 </v-window>
               </v-col>

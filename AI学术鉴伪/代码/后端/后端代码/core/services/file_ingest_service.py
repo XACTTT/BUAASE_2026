@@ -394,12 +394,14 @@ class FileIngestService:
             **FileIngestService._pick_existing_columns(ImageUpload, 'core_imageupload', image_payload)
         )
 
-    # Minimum dimensions for extracted images (skip tiny icons/logos)
-    MIN_IMAGE_WIDTH = 100
-    MIN_IMAGE_HEIGHT = 100
+    # Minimum pixel area for extracted images (skip icons/logos/bullets)
+    # 50*50=2500, keeps thin charts (e.g. 30x500) that are real figures
+    MIN_IMAGE_AREA = 2500
 
     @staticmethod
     def _extract_images_from_pdf(file_management, container, file_path, source_kind='pdf_extracted'):
+        import logging
+        _logger = logging.getLogger(__name__)
 
         full_file_path = os.path.join(settings.MEDIA_ROOT, file_path)
         with fitz.open(full_file_path) as pdf_document:
@@ -416,14 +418,14 @@ class FileIngestService:
                     image_bytes = base_image['image']
                     image_ext = base_image.get('ext', 'png')
 
-                    # Skip tiny images (icons, logos, decorative elements)
+                    # Skip tiny images by pixel area (icons, bullets, decorative lines)
                     with Image.open(io.BytesIO(image_bytes)) as pil_check:
                         w, h = pil_check.size
-                    if w < FileIngestService.MIN_IMAGE_WIDTH or h < FileIngestService.MIN_IMAGE_HEIGHT:
+                    if w * h < FileIngestService.MIN_IMAGE_AREA:
                         skipped_small += 1
                         continue
 
-                    # Skip duplicates by content hash
+                    # Skip duplicates by content hash (repeated headers/logos across pages)
                     content_hash = hashlib.sha256(image_bytes).hexdigest()
                     if content_hash in seen_hashes:
                         skipped_dup += 1
@@ -450,12 +452,10 @@ class FileIngestService:
                         extracted_from_pdf=True,
                     )
 
-            if skipped_small or skipped_dup:
-                import logging
-                logging.getLogger(__name__).info(
-                    'PDF image extraction for file %s: kept %d, skipped %d small, %d duplicates',
-                    file_management.id, image_counter, skipped_small, skipped_dup,
-                )
+            _logger.info(
+                'PDF image extraction for file %s: kept %d, skipped %d small, %d duplicates',
+                file_management.id, image_counter, skipped_small, skipped_dup,
+            )
 
     @staticmethod
     def _extract_images_from_zip(file_management, container, zip_file_path):

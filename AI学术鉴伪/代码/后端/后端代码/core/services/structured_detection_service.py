@@ -881,12 +881,12 @@ class StructuredDetectionService:
         return detection_results
 
     @staticmethod
-    def _wait_for_image_uploads(task: DetectionTask, timeout: int = 120, interval: int = 3):
+    def _wait_for_image_uploads(task: DetectionTask, timeout: int = 180, interval: int = 3):
         """Poll until ImageUpload records stabilize, or timeout.
 
         parse_uploaded_file_task runs async and may not have finished yet.
-        Waits until the image count is stable (same across two consecutive checks),
-        ensuring both PDF-extracted and manually-uploaded images are ready.
+        Waits until ALL FileManagement records finish parsing AND the image count
+        is stable (same across multiple consecutive checks).
         """
         file_ids = task.extra_payload.get('file_ids', [])
         container_id = task.extra_payload.get('container_id')
@@ -900,15 +900,29 @@ class StructuredDetectionService:
                 return ImageUpload.objects.filter(container_id=container_id).count()
             return 0
 
+        def _all_files_parsed():
+            if not target_file_ids:
+                return True
+            try:
+                return not FileManagement.objects.filter(
+                    id__in=target_file_ids
+                ).exclude(
+                    parse_status__in=['parsed', 'failed']
+                ).exists()
+            except Exception:
+                return True
+
         elapsed = 0
         last_count = 0
         stable_rounds = 0
         while elapsed < timeout:
             count = _count_images()
-            if count > 0 and count == last_count:
+            all_parsed = _all_files_parsed()
+
+            if count > 0 and count == last_count and all_parsed:
                 stable_rounds += 1
-                if stable_rounds >= 2:
-                    logger.info('ImageUpload records stable for task %s after %ds (%d images)',
+                if stable_rounds >= 3:
+                    logger.info('ImageUpload records stable for task %s after %ds (%d images, all parsed)',
                                 task.id, elapsed, count)
                     return count
             else:
