@@ -297,13 +297,13 @@ class StructuredDetectionService:
         if detect_type == 'paper':
             dimensions = [
                 {'name': 'aigc_generation', 'score': round(avg_aigc, 4),
-                 'summary': 'BERT AIGC probability aggregated across all paper sections'},
+                 'summary': 'BERT AI生成概率（论文全文段落汇总）'},
                 {'name': 'section_consistency', 'score': round(consistency, 4),
-                 'summary': 'Cross-section prediction consistency'},
+                 'summary': '各段落预测结果的一致性'},
                 {'name': 'aigc_section_ratio', 'score': round(aigc_count / n, 4) if n else 0,
-                 'summary': f'{aigc_count}/{n} sections classified as AIGC'},
+                 'summary': f'{aigc_count}/{n} 个段落被分类为AI生成'},
                 {'name': 'max_section_risk', 'score': round(max(scores) if scores else 0, 4),
-                 'summary': 'Highest single-section AIGC confidence'},
+                 'summary': '单段落最高AI生成置信度'},
             ]
             material_summary = {
                 'paper_file_count': len(snapshot.get('paper_files', [])),
@@ -313,13 +313,13 @@ class StructuredDetectionService:
         elif detect_type == 'review':
             dimensions = [
                 {'name': 'aigc_generation', 'score': round(avg_aigc, 4),
-                 'summary': 'BERT AIGC probability aggregated across all review texts'},
+                 'summary': 'BERT AI生成概率（评审文本汇总）'},
                 {'name': 'template_tendency', 'score': round(aggregate.get('mean_confidence', 0), 4),
-                 'summary': 'Model confidence as proxy for template/boilerplate detection'},
+                 'summary': '模型置信度（模板化/套话检测代理指标）'},
                 {'name': 'cross_text_consistency', 'score': round(consistency, 4),
-                 'summary': 'Consistency of predictions across review sources'},
+                 'summary': '各评审来源预测结果的一致性'},
                 {'name': 'peak_risk', 'score': round(max(scores) if scores else 0, 4),
-                 'summary': 'Highest single-text AIGC risk'},
+                 'summary': '单文本最高AI生成风险'},
             ]
             material_summary = {
                 'review_file_count': len(snapshot.get('review_files', [])),
@@ -329,13 +329,13 @@ class StructuredDetectionService:
         else:
             dimensions = [
                 {'name': 'aigc_generation', 'score': round(avg_aigc, 4),
-                 'summary': 'BERT AIGC probability across all materials'},
+                 'summary': 'BERT AI生成概率（全部材料汇总）'},
                 {'name': 'cross_material_consistency', 'score': round(consistency, 4),
-                 'summary': 'Consistency across paper and review text predictions'},
+                 'summary': '论文与评审文本预测结果的一致性'},
                 {'name': 'aigc_ratio', 'score': round(aigc_count / n, 4) if n else 0,
-                 'summary': f'{aigc_count}/{n} text blocks classified as AIGC'},
+                 'summary': f'{aigc_count}/{n} 个文本段被分类为AI生成'},
                 {'name': 'max_risk', 'score': round(max(scores) if scores else 0, 4),
-                 'summary': 'Highest single-block AIGC risk'},
+                 'summary': '单段最高AI生成风险'},
             ]
             material_summary = {
                 'paper_file_count': len(snapshot.get('paper_files', [])),
@@ -351,7 +351,7 @@ class StructuredDetectionService:
                 'confidence_score': round(avg_aigc, 4),
                 'risk_level': risk_level,
             },
-            'summary': f'BERT text classification completed across {n} text sections',
+            'summary': f'BERT文本分类完成，共检测 {n} 个文本段落',
             'material_summary': material_summary,
             'dimensions': dimensions,
             'evidence': {
@@ -449,18 +449,33 @@ class StructuredDetectionService:
         # Image card
         images = snapshot.get('images', [])
         if images:
+            image_ids = [img.get('image_id') for img in images if img.get('image_id')]
+            detection_map = {}
+            if image_ids:
+                for dr in DetectionResult.objects.filter(
+                    image_upload_id__in=image_ids, status='completed'
+                ):
+                    detection_map[dr.image_upload_id] = dr
+
+            image_items = []
+            for img in images:
+                item = {
+                    'image_id': img.get('image_id'),
+                    'image_url': img.get('image_url'),
+                }
+                dr = detection_map.get(img.get('image_id'))
+                if dr:
+                    item['result_id'] = dr.id
+                    item['is_fake'] = dr.is_fake
+                    item['confidence'] = float(dr.confidence_score) if dr.confidence_score else 0
+                image_items.append(item)
+
             material_cards.append({
                 'type': 'image',
                 'label': '图片材料',
                 'summary': f'{len(images)} 张图片',
                 'file_count': len(images),
-                'images': [
-                    {
-                        'image_id': img.get('image_id'),
-                        'image_url': img.get('image_url'),
-                    }
-                    for img in images
-                ],
+                'images': image_items,
             })
 
         return {
@@ -597,6 +612,46 @@ class StructuredDetectionService:
         return parsed if isinstance(parsed, dict) else {'raw_text': content}
 
     @staticmethod
+    def _build_basic_cross_analysis(result_payload, ai_response):
+        """当LLM不可用时，从BERT结果生成基础交叉分析。"""
+        evidence = result_payload.get('evidence') or ai_response.get('evidence') or {}
+        per_section = evidence.get('per_section', [])
+
+        paper_aigc = [s for s in per_section if (s.get('item_id') or '').startswith('multi_paper') and s.get('is_aigc')]
+        review_aigc = [s for s in per_section if (s.get('item_id') or '').startswith('multi_review') and s.get('is_aigc')]
+        paper_total = [s for s in per_section if (s.get('item_id') or '').startswith('multi_paper')]
+        review_total = [s for s in per_section if (s.get('item_id') or '').startswith('multi_review')]
+
+        cross_checks = []
+        paper_rate = len(paper_aigc) / max(len(paper_total), 1)
+        review_rate = len(review_aigc) / max(len(review_total), 1)
+
+        if paper_aigc:
+            cross_checks.append(f'论文材料中 {len(paper_aigc)}/{len(paper_total)} 个段落被判定为AI生成（占比 {paper_rate:.0%}）')
+        if review_aigc:
+            cross_checks.append(f'评审材料中 {len(review_aigc)}/{len(review_total)} 个段落被判定为AI生成（占比 {review_rate:.0%}）')
+
+        mismatches = []
+        if paper_aigc and not review_aigc:
+            mismatches.append('论文存在AI生成内容但评审材料未检测到异常，建议人工复核评审意见的独立性')
+        elif review_aigc and not paper_aigc:
+            mismatches.append('评审材料存在AI生成内容但论文未检测到异常，建议关注评审意见的来源')
+
+        recommendations = []
+        if paper_aigc or review_aigc:
+            recommendations.append('建议对AI生成概率较高的段落进行人工复核')
+        if abs(paper_rate - review_rate) > 0.3:
+            recommendations.append('论文与评审材料的AI生成比例差异较大，建议进行交叉验证')
+        if not cross_checks:
+            cross_checks.append('各材料BERT文本分类均未发现明显AI生成痕迹')
+
+        return {
+            'cross_checks': cross_checks,
+            'mismatches': mismatches,
+            'recommendations': recommendations,
+        }
+
+    @staticmethod
     @transaction.atomic
     def store_result(task: DetectionTask, result_payload, ai_response):
         overall = result_payload.get('overall') or {}
@@ -651,6 +706,9 @@ class StructuredDetectionService:
         llm_result = StructuredDetectionService._run_llm_analysis(task, result_payload, ai_response, text_items)
         if llm_result is not None:
             result_payload['llm_analysis'] = llm_result
+            # 用LLM生成的中文摘要替换BERT英文摘要
+            if llm_result.get('summary'):
+                result_payload['summary'] = llm_result['summary']
             if task.detect_type == 'multi':
                 cross_analysis = {}
                 for key in ('cross_checks', 'mismatches', 'recommendations'):
@@ -664,6 +722,12 @@ class StructuredDetectionService:
                     if isinstance(items, list):
                         ai_contribution.extend(str(i) for i in items)
                 result_payload['ai_contribution'] = ai_contribution
+
+        # 如果LLM未成功，为multi类型生成基础交叉分析
+        if task.detect_type == 'multi' and result_payload.get('cross_material_analysis') is None:
+            result_payload['cross_material_analysis'] = StructuredDetectionService._build_basic_cross_analysis(
+                result_payload, ai_response
+            )
         StructuredDetectionService.store_result(task, result_payload, ai_response)
         return result_payload
 
