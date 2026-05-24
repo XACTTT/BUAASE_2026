@@ -71,6 +71,10 @@ export default {
     return http.get(`/results/${data}/`)
   },
 
+  getImageDetectionByImageId(imageId: number) {
+    return http.get(`/results_image/${imageId}/`)
+  },
+
   getTaskLlmAnalysis(data: any) {
     return http.get(`/tasks/${data}/llm-analysis/`)
   },
