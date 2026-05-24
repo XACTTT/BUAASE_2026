@@ -403,13 +403,73 @@ class StructuredDetectionService:
 
     @staticmethod
     def _normalize_multi_result(task: DetectionTask, snapshot, ai_response):
+        evidence_per_section = (ai_response.get('evidence') or {}).get('per_section', [])
+        material_cards = []
+
+        # Paper card
+        paper_files = snapshot.get('paper_files', [])
+        if paper_files:
+            paper_sections = [s for s in evidence_per_section
+                              if (s.get('item_id') or '').startswith('multi_paper')]
+            paper_scores = [s.get('probabilities', {}).get('aigc', 0) for s in paper_sections]
+            avg_paper_score = sum(paper_scores) / len(paper_scores) if paper_scores else 0
+            total_sections = sum(len(pf.get('sections', [])) for pf in paper_files)
+            material_cards.append({
+                'type': 'paper',
+                'label': '论文材料',
+                'summary': f'{len(paper_files)} 篇论文，共 {total_sections} 个章节',
+                'score': round(avg_paper_score, 4),
+                'file_count': len(paper_files),
+                'files': [
+                    {'file_id': pf.get('file_id'), 'file_name': pf.get('file_name')}
+                    for pf in paper_files
+                ],
+            })
+
+        # Review card
+        review_files = snapshot.get('review_files', [])
+        review_texts = snapshot.get('review_texts', [])
+        if review_files or review_texts:
+            review_sections = [s for s in evidence_per_section
+                               if (s.get('item_id') or '').startswith('multi_review')]
+            review_scores = [s.get('probabilities', {}).get('aigc', 0) for s in review_sections]
+            avg_review_score = sum(review_scores) / len(review_scores) if review_scores else 0
+            material_cards.append({
+                'type': 'review',
+                'label': '评审材料',
+                'summary': f'{len(review_files)} 个评审文件，{len(review_texts)} 段评审文本',
+                'score': round(avg_review_score, 4),
+                'file_count': len(review_files) + len(review_texts),
+                'files': [
+                    {'file_id': rf.get('file_id'), 'file_name': rf.get('file_name')}
+                    for rf in review_files
+                ],
+            })
+
+        # Image card
+        images = snapshot.get('images', [])
+        if images:
+            material_cards.append({
+                'type': 'image',
+                'label': '图片材料',
+                'summary': f'{len(images)} 张图片',
+                'file_count': len(images),
+                'images': [
+                    {
+                        'image_id': img.get('image_id'),
+                        'image_url': img.get('image_url'),
+                    }
+                    for img in images
+                ],
+            })
+
         return {
             'overall': StructuredDetectionService._normalize_overall(ai_response),
             'task_type': 'multi',
             'validation': snapshot.get('validation', {}),
-            'material_cards': ai_response.get('material_cards', []),
-            'cross_material_analysis': ai_response.get('cross_material_analysis', {}),
-            'ai_contribution': ai_response.get('ai_contribution', []),
+            'material_cards': material_cards,
+            'cross_material_analysis': None,
+            'ai_contribution': [],
             'evidence': ai_response.get('evidence') or snapshot,
             'summary': ai_response.get('summary'),
         }
@@ -591,6 +651,19 @@ class StructuredDetectionService:
         llm_result = StructuredDetectionService._run_llm_analysis(task, result_payload, ai_response, text_items)
         if llm_result is not None:
             result_payload['llm_analysis'] = llm_result
+            if task.detect_type == 'multi':
+                cross_analysis = {}
+                for key in ('cross_checks', 'mismatches', 'recommendations'):
+                    if key in llm_result:
+                        cross_analysis[key] = llm_result[key]
+                if cross_analysis:
+                    result_payload['cross_material_analysis'] = cross_analysis
+                ai_contribution = []
+                for key in ('suspicious_patterns', 'signals', 'cross_checks'):
+                    items = llm_result.get(key)
+                    if isinstance(items, list):
+                        ai_contribution.extend(str(i) for i in items)
+                result_payload['ai_contribution'] = ai_contribution
         StructuredDetectionService.store_result(task, result_payload, ai_response)
         return result_payload
 

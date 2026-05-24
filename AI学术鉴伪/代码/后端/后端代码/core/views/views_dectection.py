@@ -1279,6 +1279,18 @@ def get_user_tasks(request):
     except Exception:
         return Response({'error': 'Invalid page number'}, status=400)
 
+    # 预取材料信息：按 container 批量查 FileManagement
+    container_ids = [task.container_id for task in page_obj.object_list if task.container_id]
+    file_map = {}  # container_id -> list of {file_name, tag}
+    subject_map = {}  # container_id -> tag (取第一个非空 tag)
+    if container_ids:
+        from ..models import FileManagement
+        files = FileManagement.objects.filter(container_id__in=container_ids).order_by('id').values_list('container_id', 'file_name', 'tag')
+        for cid, fname, ftag in files:
+            file_map.setdefault(cid, []).append({'file_name': fname, 'tag': ftag})
+            if cid not in subject_map and ftag:
+                subject_map[cid] = ftag
+
     task_data = [
         {
             'task_id': task.id,
@@ -1289,7 +1301,9 @@ def get_user_tasks(request):
             'upload_time': timezone.localtime(task.upload_time).strftime('%Y-%m-%d %H:%M:%S') if task.upload_time else None,
             'status': task.status,
             'failure_reason': task.failure_reason,
-            'completion_time': timezone.localtime(task.completion_time).strftime('%Y-%m-%d %H:%M:%S') if task.completion_time else None
+            'completion_time': timezone.localtime(task.completion_time).strftime('%Y-%m-%d %H:%M:%S') if task.completion_time else None,
+            'subject': subject_map.get(task.container_id, '') if task.container_id else '',
+            'materials': [f['file_name'] for f in file_map.get(task.container_id, [])] if task.container_id else [],
         } for task in page_obj.object_list
     ]
 

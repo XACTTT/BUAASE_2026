@@ -5,7 +5,8 @@ export default {
     return http.post('/upload/', data, {
       headers: {
         'Content-Type': 'multipart/form-data'
-      }
+      },
+      timeout: 120000
     })
   },
 

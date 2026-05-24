@@ -34,11 +34,20 @@ def upload_file(request):
     container_id = request.data.get('container_id')
     resource_role = request.data.get('resource_role', 'material_other')
     batch_id = request.data.get('batch_id')
+    detect_type = request.data.get('detect_type', 'image')
 
     if container_id:
         container = ResourceContainer.objects.filter(id=container_id).first()
         if not container:
             return Response({'error_code': 'CONTAINER_NOT_FOUND', 'message': 'container not found'}, status=404)
+    elif detect_type == 'multi':
+        from django.utils import timezone
+        container = ResourceContainer.objects.create(
+            organization=user.organization,
+            owner=user,
+            container_type='multi_material',
+            title=f'多材料检测 - {timezone.now().strftime("%Y%m%d%H%M%S")}',
+        )
 
     upload_results = []
     file_types = request.data.getlist('file_type')
@@ -348,10 +357,10 @@ def preview_resource(request, resource_type, resource_id):
 
     if resource_type == 'image':
         try:
-            image = ImageUpload.objects.select_related('file_management').get(
-                id=resource_id,
-                file_management__user=auth_user,
-            )
+            qs = ImageUpload.objects.select_related('file_management')
+            if not auth_user.is_staff:
+                qs = qs.filter(file_management__user=auth_user)
+            image = qs.get(id=resource_id)
         except ImageUpload.DoesNotExist:
             return Response({"message": "Image not found"}, status=404)
 
@@ -370,7 +379,10 @@ def preview_resource(request, resource_type, resource_id):
 
     if resource_type == 'file':
         try:
-            file_management = FileManagement.objects.get(id=resource_id, user=auth_user)
+            qs = FileManagement.objects.all()
+            if not auth_user.is_staff:
+                qs = qs.filter(user=auth_user)
+            file_management = qs.get(id=resource_id)
         except FileManagement.DoesNotExist:
             return Response({"message": "File not found"}, status=404)
 

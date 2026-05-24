@@ -586,6 +586,7 @@ const categoryFileInputs = ref<Record<UploadCategoryKey, HTMLInputElement | null
 })
 const fileId = ref()
 const fileIds = ref<number[]>([])
+const containerId = ref<number | null>(null)
 const fileIdsByCategory = ref<Record<UploadCategoryKey, number[]>>({
   image: [],
   paper: [],
@@ -877,6 +878,7 @@ const handleSubmit = async () => {
 
     fileIds.value = normalizedFileIds
     fileId.value = normalizedFileIds[0] ?? ''
+    containerId.value = data.container_id || null
 
     const nextCategoryIds: Record<UploadCategoryKey, number[]> = {
       image: [],
@@ -994,6 +996,9 @@ const handleNext = async () => {
         mode: selectedVersion.value,
         detect_type: selectedModule.value
       }
+      if (containerId.value) {
+        payload.container_id = containerId.value
+      }
       await publisher.submitDetection(payload)
 
       router.push(`/history`)
@@ -1099,9 +1104,7 @@ const returnToUpload = () => {
 .upload-progress {
   position: relative;
   min-height: 100vh;
-  max-height: 300vh;
   background-color: rgb(var(--v-theme-surface));
-  overflow: hidden;
 }
 
 .upload-actions {
