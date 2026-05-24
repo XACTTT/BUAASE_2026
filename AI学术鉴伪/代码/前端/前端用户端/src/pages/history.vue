@@ -115,11 +115,11 @@
         <template v-slot:item.actions="{ item }">
           <div class="d-flex justify-center gap-2">
             <v-btn size="small" color="primary" variant="text" @click="handleNext(item)"
-              :disabled="item.status !== 'completed'">
+              :disabled="!canViewResult(item.status)">
               下一步
             </v-btn>
             <v-btn size="small" color="error" variant="text" @click="handleDelete(item)"
-              :disabled="item.status !== 'completed'">
+              :disabled="!canDelete(item.status)">
               删除
             </v-btn>
           </div>
@@ -500,6 +500,14 @@ const getSubjectLabel = (subject?: string) => {
     other: '其他'
   }
   return subject ? (map[subject] || subject) : '-'
+}
+
+const canViewResult = (status: string) => {
+  return ['completed', 'partially_completed', 'failed'].includes(status)
+}
+
+const canDelete = (status: string) => {
+  return ['completed', 'partially_completed', 'failed'].includes(status)
 }
 
 // 选择相关状态
