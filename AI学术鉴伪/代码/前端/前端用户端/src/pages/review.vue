@@ -63,11 +63,11 @@
 
           <template v-slot:item.task_type="{ item }">
             <v-chip
-              :color="getTaskTypeColor(item.task_type)"
+              :color="item.task_type_color || getTaskTypeColor(item.task_type)"
               size="small"
               class="status-chip"
             >
-              {{ getTaskTypeName(item.task_type) }}
+              {{ item.task_type_label || getTaskTypeName(item.task_type) }}
             </v-chip>
           </template>
 
@@ -191,6 +191,8 @@ interface Task {
   image_count: number
   status: string
   task_type?: string
+  task_type_label?: string
+  task_type_color?: string
 }
 
 const headers = [
@@ -199,7 +201,7 @@ const headers = [
   { title: '任务类型', key: 'task_type', align: 'center', sortable: false },
   { title: '图片数量', key: 'image_count', align: 'start' },
   { title: '状态', key: 'status', align: 'center' },
-  { title: '提交时间', key: 'maual_review_time', align: 'center' },
+  { title: '提交时间', key: 'manual_review_time', align: 'center' },
   { title: '操作', key: 'actions', align: 'center', sortable: false },
 ] as const
 
@@ -283,9 +285,9 @@ const getTaskTypeName = (taskType?: string) => {
     case 'image':
       return '图像检测'
     case 'paper_text':
-      return '论文检测'
+      return '论文文本'
     case 'review_text':
-      return '评审检测'
+      return '审稿文本'
     case 'multi_material':
       return '多材料检测'
     default:
@@ -408,7 +410,9 @@ const fetchTasks = async (page: number, pageSize: number) => {
       publisher_avatar: task.publisher_avatar ? import.meta.env.VITE_API_URL + task.publisher_avatar : '',
       image_count: task.image_count,
       status: task.status,
-      task_type: task.task_type || 'unknown'
+      task_type: task.task_type || 'unknown',
+      task_type_label: task.task_type_label || '',
+      task_type_color: task.task_type_color || ''
     }))
     
     currentPage.value = current_page

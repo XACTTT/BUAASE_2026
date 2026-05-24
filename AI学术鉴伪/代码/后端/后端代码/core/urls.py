@@ -110,6 +110,8 @@ urlpatterns = [
     path('publisher-dectectiontask-access/', views_review.if_publisher_can_access_dectection_task, name='if_publisher_can_access_dectection_task'),
     path('reviewer-manualreview-access/', views_review.if_reviewer_can_access_manual_review, name='if_reviewer_can_access_manual_review'),
     path('get-reviewer-request-detail/<int:reviewRequest_id>/', views_review.get_reviewer_request_detail, name='get_reviewer_request_detail'),
+    path('review/indicators/', views_review.get_review_indicators, name='review_indicators'),
+    path('review/configs/', views_review.get_all_review_configs, name='review_configs'),
 
     # 管理端URL配置
     path('admin/details/', AdminDetailView.as_view(), name='admin-details-default'),

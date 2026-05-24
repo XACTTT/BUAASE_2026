@@ -11,8 +11,19 @@ export default {
     return http.get('/get_publisher_review_tasks/', { params })
   },
 
+  /** Legacy endpoint (admin) - returns imgs/texts with embedded ai_detection per text */
   getReviewTaskDetail(data: any) {
     return http.get(`/get_review_request_detail/${data.manual_review_id}/`)
+  },
+
+  /** New endpoint - returns task_type, review_config, structured_result, image/text reviews */
+  getReviewDetail(data: any) {
+    return http.get(`/get_review_detail/${data.manual_review_id}/`)
+  },
+
+  /** Get review config for a specific task type */
+  getReviewIndicators(params: any) {
+    return http.get('/get_review_indicators/', { params })
   },
 
   getMaskImage(data: any) {
@@ -28,7 +39,7 @@ export default {
   },
 
   getDetectionResult(data: any) {
-    return http.get(`tasks_image/${data.img_id}/report/`)
+    return http.get(`/tasks_image/${data.img_id}/report/`)
   }
 
 }

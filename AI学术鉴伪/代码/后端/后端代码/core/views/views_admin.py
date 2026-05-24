@@ -26,13 +26,7 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from django.core.exceptions import ObjectDoesNotExist
 from core.util import send_notification
 from core.models import Notification
-
-
-def _safe_avatar_url(user):
-    avatar = getattr(user, 'avatar', None)
-    if avatar and avatar.name and avatar.storage.exists(avatar.name):
-        return avatar.url
-    return None
+from core.utils.avatar_utils import safe_avatar_url as _safe_avatar_url
 
 
 def _infer_resource_type(file_obj):
@@ -1151,7 +1145,7 @@ def PostReportView(request, post_id):
                 detection_result=DetectionResult.objects.filter(detection_task=task).first(),
                 user=request.user,
                 status='pending',
-                reason=request.POST.get('reason', 'No reason provided')
+                reason=request.data.get('reason', 'No reason provided')
             )
 
             return JsonResponse({'message': f'Post {post_id} reported successfully', 'report_id': report.id})
