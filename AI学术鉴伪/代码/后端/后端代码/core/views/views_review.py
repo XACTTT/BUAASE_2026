@@ -770,6 +770,9 @@ def get_request_detail(request, reviewRequest_id):
     }
 
     return Response({
+        'task_id': detection_task.id if detection_task else None,
+        'task_type': detection_task.task_type if detection_task else None,
+        'detect_type': detection_task.detect_type if detection_task else None,
         'images': images,
         'texts': texts,
         'ai_detection_result': ai_detection_result,

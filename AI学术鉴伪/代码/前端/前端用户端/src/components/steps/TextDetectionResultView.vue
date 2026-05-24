@@ -368,6 +368,86 @@ const canSubmitReview = computed(() => {
 })
 
 // --- Helpers ---
+const buildStructuredTextList = (): TextResultItem[] => {
+  const materials = props.taskMeta?.materials || {}
+  const resultSections = props.taskMeta?.result?.evidence?.per_section || []
+  const sections = props.taskMeta?.sections || resultSections
+  const detectType = props.taskMeta?.detect_type
+  const status = props.taskMeta?.status || 'completed'
+  const detectionTime = props.taskMeta?.completion_time || props.taskMeta?.updated_at || ''
+  const overallScore = Number(props.taskMeta?.confidence_score ?? props.taskMeta?.overall?.confidence_score ?? 0)
+  const overallFake = Boolean(props.taskMeta?.overall_is_fake ?? props.taskMeta?.overall?.is_fake)
+
+  const files = Array.isArray(materials.files) ? materials.files : []
+  const reviewTexts = Array.isArray(materials.review_texts) ? materials.review_texts : []
+  const materialItems = files.length > 0 ? files : reviewTexts
+
+  if (materialItems.length > 0) {
+    return materialItems.map((item: any, index: number) => ({
+      result_id: String(item.id ?? index + 1),
+      resource_id: Number(item.id ?? index + 1),
+      text_type: detectType === 'review' ? 'review' : 'paper',
+      status,
+      is_fake: overallFake,
+      confidence_score: overallScore,
+      detection_time: detectionTime,
+    }))
+  }
+
+  if (Array.isArray(sections) && sections.length > 0) {
+    return sections.map((section: any, index: number) => ({
+      result_id: section.item_id || String(index + 1),
+      resource_id: index + 1,
+      text_type: section.item_id?.includes('_review_') ? 'review' : 'paper',
+      status,
+      is_fake: Boolean(section.is_aigc),
+      confidence_score: Number(section.confidence_score ?? section.probabilities?.aigc ?? overallScore),
+      detection_time: detectionTime,
+    }))
+  }
+
+  return []
+}
+
+const buildStructuredTextDetails = (items: TextResultItem[]): Map<number, TextDetail> => {
+  const detailMap = new Map<number, TextDetail>()
+  const sections = props.taskMeta?.sections || props.taskMeta?.result?.evidence?.per_section || []
+  const summary = props.taskMeta?.summary || props.taskMeta?.result?.summary || ''
+
+  for (const item of items) {
+    const relatedSections = Array.isArray(sections)
+      ? sections.filter((section: any) => {
+        if (item.text_type === 'review') return section.item_id?.includes('_review_')
+        if (item.text_type === 'paper') return section.item_id?.includes('_paper_')
+        return false
+      })
+      : []
+    const riskSections = relatedSections.filter((section: any) => section.is_aigc)
+    const avgScore = relatedSections.length > 0
+      ? relatedSections.reduce((sum: number, section: any) => sum + Number(section.confidence_score ?? section.probabilities?.aigc ?? 0), 0) / relatedSections.length
+      : item.confidence_score
+
+    detailMap.set(item.resource_id, {
+      resource_id: item.resource_id,
+      status: item.status,
+      is_fake: item.is_fake,
+      confidence_score: item.confidence_score,
+      ai_generated_paragraphs: riskSections.map((section: any, index: number) => ({
+        paragraph_index: index + 1,
+        text: section.text || section.title || section.item_id,
+        ai_probability: Number(section.confidence_score ?? section.probabilities?.aigc ?? 0),
+        reason: section.label_name || '',
+      })),
+      factual_fake_reason: item.text_type === 'paper' ? summary : '',
+      template_tendency_score: item.text_type === 'review' ? avgScore : 0,
+      template_analysis_reason: item.text_type === 'review' ? summary : '',
+      detection_time: item.detection_time,
+    })
+  }
+
+  return detailMap
+}
+
 function getProbabilityColor(probability: number): string {
   if (probability > 0.8) return 'error'
   if (probability > 0.5) return 'warning'
@@ -515,21 +595,8 @@ const submitReview = async () => {
 onMounted(async () => {
   loading.value = true
   try {
-    // Fetch text results list (still needed for review text section)
-    const textListResp = await publisher.getTaskTextResults(props.taskId)
-    const results = textListResp.data?.results || []
-    textList.value = results
-
-    // Fetch detail for each result (needed for review text details)
-    const detailPromises = results.map(async (item: TextResultItem) => {
-      try {
-        const detailResp = await publisher.getSingleTextResult(item.resource_id)
-        textDetails.value.set(item.resource_id, detailResp.data)
-      } catch (err) {
-        console.error(`获取文本资源 ${item.resource_id} 详情失败:`, err)
-      }
-    })
-    await Promise.all(detailPromises)
+    textList.value = buildStructuredTextList()
+    textDetails.value = buildStructuredTextDetails(textList.value)
 
     // Fetch reviewers
     try {

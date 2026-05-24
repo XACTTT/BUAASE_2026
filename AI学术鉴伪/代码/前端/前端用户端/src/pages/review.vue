@@ -1,173 +1,147 @@
-﻿<template>
+<template>
   <div class="review-page">
-      <!-- 鏍囬 -->
-      <v-row class="mb-6">
-        <v-col>
-          <h1 class="text-h4 font-weight-bold">鎴戠殑浠诲姟</h1>
-        </v-col>
-      </v-row>
+    <v-row class="mb-6">
+      <v-col>
+        <h1 class="text-h4 font-weight-bold">我的审核任务</h1>
+      </v-col>
+    </v-row>
 
-      <!-- 鎼滅储鏍忓拰绛涢€夋寜閽?-->
-      <v-row class="mb-4">
-        <v-col cols="12" sm="8" md="6">
-          <v-text-field
-            v-model="searchQuery"
-            label="搜索出版社"
-            append-inner-icon="mdi-magnify"
-            clearable
-            density="compact"
-            hide-details
-            class="search-input"
-            @keyup.enter="handleSearch"
-            @click:append-inner="handleSearch"
-            @click:clear="handleSearch"
-            placeholder="璇疯緭鍏ュ嚭鐗堢ぞ鍚嶇О"
-          ></v-text-field>
-        </v-col>
-        <v-col cols="12" sm="4" md="6" class="d-flex justify-end">
-          <v-btn 
-            color="primary" 
-            class="text-none mr-2" 
-            prepend-icon="mdi-filter-variant"
-            @click="showFilterDialog = true"
-          >
-            绛涢€?
-          </v-btn>
-        </v-col>
-      </v-row>
+    <v-row class="mb-4">
+      <v-col cols="12" sm="8" md="6">
+        <v-text-field
+          v-model="searchQuery"
+          label="搜索发布者"
+          append-inner-icon="mdi-magnify"
+          clearable
+          density="compact"
+          hide-details
+          class="search-input"
+          placeholder="请输入发布者名称"
+          @keyup.enter="handleSearch"
+          @click:append-inner="handleSearch"
+          @click:clear="handleSearch"
+        />
+      </v-col>
+      <v-col cols="12" sm="4" md="6" class="d-flex justify-end">
+        <v-btn color="primary" class="text-none mr-2" prepend-icon="mdi-filter-variant" @click="showFilterDialog = true">
+          筛选
+        </v-btn>
+      </v-col>
+    </v-row>
 
-      <v-card class="elevation-2">
-        <v-data-table
-          :headers="headers"
-          :items="tasks"
-          class="elevation-0"
-          :items-per-page="pageSize"
-          hover
-          :width="'100%'"
-          :loading="loading"
-          hide-default-footer
-        >
-          <template v-slot:top>
-            <div class="d-flex align-center pa-4">
-              <div class="text-caption text-medium-emphasis">
-                鍏?{{ totalTasks }} 鏉¤褰?
-              </div>
-            </div>
-          </template>
-
-          <template v-slot:item.publisher_avatar="{ item }">
-            <v-avatar size="40">
-              <v-img :src="item.publisher_avatar || 'https://randomuser.me/api/portraits/lego/1.jpg'" :alt="item.publisher_username"></v-img>
-            </v-avatar>
-          </template>
-
-          <template v-slot:item.task_type="{ item }">
-            <v-chip
-              :color="getTaskTypeColor(item.task_type)"
-              size="small"
-              class="status-chip"
-            >
-              {{ getTaskTypeName(item.task_type) }}
-            </v-chip>
-          </template>
-
-          <template v-slot:item.status="{ item }">
-            <v-chip
-              :color="getStatusColor(item.status)"
-              size="small"
-              class="status-chip"
-            >
-              {{ getStatusName(item.status) }}
-            </v-chip>
-          </template>
-
-          <template v-slot:item.actions="{ item }">
-            <v-btn
-              icon
-              variant="text"
-              size="small"
-              color="primary"
-              class="mr-2"
-              @click="goToTaskDetail(item)"
-            >
-              <v-icon>mdi-eye</v-icon>
-            </v-btn>
-          </template>
-        </v-data-table>
-        
-        <div class="d-flex align-center justify-center pa-4">
-          <div class="d-flex align-center">
-            <span class="text-caption mr-2">姣忛〉鏄剧ず</span>
-            <v-select
-              v-model="pageSize"
-              :items="[5, 10, 20, 50, 100]"
-              density="compact"
-              variant="outlined"
-              hide-details
-              style="width: 100px"
-              @update:model-value="handlePageSizeChange"
-            ></v-select>
-            <span class="text-caption ml-2">鏉?/span>
+    <v-card class="elevation-2">
+      <v-data-table
+        :headers="headers"
+        :items="tasks"
+        :items-per-page="pageSize"
+        :loading="loading"
+        class="elevation-0"
+        hover
+        hide-default-footer
+      >
+        <template #top>
+          <div class="d-flex align-center pa-4">
+            <div class="text-caption text-medium-emphasis">共 {{ totalTasks }} 条记录</div>
           </div>
-          <v-pagination
-            v-model="currentPage"
-            :length="totalPages"
-            :total-visible="7"
-            class="ml-4"
-            @update:model-value="handlePageChange"
-          ></v-pagination>
-        </div>
-      </v-card>
+        </template>
 
-    <!-- 绛涢€夊璇濇 -->
+        <template #item.publisher_avatar="{ item }">
+          <v-avatar size="40">
+            <v-img :src="item.publisher_avatar || fallbackAvatar" :alt="item.publisher_username" />
+          </v-avatar>
+        </template>
+
+        <template #item.task_type="{ item }">
+          <v-chip :color="getTaskTypeColor(item.task_type)" size="small" class="status-chip">
+            {{ getTaskTypeName(item.task_type) }}
+          </v-chip>
+        </template>
+
+        <template #item.status="{ item }">
+          <v-chip :color="getStatusColor(item.status)" size="small" class="status-chip">
+            {{ getStatusName(item.status) }}
+          </v-chip>
+        </template>
+
+        <template #item.actions="{ item }">
+          <v-btn icon variant="text" size="small" color="primary" class="mr-2" @click="goToTaskDetail(item)">
+            <v-icon>mdi-eye</v-icon>
+          </v-btn>
+        </template>
+      </v-data-table>
+
+      <div class="d-flex align-center justify-center pa-4">
+        <div class="d-flex align-center">
+          <span class="text-caption mr-2">每页显示</span>
+          <v-select
+            v-model="pageSize"
+            :items="[5, 10, 20, 50, 100]"
+            density="compact"
+            variant="outlined"
+            hide-details
+            style="width: 100px"
+            @update:model-value="handlePageSizeChange"
+          />
+          <span class="text-caption ml-2">条</span>
+        </div>
+        <v-pagination
+          v-model="currentPage"
+          :length="totalPages"
+          :total-visible="7"
+          class="ml-4"
+          @update:model-value="handlePageChange"
+        />
+      </div>
+    </v-card>
+
     <v-dialog v-model="showFilterDialog" max-width="500">
       <v-card class="elevation-4">
-        <v-card-title class="text-h6 font-weight-bold">绛涢€夋潯浠?/v-card-title>
+        <v-card-title class="text-h6 font-weight-bold">筛选条件</v-card-title>
         <v-card-text>
-          <div class="d-flex flex-column gap-4">
+          <div class="d-flex flex-column ga-4">
             <v-select
               v-model="filters.status"
               :items="statusOptions"
-              label="浠诲姟鐘舵€?
+              label="任务状态"
               clearable
               hide-details
-            ></v-select>
-            
+            />
+
             <v-select
               v-model="filters.timeRange"
               :items="timeRangeOptions"
-              label="蹇€熼€夋嫨鏃堕棿鑼冨洿"
+              label="快速选择时间范围"
               clearable
               hide-details
               @update:model-value="handleTimeRangeChange"
-            ></v-select>
+            />
 
-            <div class="d-flex align-center gap-4">
+            <div class="d-flex align-center ga-4">
               <v-text-field
                 v-model="filters.startDate"
-                label="寮€濮嬫椂闂?
+                label="开始时间"
                 type="datetime-local"
                 hide-details
                 density="compact"
                 :error-messages="timeError"
                 @update:model-value="handleCustomTimeChange"
-              ></v-text-field>
+              />
               <v-text-field
                 v-model="filters.endDate"
-                label="缁撴潫鏃堕棿"
+                label="结束时间"
                 type="datetime-local"
                 hide-details
                 density="compact"
                 :error-messages="timeError"
                 @update:model-value="handleCustomTimeChange"
-              ></v-text-field>
+              />
             </div>
           </div>
         </v-card-text>
         <v-card-actions>
-          <v-spacer></v-spacer>
-          <v-btn color="grey" variant="text" @click="resetFilters">閲嶇疆</v-btn>
-          <v-btn color="primary" @click="applyFilters">搴旂敤</v-btn>
+          <v-spacer />
+          <v-btn color="grey" variant="text" @click="resetFilters">重置</v-btn>
+          <v-btn color="primary" @click="applyFilters">应用</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -175,13 +149,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import reviewerApi from '@/api/reviewer'
 import { useSnackbarStore } from '@/stores/snackbar'
-
-const router = useRouter()
-const snackbar = useSnackbarStore()
 
 interface Task {
   manual_review_id: number
@@ -189,33 +160,34 @@ interface Task {
   publisher_username: string
   publisher_avatar: string
   resource_count: number
-  task_type: string
-  status: string
   task_type?: string
+  status: string
 }
 
+const router = useRouter()
+const snackbar = useSnackbarStore()
+const fallbackAvatar = 'https://randomuser.me/api/portraits/lego/1.jpg'
+
 const headers = [
-  { title: '澶村儚', key: 'publisher_avatar', align: 'center', sortable: false },
-  { title: '鍑虹増绀?, key: 'publisher_username', align: 'start' },
-  { title: '鏉愭枡鏁伴噺', key: 'resource_count', align: 'start' },
-  { title: '鐘舵€?, key: 'status', align: 'center' },
-  { title: '鎻愪氦鏃堕棿', key: 'maual_review_time', align: 'center' },
-  { title: '鎿嶄綔', key: 'actions', align: 'center', sortable: false },
+  { title: '头像', key: 'publisher_avatar', align: 'center', sortable: false },
+  { title: '发布者', key: 'publisher_username', align: 'start' },
+  { title: '材料数量', key: 'resource_count', align: 'start' },
+  { title: '任务类型', key: 'task_type', align: 'center' },
+  { title: '状态', key: 'status', align: 'center' },
+  { title: '提交时间', key: 'manual_review_time', align: 'center' },
+  { title: '操作', key: 'actions', align: 'center', sortable: false }
 ] as const
 
-// 鍒嗛〉鐩稿叧
 const tasks = ref<Task[]>([])
 const loading = ref(false)
 const currentPage = ref(1)
 const pageSize = ref(10)
 const totalTasks = ref(0)
 const totalPages = ref(1)
-
-// 鎼滅储鐩稿叧
 const searchQuery = ref('')
-
-// 绛涢€夌浉鍏?
 const showFilterDialog = ref(false)
+const timeError = ref('')
+
 const filters = ref<{
   status: string | null
   timeRange: string | null
@@ -229,38 +201,28 @@ const filters = ref<{
 })
 
 const statusOptions = [
-  { title: '鏈畬鎴?, value: 'undo' },
-  { title: '宸插畬鎴?, value: 'completed' },
+  { title: '未完成', value: 'undo' },
+  { title: '已完成', value: 'completed' }
 ]
 
 const timeRangeOptions = [
-  { title: '鏈€杩戜竴澶?, value: '1d' },
-  { title: '鏈€杩戜竴鍛?, value: '7d' },
-  { title: '鏈€杩戜竴鏈?, value: '30d' },
-  { title: '鏈€杩戜笁鏈?, value: '90d' },
-  { title: '鏈€杩戜竴骞?, value: '365d' }
+  { title: '最近一天', value: '1d' },
+  { title: '最近一周', value: '7d' },
+  { title: '最近一月', value: '30d' },
+  { title: '最近三月', value: '90d' },
+  { title: '最近一年', value: '365d' }
 ]
 
 const getStatusColor = (status: string) => {
-  switch (status) {
-    case 'undo':
-      return 'error'
-    case 'completed':
-      return 'success'
-    default:
-      return 'grey'
-  }
+  if (status === 'undo') return 'error'
+  if (status === 'completed') return 'success'
+  return 'grey'
 }
 
 const getStatusName = (status: string) => {
-  switch (status) {
-    case 'undo':
-      return '鏈畬鎴?
-    case 'completed':
-      return '宸插畬鎴?
-    default:
-      return status
-  }
+  if (status === 'undo') return '未完成'
+  if (status === 'completed') return '已完成'
+  return status || '未知'
 }
 
 const getTaskTypeColor = (taskType?: string) => {
@@ -281,30 +243,22 @@ const getTaskTypeColor = (taskType?: string) => {
 const getTaskTypeName = (taskType?: string) => {
   switch (taskType) {
     case 'image':
-      return '鍥惧儚妫€娴?
+      return '图片检测'
     case 'paper_text':
-      return '璁烘枃妫€娴?
+      return '论文检测'
     case 'review_text':
-      return '璇勫妫€娴?
+      return 'Review检测'
     case 'multi_material':
-      return '澶氭潗鏂欐娴?
+      return '多材料检测'
     default:
-      return taskType || '鏈煡'
+      return taskType || '未知'
   }
-}
-
-const formatTime = (timestamp: string) => {
-  return timestamp // 鍚庣杩斿洖鐨勬椂闂存牸寮忓凡缁忔槸姝ｇ‘鐨勶紝鐩存帴鏄剧ず
 }
 
 const goToTaskDetail = (task: Task) => {
   router.push(`/task/detail/${task.manual_review_id}`)
 }
 
-// 鏃堕棿楠岃瘉鐩稿叧
-const timeError = ref('')
-
-// 澶勭悊蹇€熼€夋嫨鏃堕棿鑼冨洿鍙樺寲
 const handleTimeRangeChange = (value: string | null) => {
   if (value) {
     filters.value.startDate = null
@@ -313,26 +267,18 @@ const handleTimeRangeChange = (value: string | null) => {
   }
 }
 
-// 澶勭悊鑷畾涔夋椂闂村彉鍖?
 const handleCustomTimeChange = () => {
   filters.value.timeRange = null
-  
   if (!filters.value.startDate || !filters.value.endDate) {
-    timeError.value = '寮€濮嬫椂闂村拰缁撴潫鏃堕棿涓嶈兘涓虹┖'
+    timeError.value = ''
     return
   }
 
   const startTime = new Date(filters.value.startDate).getTime()
   const endTime = new Date(filters.value.endDate).getTime()
-  
-  if (startTime >= endTime) {
-    timeError.value = '寮€濮嬫椂闂村繀椤绘棭浜庣粨鏉熸椂闂?
-  } else {
-    timeError.value = ''
-  }
+  timeError.value = startTime >= endTime ? '开始时间必须早于结束时间' : ''
 }
 
-// 閲嶇疆绛涢€夋潯浠?
 const resetFilters = () => {
   filters.value = {
     status: null,
@@ -347,99 +293,19 @@ const resetFilters = () => {
   showFilterDialog.value = false
 }
 
-// 搴旂敤绛涢€夋潯浠?
 const applyFilters = () => {
-  if (timeError.value) {
-    return
-  }
-  
+  if (timeError.value) return
   currentPage.value = 1
   pageSize.value = 10
   fetchTasks(1, 10)
   showFilterDialog.value = false
 }
 
-// 澶勭悊鎼滅储
 const handleSearch = () => {
   currentPage.value = 1
-  pageSize.value = 10
-  fetchTasks(1, 10)
+  fetchTasks(1, pageSize.value)
 }
 
-// 浠庡悗绔幏鍙栦换鍔℃暟鎹?
-const fetchTasks = async (page: number, pageSize: number) => {
-  loading.value = true
-  try {
-    // 璁＄畻鏃堕棿绛涢€?
-    let startTimeFilter: string | undefined
-    let endTimeFilter: string | undefined
-    if (filters.value.timeRange) {
-      const now = Date.now()
-      const ranges: Record<string, number> = {
-        '1d': 24 * 60 * 60 * 1000,
-        '7d': 7 * 24 * 60 * 60 * 1000,
-        '30d': 30 * 24 * 60 * 60 * 1000,
-        '90d': 90 * 24 * 60 * 60 * 1000,
-        '365d': 365 * 24 * 60 * 60 * 1000
-      }
-      const rangeMs = ranges[filters.value.timeRange as keyof typeof ranges]
-      startTimeFilter = formatDateFilter(now - rangeMs)
-      endTimeFilter = formatDateFilter(now)
-    } else if (filters.value.startDate && filters.value.endDate) {
-      startTimeFilter = formatDateFilter(new Date(filters.value.startDate).getTime())
-      endTimeFilter = formatDateFilter(new Date(filters.value.endDate).getTime())
-    }
-
-    const params = {
-      page,
-      page_size: pageSize,
-      query: searchQuery.value || '',
-      status: filters.value.status || '',
-      start_time: startTimeFilter,
-      end_time: endTimeFilter
-    }
-    const response = await reviewerApi.getReviewerTasks(params)
-    const { results: taskList, current_page, total_pages, total_users } = response.data
-    
-    tasks.value = taskList.map((task: any) => {
-      const taskType = task.task_type || 'image'
-      const resourceCount = taskType.includes('text') ? (task.text_count || 0) : (task.image_count || 0)
-      return {
-      manual_review_id: task.manual_review_id,
-      manual_review_time: task.manual_review_time,
-      publisher_username: task.publisher_username,
-      publisher_avatar: 'http://122.9.45.122' + task.publisher_avatar || '',
-      resource_count: resourceCount,
-      task_type: taskType,
-      status: task.status
-      }
-    })
-    
-    currentPage.value = current_page
-    totalPages.value = total_pages
-    totalTasks.value = total_users
-  } catch (error) {
-    console.error('鑾峰彇浠诲姟鍒楄〃澶辫触:', error)
-    snackbar.showMessage('鑾峰彇浠诲姟鍒楄〃澶辫触', 'error')
-  } finally {
-    loading.value = false
-  }
-}
-
-// 澶勭悊椤电爜鍙樺寲
-const handlePageChange = (page: number) => {
-  currentPage.value = page
-  fetchTasks(page, pageSize.value)
-}
-
-// 澶勭悊姣忛〉鏁伴噺鍙樺寲
-const handlePageSizeChange = (size: number) => {
-  pageSize.value = size
-  currentPage.value = 1
-  fetchTasks(1, size)
-}
-
-// 鏃堕棿鏍煎紡鍖栵紝鐢ㄤ簬绛涢€夋潯浠?
 const formatDateFilter = (timestamp: number) => {
   const date = new Date(timestamp)
   const year = date.getFullYear()
@@ -451,7 +317,87 @@ const formatDateFilter = (timestamp: number) => {
   return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`
 }
 
-// 鍒濆鍖?
+const buildTimeFilters = () => {
+  if (filters.value.timeRange) {
+    const now = Date.now()
+    const ranges: Record<string, number> = {
+      '1d': 24 * 60 * 60 * 1000,
+      '7d': 7 * 24 * 60 * 60 * 1000,
+      '30d': 30 * 24 * 60 * 60 * 1000,
+      '90d': 90 * 24 * 60 * 60 * 1000,
+      '365d': 365 * 24 * 60 * 60 * 1000
+    }
+    const rangeMs = ranges[filters.value.timeRange]
+    return {
+      start_time: formatDateFilter(now - rangeMs),
+      end_time: formatDateFilter(now)
+    }
+  }
+
+  if (filters.value.startDate && filters.value.endDate) {
+    return {
+      start_time: formatDateFilter(new Date(filters.value.startDate).getTime()),
+      end_time: formatDateFilter(new Date(filters.value.endDate).getTime())
+    }
+  }
+
+  return {}
+}
+
+const normalizeAvatar = (avatar?: string) => {
+  if (!avatar) return ''
+  if (/^https?:\/\//i.test(avatar)) return avatar
+  return `http://122.9.45.122${avatar}`
+}
+
+const fetchTasks = async (page: number, size: number) => {
+  loading.value = true
+  try {
+    const response = await reviewerApi.getReviewerTasks({
+      page,
+      page_size: size,
+      query: searchQuery.value || '',
+      status: filters.value.status || '',
+      ...buildTimeFilters()
+    })
+    const { results = [], current_page = page, total_pages = 1, total_users = 0 } = response.data || {}
+
+    tasks.value = results.map((task: any) => {
+      const taskType = task.task_type || 'image'
+      const resourceCount = taskType.includes('text') ? (task.text_count || 0) : (task.image_count || 0)
+      return {
+        manual_review_id: task.manual_review_id,
+        manual_review_time: task.manual_review_time,
+        publisher_username: task.publisher_username,
+        publisher_avatar: normalizeAvatar(task.publisher_avatar),
+        resource_count: resourceCount,
+        task_type: taskType,
+        status: task.status
+      }
+    })
+
+    currentPage.value = current_page
+    totalPages.value = total_pages
+    totalTasks.value = total_users
+  } catch (error) {
+    console.error('获取任务列表失败:', error)
+    snackbar.showMessage('获取任务列表失败', 'error')
+  } finally {
+    loading.value = false
+  }
+}
+
+const handlePageChange = (page: number) => {
+  currentPage.value = page
+  fetchTasks(page, pageSize.value)
+}
+
+const handlePageSizeChange = (size: number) => {
+  pageSize.value = size
+  currentPage.value = 1
+  fetchTasks(1, size)
+}
+
 onMounted(() => {
   fetchTasks(currentPage.value, pageSize.value)
 })
@@ -459,7 +405,7 @@ onMounted(() => {
 
 <style scoped>
 .v-card {
-  border-radius: 12px;
+  border-radius: 8px;
   overflow: hidden;
 }
 
@@ -481,12 +427,8 @@ onMounted(() => {
 }
 
 :deep(.v-data-table) {
-  border-radius: 12px;
+  border-radius: 8px;
   width: 100%;
-}
-
-:deep(.v-data-table-header) {
-  background-color: rgb(var(--v-theme-surface-variant));
 }
 
 :deep(.v-data-table-header th) {
@@ -504,27 +446,12 @@ onMounted(() => {
   background-color: rgba(var(--v-theme-on-surface), 0.04);
 }
 
-:deep(.v-chip) {
-  font-weight: 500;
-}
-
 .search-input {
   max-width: 400px;
 }
 
-:deep(.v-text-field .v-field__input) {
-  min-height: 40px;
-}
-
-:deep(.v-btn--variant-outlined) {
-  border-color: rgb(var(--v-theme-outline));
-}
-
+:deep(.v-text-field .v-field__input),
 :deep(.v-select .v-field__input) {
   min-height: 40px;
-}
-
-:deep(.v-select .v-field__append-inner) {
-  padding-top: 0;
 }
 </style>

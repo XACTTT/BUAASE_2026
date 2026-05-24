@@ -137,7 +137,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import uploadApi from '@/api/upload'
 import { useSnackbarStore } from '@/stores/snackbar'
-import { resolveImageUrl, buildOriginalDownloadUrl } from '@/utils/preview-url'
+import { appendPreviewToken, resolveApiAssetUrl, buildOriginalDownloadUrl } from '@/utils/preview-url'
 
 interface ExtractedContent {
   content_id: number
@@ -269,7 +269,7 @@ const selectPreviewFile = (item: PreviewFileItem) => {
   activePreviewFileId.value = item.file_id
   previewFileName.value = item.file_name
   previewFileExt.value = item.file_ext
-  previewUrl.value = item.preview_url
+  previewUrl.value = appendPreviewToken(item.preview_url)
   previewCanInline.value = item.can_inline
 }
 
@@ -320,7 +320,7 @@ const loadContents = async () => {
           file_id: Number(response.file_id || fileId),
           file_name: String(response.file_name || `${props.moduleLabel}文件`),
           file_ext: String(response.file_ext || ''),
-          preview_url: resolveImageUrl(String(response.preview_url)),
+          preview_url: resolveApiAssetUrl(String(response.preview_url)),
           can_inline: Boolean(response.can_inline)
         })
       }

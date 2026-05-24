@@ -73,14 +73,14 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        // target: 'http://82.156.232.106',
+        // Keep this in sync with VITE_API_URL in .env.
+        target: 'http://82.156.232.106',
         // target: 'http://localhost:8080',
-        target: 'http://116.63.14.7',
         changeOrigin: true,  
         // rewrite: (path) => path.replace(/^\/api/, ''),
       },
       '/media': {
-        target: 'http://116.63.14.7',
+        target: 'http://82.156.232.106',
         changeOrigin: true,
       },
     },
