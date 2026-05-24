@@ -1,9 +1,14 @@
 import json
+import logging
+import zipfile
+from pathlib import Path
 
+import numpy as np
 from django.db import transaction
 from django.utils import timezone
 
 from core.models import (
+    DetectionResult,
     DetectionTask,
     FileManagement,
     ImageUpload,
@@ -11,11 +16,14 @@ from core.models import (
     OrganizationModelConfig,
     ReviewTextResource,
     StructuredDetectionResult,
+    SubDetectionResult,
 )
 from core.services.content_extraction_service import ContentExtractionService
 from core.services.material_validation_service import MaterialValidationService
 from core.services.bert_text_ai_bridge import BertTextAIDetectionBridge
 from core.services.llm_service import build_chat_completion_payload, call_openai_compatible_chat
+
+logger = logging.getLogger(__name__)
 
 
 STAGE_PROMPT_TEMPLATES = {
@@ -471,9 +479,10 @@ class StructuredDetectionService:
             detection_map = {}
             if image_ids:
                 for dr in DetectionResult.objects.filter(
-                    image_upload_id__in=image_ids, status='completed'
-                ):
-                    detection_map[dr.image_upload_id] = dr
+                    image_upload_id__in=image_ids
+                ).order_by('-id'):
+                    if dr.image_upload_id not in detection_map:
+                        detection_map[dr.image_upload_id] = dr
 
             image_items = []
             for img in images:
@@ -486,6 +495,7 @@ class StructuredDetectionService:
                     item['result_id'] = dr.id
                     item['is_fake'] = dr.is_fake
                     item['confidence'] = float(dr.confidence_score) if dr.confidence_score else 0
+                    item['status'] = dr.status
                 image_items.append(item)
 
             material_cards.append({
@@ -691,6 +701,171 @@ class StructuredDetectionService:
         task.save(update_fields=['status', 'completion_time', 'failure_reason'])
 
     @staticmethod
+    def _run_image_detection(task: DetectionTask, snapshot: dict):
+        """Inline image forgery detection for multi-material tasks.
+
+        Reuses the same GPU detection pipeline as standalone image detection:
+        build zip → call GPU server → process results into DetectionResult/SubDetectionResult.
+        """
+        from core.call_figure_detection import get_result, reconnect
+        from core.utils.image_saver import save_ndarray_as_image
+        from core.utils.fanyi import fanyi_text
+        from core.tasks_new import _extract_single_result
+        from core.tasks_new import send_task_progress_update
+
+        images = snapshot.get('images', [])
+        if not images:
+            return []
+
+        image_ids = [img.get('image_id') for img in images if img.get('image_id')]
+        if not image_ids:
+            return []
+
+        # 1. Create DetectionResult records in pending status
+        image_objs = {
+            iu.id: iu
+            for iu in ImageUpload.objects.filter(id__in=image_ids)
+        }
+        detection_results = []
+        for img_id in image_ids:
+            iu = image_objs.get(img_id)
+            if not iu:
+                continue
+            dr = DetectionResult.objects.create(
+                detection_task=task,
+                image_upload=iu,
+                status='pending',
+            )
+            detection_results.append(dr)
+
+        if not detection_results:
+            return []
+
+        send_task_progress_update(
+            task_id=task.id, status='in_progress', progress=10,
+            message=f'正在准备 {len(detection_results)} 张图片的检测数据...'
+        )
+
+        # 2. Build img.zip and data.json
+        import tempfile
+        batch_dir = Path(tempfile.mkdtemp(prefix='multi_img_'))
+        zip_path = batch_dir / 'img.zip'
+        data_path = batch_dir / 'data.json'
+
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for dr in sorted(detection_results, key=lambda d: d.image_upload.id):
+                src = dr.image_upload.image.path
+                arcname = f"{int(dr.image_upload.id):08d}{Path(src).suffix}"
+                zf.write(src, arcname=arcname)
+
+        with open(data_path, 'w', encoding='utf-8') as f:
+            json.dump({
+                'cmd_block_size': task.cmd_block_size or 64,
+                'urn_k': task.urn_k or 0.3,
+                'if_use_llm': task.if_use_llm if task.if_use_llm is not None else False,
+            }, f, ensure_ascii=False, indent=4)
+
+        send_task_progress_update(
+            task_id=task.id, status='in_progress', progress=15,
+            message='正在连接AI服务器进行图片检测...'
+        )
+
+        # 3. Call GPU server (with retry)
+        results = get_result(zip_path, data_path)
+        retry_count = 0
+        while (results is None or len(results[1][1]) != len(detection_results)) and retry_count < 3:
+            reconnect()
+            retry_count += 1
+            results = get_result(zip_path, data_path)
+
+        if results is None:
+            logger.warning('Image detection GPU server unreachable for task %s', task.id)
+            for dr in detection_results:
+                dr.status = 'failed'
+                dr.save(update_fields=['status'])
+            try:
+                zip_path.unlink(missing_ok=True)
+                data_path.unlink(missing_ok=True)
+                batch_dir.rmdir()
+            except OSError:
+                pass
+            return detection_results
+
+        send_task_progress_update(
+            task_id=task.id, status='in_progress', progress=40,
+            message='图片AI检测完成，正在处理检测结果...'
+        )
+
+        # 4. Process each result (inline, same logic as process_single_result)
+        for idx, dr in enumerate(detection_results):
+            try:
+                one_result = _extract_single_result(results, idx)
+
+                ela_np = np.array(one_result['ela'], dtype=np.float32)
+                llm_img_np = None
+                if one_result.get('llm_img') is not None:
+                    llm_img_np = np.array(one_result['llm_img'], dtype=np.float32)
+
+                ela_path = save_ndarray_as_image(ela_np, subdir='ela_results', prefix=f'ela_{dr.id}')
+                llm_image_path = None
+                if llm_img_np is not None:
+                    llm_image_path = save_ndarray_as_image(llm_img_np, subdir='llm_results', prefix=f'llm_{dr.id}')
+
+                dr.is_fake = one_result['overall_is_fake']
+                dr.confidence_score = one_result['overall_confidence']
+                dr.llm_judgment = fanyi_text(one_result['llm_text'])
+                dr.ela_image = ela_path
+                if llm_image_path:
+                    dr.llm_image = llm_image_path
+                dr.exif_photoshop = one_result['exif_flags']['photoshop']
+                dr.exif_time_modified = one_result['exif_flags']['time_modified']
+                dr.detection_time = timezone.now()
+                dr.status = 'completed'
+                dr.save(update_fields=[
+                    'is_fake', 'confidence_score', 'llm_judgment', 'ela_image',
+                    'llm_image', 'exif_photoshop', 'exif_time_modified',
+                    'detection_time', 'status',
+                ])
+
+                # Sub-method results
+                subs = []
+                for sub in one_result['sub_method_results']:
+                    mask_path = save_ndarray_as_image(
+                        np.array(sub['mask']),
+                        subdir='masks',
+                        prefix=f"mask_{sub['method']}_{dr.id}",
+                    )
+                    subs.append(SubDetectionResult(
+                        detection_result=dr,
+                        method=sub['method'],
+                        probability=sub['prob'],
+                        mask_image=mask_path,
+                        mask_matrix=sub['mask'],
+                    ))
+                SubDetectionResult.objects.bulk_create(subs, ignore_conflicts=True)
+
+                # Update ImageUpload flags
+                iu = dr.image_upload
+                iu.isFake = dr.is_fake
+                iu.isDetect = True
+                iu.save(update_fields=['isFake', 'isDetect'])
+
+            except Exception as exc:
+                logger.exception('Failed to process image detection result for DR %s', dr.id, exc_info=exc)
+                dr.status = 'failed'
+                dr.save(update_fields=['status'])
+
+        # Cleanup temp files
+        try:
+            zip_path.unlink(missing_ok=True)
+            data_path.unlink(missing_ok=True)
+            batch_dir.rmdir()
+        except OSError:
+            pass
+
+        return detection_results
+
+    @staticmethod
     def execute_task(task: DetectionTask):
         snapshot = StructuredDetectionService.build_input_snapshot(task)
 
@@ -698,6 +873,11 @@ class StructuredDetectionService:
             validation = snapshot.get('validation', {})
             if not validation.get('valid'):
                 raise ValueError(validation.get('message') or '多材料校验失败')
+
+            # Run image detection for multi-material tasks (before text analysis)
+            images = snapshot.get('images', [])
+            if images:
+                StructuredDetectionService._run_image_detection(task, snapshot)
 
         text_items = StructuredDetectionService._extract_text_items_from_snapshot(snapshot, task.detect_type)
         if not text_items:

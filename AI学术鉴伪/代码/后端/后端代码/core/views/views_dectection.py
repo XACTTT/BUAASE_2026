@@ -1053,7 +1053,7 @@ def detection_result_detail(request, result_id):
     want_matrix = request.query_params.get("include_matrix", "0").lower() in ("1", "true", "yes")
 
     # -------- 基础信息 ---------------------------------------------------
-    data = {"result_id": dr.id}
+    data = {"result_id": dr.id, "status": dr.status}
 
     def add(name, value):
         if name in requested:
@@ -1089,23 +1089,23 @@ def detection_result_detail(request, result_id):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def detection_result_by_image(request, image_id):
-    # 通过image_id获取对应的DetectionResult
-    dr = get_object_or_404(
-        DetectionResult,
+    # 通过image_id获取对应的DetectionResult（取最新一条，避免多任务重复时报错）
+    dr = DetectionResult.objects.filter(
         image_upload__id=image_id,
-        # image_upload__file_management__user=request.user
-    )
+    ).order_by('-id').first()
+    if dr is None:
+        return Response({"message": "Detection result not found for this image"}, status=404)
 
     # -------- 解析 fields & include_matrix ------------------------------
     raw_fields = request.query_params.get("fields")
     requested = ({f.strip() for f in raw_fields.split(",")} if raw_fields
-                 else {"overall", "llm", "ela_image", "exif", "timestamps",
-                       "image", "sub_methods"})
+                 else {"overall", "llm", "ela_image", "llm_image", "exif",
+                       "timestamps", "image", "sub_methods"})
 
     want_matrix = request.query_params.get("include_matrix", "0").lower() in ("1", "true", "yes")
 
     # -------- 基础信息 ---------------------------------------------------
-    data = {"result_id": dr.id}
+    data = {"result_id": dr.id, "status": dr.status}
 
     def add(name, value):
         if name in requested:
@@ -1116,6 +1116,7 @@ def detection_result_by_image(request, image_id):
         "confidence_score": dr.confidence_score,
     })
     add("llm", dr.llm_judgment)
+    add("llm_image", request.build_absolute_uri(f"/api/preview/detection/{dr.id}/?image_type=llm"))
     add("ela_image", request.build_absolute_uri(f"/api/preview/detection/{dr.id}/?image_type=ela"))
     add("exif", {
         "photoshop_edited": dr.exif_photoshop,
@@ -1169,6 +1170,28 @@ def structured_task_result(request, task_id):
         total_results = task.detection_results.count()
         completed_results = task.detection_results.filter(status='completed').count()
         fake_results = task.detection_results.filter(is_fake=True).count()
+
+        fake_images = []
+        normal_images = []
+        for dr in task.detection_results.select_related('image_upload'):
+            if dr.status != 'completed':
+                continue
+            entry = {
+                'result_id': dr.id,
+                'image_id': dr.image_upload.id,
+                'timestamp': dr.detection_time,
+            }
+            if request:
+                entry['image_url'] = request.build_absolute_uri(f'/api/preview/image/{dr.image_upload.id}/')
+            if dr.is_fake is True:
+                fake_images.append(entry)
+            else:
+                normal_images.append(entry)
+
+        fake_count = len(fake_images)
+        total_completed = len(fake_images) + len(normal_images)
+        confidence_score = fake_count / total_completed if total_completed > 0 else None
+
         return Response(
             {
                 'task_id': task.id,
@@ -1176,10 +1199,16 @@ def structured_task_result(request, task_id):
                 'detect_type': task.detect_type,
                 'status': task.status,
                 'task_name': task.task_name,
+                'confidence_score': confidence_score,
+                'overall_is_fake': fake_count > 0 if total_completed > 0 else None,
                 'material_summary': {
                     'image_count': total_results,
                     'completed_count': completed_results,
                     'fake_count': fake_results,
+                },
+                'result': {
+                    'fake_images': fake_images,
+                    'normal_images': normal_images,
                 },
             }
         )

@@ -213,6 +213,10 @@ const imageItems = computed(() => {
   return imageCard.value.images || imageCard.value.results || []
 })
 
+const imageFakeCount = computed(() => imageItems.value.filter((img: any) => img.is_fake).length)
+const imageNormalCount = computed(() => imageItems.value.filter((img: any) => img.result_id && !img.is_fake).length)
+const imageDetectedCount = computed(() => imageItems.value.filter((img: any) => img.result_id).length)
+
 // --- Image detail dialog ---
 interface ImageItem {
   image_id: number
@@ -235,6 +239,7 @@ const selectedImage = ref<ImageItem | null>(null)
 const imageDetailLoading = ref(false)
 const imageDetailError = ref('')
 const hasDetectionResult = ref(false)
+const detectionStatus = ref('')
 const activeTab = ref('analysis')
 const llm = ref('')
 const llm_image = ref('')
@@ -283,6 +288,7 @@ const fetchImageDetection = async (imageId: number) => {
   try {
     const response = (await publisher.getImageDetectionByImageId(imageId)).data
     hasDetectionResult.value = true
+    detectionStatus.value = response.status || ''
     llm.value = response.llm || ''
     llm_image.value = response.llm_image || ''
     ela.value = response.ela_image || ''
@@ -307,6 +313,7 @@ const fetchImageDetection = async (imageId: number) => {
     llm_image.value = ''
     ela.value = ''
     urn.value = []
+    detectionStatus.value = ''
   } finally {
     imageDetailLoading.value = false
   }
@@ -340,6 +347,7 @@ const toggleImageDetailClose = () => {
   activeTab.value = 'analysis'
   imageDetailError.value = ''
   hasDetectionResult.value = false
+  detectionStatus.value = ''
 }
 
 const getSelectedImageUrl = (img: ImageItem | null) => {
@@ -1215,7 +1223,12 @@ onMounted(async () => {
               <span class="text-h6">图片分析</span>
             </v-card-title>
             <v-card-text class="pa-6">
-              <div v-if="imageCard && imageCard.summary" class="text-body-1 mb-4">{{ imageCard.summary }}</div>
+              <div v-if="imageCard && imageCard.summary" class="text-body-1 mb-4">
+                {{ imageCard.summary }}
+                <template v-if="imageDetectedCount > 0">
+                  （已检测 {{ imageDetectedCount }} 张：<span class="text-error">{{ imageFakeCount }} 疑似造假</span>，<span class="text-success">{{ imageNormalCount }} 正常</span>）
+                </template>
+              </div>
 
               <!-- Image grid -->
               <div v-if="imageItems.length > 0" class="image-grid-container">
@@ -1227,6 +1240,7 @@ onMounted(async () => {
                     elevation="2"
                     rounded="lg"
                     class="overflow-hidden cursor-pointer"
+                    :class="{ 'image-card-fake': img.is_fake, 'image-card-normal': img.result_id && !img.is_fake }"
                     hover
                     @click="viewImageDetail(img)"
                   >
@@ -1455,7 +1469,7 @@ onMounted(async () => {
               />
             </div>
             <v-alert type="info" variant="tonal" class="mt-4 text-left" density="compact">
-              多材料检测仅分析文本内容，该图片未单独进行伪造检测。如需图片伪造检测，请单独提交图片检测任务。
+              该图片暂无伪造检测结果，可能检测过程中未成功完成。
             </v-alert>
           </div>
 
@@ -1467,6 +1481,12 @@ onMounted(async () => {
 
           <!-- Full detection detail -->
           <div v-else>
+            <v-alert v-if="detectionStatus === 'failed'" type="warning" variant="tonal" class="mb-4" density="compact">
+              该图片的伪造检测未成功完成，以下结果可能不完整。
+            </v-alert>
+            <v-alert v-else-if="detectionStatus === 'in_progress'" type="info" variant="tonal" class="mb-4" density="compact">
+              该图片的伪造检测仍在进行中，以下结果可能不完整。
+            </v-alert>
             <v-row>
               <!-- Left: image + overlay -->
               <v-col cols="12" md="6" class="pr-md-6">
@@ -1764,6 +1784,14 @@ onMounted(async () => {
 /* --- Image section --- */
 .image-grid-container {
   width: 100%;
+}
+
+.image-card-fake {
+  border-left: 4px solid rgb(var(--v-theme-error)) !important;
+}
+
+.image-card-normal {
+  border-left: 4px solid rgb(var(--v-theme-success)) !important;
 }
 
 .image-verdict-overlay {
