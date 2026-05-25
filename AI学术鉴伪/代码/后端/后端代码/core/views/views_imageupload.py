@@ -6,7 +6,7 @@ import zipfile
 from django.core.files.storage import FileSystemStorage
 from django.core.paginator import Paginator, EmptyPage
 from django.db.models import Q
-from ..models import FileManagement, ImageUpload, User, ResourceContainer, ManualReview, DetectionResult, SubDetectionResult
+from ..models import FileManagement, ImageUpload, User, ResourceContainer, ManualReview
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated, IsAdminUser, AllowAny
 from rest_framework.response import Response
@@ -35,20 +35,11 @@ def upload_file(request):
     container_id = request.data.get('container_id')
     resource_role = request.data.get('resource_role', 'material_other')
     batch_id = request.data.get('batch_id')
-    detect_type = request.data.get('detect_type', 'image')
 
     if container_id:
         container = ResourceContainer.objects.filter(id=container_id).first()
         if not container:
             return Response({'error_code': 'CONTAINER_NOT_FOUND', 'message': 'container not found'}, status=404)
-    elif detect_type == 'multi':
-        from django.utils import timezone
-        container = ResourceContainer.objects.create(
-            organization=user.organization,
-            owner=user,
-            container_type='multi_material',
-            title=f'多材料检测 - {timezone.now().strftime("%Y%m%d%H%M%S")}',
-        )
 
     upload_results = []
     file_types = request.data.getlist('file_type')
@@ -106,8 +97,7 @@ import os
 import mimetypes
 import threading
 from django.conf import settings
-from django.http import FileResponse, HttpResponse, StreamingHttpResponse
-from django.utils.http import content_disposition_header
+from django.http import FileResponse
 from django.views.decorators.clickjacking import xframe_options_exempt
 import fitz
 
@@ -332,103 +322,19 @@ def get_extracted_images(request, file_id):
         return Response({"message": "File not found"}, status=404)
 
 
-def _normalize_preview_token(raw_token):
-    if not raw_token:
-        return None
-
-    token = str(raw_token).strip().strip('"').strip("'")
-    for prefix in ('Bearer ', 'JWT ', 'Token '):
-        if token.lower().startswith(prefix.lower()):
-            token = token[len(prefix):].strip()
-            break
-    return token or None
-
-
 def _resolve_auth_user(request):
-    """兼容 Header 与 iframe query token 两种鉴权来源。"""
+    """兼容 Header 与 query token 两种鉴权来源。"""
     auth_user = request.user if getattr(request.user, 'is_authenticated', False) else None
-    if auth_user:
-        return auth_user
-
-    auth_header = request.META.get('HTTP_AUTHORIZATION') or request.headers.get('Authorization')
-    raw_token = (
-        request.query_params.get('token')
-        or request.query_params.get('access')
-        or request.query_params.get('access_token')
-        or auth_header
-    )
-    token = _normalize_preview_token(raw_token)
-    if not token:
-        return None
-
-    try:
-        jwt_auth = JWTAuthentication()
-        validated_token = jwt_auth.get_validated_token(token)
-        return jwt_auth.get_user(validated_token)
-    except Exception:
-        return None
-
-
-def _range_file_iterator(file_obj, start, length, chunk_size=8192):
-    file_obj.seek(start)
-    remaining = length
-    try:
-        while remaining > 0:
-            data = file_obj.read(min(chunk_size, remaining))
-            if not data:
-                break
-            remaining -= len(data)
-            yield data
-    finally:
-        file_obj.close()
-
-
-def _file_preview_response(request, full_path, content_type, filename, force_download=False):
-    file_size = os.path.getsize(full_path)
-    range_header = request.META.get('HTTP_RANGE', '').strip()
-
-    if force_download or not range_header:
-        response = FileResponse(
-            open(full_path, 'rb'),
-            content_type=content_type,
-            as_attachment=force_download,
-            filename=filename,
-        )
-        response['Accept-Ranges'] = 'bytes'
-        response['Content-Length'] = str(file_size)
-        return response
-
-    if not range_header.startswith('bytes='):
-        return HttpResponse(status=416, headers={'Content-Range': f'bytes */{file_size}'})
-
-    byte_range = range_header.removeprefix('bytes=').split(',', 1)[0].strip()
-    start_text, _, end_text = byte_range.partition('-')
-    try:
-        if start_text:
-            start = int(start_text)
-            end = int(end_text) if end_text else file_size - 1
-        else:
-            suffix_length = int(end_text)
-            start = max(file_size - suffix_length, 0)
-            end = file_size - 1
-    except (TypeError, ValueError):
-        return HttpResponse(status=416, headers={'Content-Range': f'bytes */{file_size}'})
-
-    if start < 0 or end < start or start >= file_size:
-        return HttpResponse(status=416, headers={'Content-Range': f'bytes */{file_size}'})
-
-    end = min(end, file_size - 1)
-    length = end - start + 1
-    response = StreamingHttpResponse(
-        _range_file_iterator(open(full_path, 'rb'), start, length),
-        status=206,
-        content_type=content_type,
-    )
-    response['Accept-Ranges'] = 'bytes'
-    response['Content-Length'] = str(length)
-    response['Content-Range'] = f'bytes {start}-{end}/{file_size}'
-    response['Content-Disposition'] = content_disposition_header(False, filename)
-    return response
+    if not auth_user:
+        raw_token = request.query_params.get('token')
+        if raw_token:
+            try:
+                jwt_auth = JWTAuthentication()
+                validated_token = jwt_auth.get_validated_token(raw_token)
+                auth_user = jwt_auth.get_user(validated_token)
+            except Exception:
+                auth_user = None
+    return auth_user
 
 
 @api_view(['GET'])
@@ -443,10 +349,10 @@ def preview_resource(request, resource_type, resource_id):
 
     if resource_type == 'image':
         try:
-            qs = ImageUpload.objects.select_related('file_management')
-            if not auth_user.is_staff:
-                qs = qs.filter(file_management__user=auth_user)
-            image = qs.get(id=resource_id)
+            image = ImageUpload.objects.select_related('file_management').get(
+                id=resource_id,
+                file_management__user=auth_user,
+            )
         except ImageUpload.DoesNotExist:
             return Response({"message": "Image not found"}, status=404)
 
@@ -466,10 +372,7 @@ def preview_resource(request, resource_type, resource_id):
     if resource_type == 'file':
         file_management = None
         try:
-            qs = FileManagement.objects.all()
-            if not auth_user.is_staff:
-                qs = qs.filter(user=auth_user)
-            file_management = qs.get(id=resource_id)
+            file_management = FileManagement.objects.get(id=resource_id, user=auth_user)
         except FileManagement.DoesNotExist:
             file_management = None
 
@@ -524,59 +427,12 @@ def preview_resource(request, resource_type, resource_id):
         guessed_type, _ = mimetypes.guess_type(full_path)
         content_type = guessed_type or file_management.mime_type or 'application/octet-stream'
         force_download = str(request.query_params.get('download', '')).lower() in ('1', 'true', 'yes')
-        return _file_preview_response(
-            request=request,
-            full_path=full_path,
+        return FileResponse(
+            open(full_path, 'rb'),
             content_type=content_type,
-            filename=file_management.file_name or os.path.basename(full_path),
-            force_download=force_download,
+            as_attachment=force_download,
+            filename=file_management.file_name,
         )
-
-    if resource_type == 'detection':
-        try:
-            dr = DetectionResult.objects.select_related('image_upload').get(id=resource_id)
-        except DetectionResult.DoesNotExist:
-            return Response({"message": "Detection result not found"}, status=404)
-
-        image_type = request.query_params.get('image_type')
-        if image_type == 'ela':
-            field = dr.ela_image
-        elif image_type == 'llm':
-            field = dr.llm_image
-        else:
-            field = dr.image_upload.image
-
-        if not field or not field.name:
-            return Response({"message": "Image file missing"}, status=404)
-
-        try:
-            image_path = field.path
-        except Exception:
-            return Response({"message": "Image path unavailable"}, status=404)
-
-        if not os.path.exists(image_path):
-            return Response({"message": "Image file not found on disk"}, status=404)
-
-        return FileResponse(open(image_path, 'rb'), content_type='image/*', as_attachment=False)
-
-    if resource_type == 'sub_result':
-        try:
-            sub = SubDetectionResult.objects.get(id=resource_id)
-        except SubDetectionResult.DoesNotExist:
-            return Response({"message": "Sub detection result not found"}, status=404)
-
-        if not sub.mask_image or not sub.mask_image.name:
-            return Response({"message": "Mask image file missing"}, status=404)
-
-        try:
-            image_path = sub.mask_image.path
-        except Exception:
-            return Response({"message": "Mask image path unavailable"}, status=404)
-
-        if not os.path.exists(image_path):
-            return Response({"message": "Mask image file not found on disk"}, status=404)
-
-        return FileResponse(open(image_path, 'rb'), content_type='image/*', as_attachment=False)
 
     return Response({"message": "Unsupported preview resource type"}, status=400)
 

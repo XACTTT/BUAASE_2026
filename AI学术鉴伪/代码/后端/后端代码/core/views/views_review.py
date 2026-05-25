@@ -133,6 +133,29 @@ def create_review_task_with_admin_check(request):
                 continue
         return normalized
 
+    def _to_str_list(raw_value):
+        if raw_value is None:
+            return []
+        if isinstance(raw_value, (list, tuple)):
+            values = raw_value
+        elif isinstance(raw_value, str):
+            stripped = raw_value.strip()
+            if not stripped:
+                return []
+            if stripped.startswith('[') and stripped.endswith(']'):
+                try:
+                    parsed = json.loads(stripped)
+                    values = parsed if isinstance(parsed, list) else [parsed]
+                except json.JSONDecodeError:
+                    values = [item for item in stripped.split(',') if item.strip()]
+            elif ',' in stripped:
+                values = [item for item in stripped.split(',') if item.strip()]
+            else:
+                values = [stripped]
+        else:
+            values = [raw_value]
+        return [str(item).strip() for item in values if str(item).strip()]
+
     image_ids = []
     if hasattr(request.data, 'getlist'):
         image_ids.extend(_to_int_list(request.data.getlist('image_ids')))
@@ -153,22 +176,40 @@ def create_review_task_with_admin_check(request):
     file_ids.extend(_to_int_list(request.data.get('file_id')))
     file_ids = sorted(set(file_ids))
 
+    selected_section_ids = []
+    if hasattr(request.data, 'getlist'):
+        selected_section_ids.extend(_to_str_list(request.data.getlist('selected_section_ids')))
+    selected_section_ids.extend(_to_str_list(request.data.get('selected_section_ids')))
+    selected_section_ids = list(dict.fromkeys(selected_section_ids))
+
     container_id = request.data.get('container_id')
     task_id = request.data.get('task_id')
     task_type = request.data.get('task_type') or 'paper_text'
+    review_type = str(request.data.get('review_type') or '').strip().lower()
+    if review_type in ('text_only', 'paper', 'review'):
+        review_type = 'text'
+    elif review_type == 'image_only':
+        review_type = 'image'
+    allow_images = review_type != 'text'
+    allow_texts = review_type != 'image'
+    if not allow_images:
+        image_ids = []
+    if not allow_texts:
+        text_ids = []
+        file_ids = []
     task_obj = None
 
-    if task_id is not None and not container_id and not file_ids:
+    if task_id is not None:
         try:
             task_obj = DetectionTask.objects.get(id=int(task_id), user=request.user)
         except (DetectionTask.DoesNotExist, ValueError, TypeError):
             task_obj = None
 
         if task_obj:
-            if task_obj.container_id:
+            if task_obj.container_id and not container_id:
                 container_id = task_obj.container_id
-            if not file_ids:
-                extra_file_ids = task_obj.extra_payload.get('file_ids', [])
+            if allow_texts and not file_ids:
+                extra_file_ids = (task_obj.extra_payload or {}).get('file_ids', [])
                 if isinstance(extra_file_ids, list):
                     for item in extra_file_ids:
                         try:
@@ -180,7 +221,7 @@ def create_review_task_with_admin_check(request):
     reason = request.data.get('reason', 'No reason provided')
 
     # 如果提供了 task_id，自动从 DetectionTask 中解析 image_ids 和 text_ids
-    if task_id and not image_ids and not text_ids:
+    if task_id and ((allow_images and not image_ids) or (allow_texts and not selected_section_ids and not text_ids and not file_ids)):
         try:
             det_task = DetectionTask.objects.get(id=int(task_id), user=request.user)
         except DetectionTask.DoesNotExist:
@@ -191,27 +232,29 @@ def create_review_task_with_admin_check(request):
         task_obj = det_task
 
         # --- 解析 image_ids：ImageUpload FK → DetectionResult FK → container ---
-        image_ids = list(det_task.image_uploads.values_list('id', flat=True))
-        if not image_ids:
-            image_ids = list(
-                DetectionResult.objects.filter(detection_task=det_task)
-                .values_list('image_upload_id', flat=True)
-            )
-        if not image_ids and det_task.container:
-            image_ids = list(det_task.container.images.values_list('id', flat=True))
+        if allow_images and not image_ids:
+            image_ids = list(det_task.image_uploads.values_list('id', flat=True))
+            if not image_ids:
+                image_ids = list(
+                    DetectionResult.objects.filter(detection_task=det_task)
+                    .values_list('image_upload_id', flat=True)
+                )
+            if not image_ids and det_task.container:
+                image_ids = list(det_task.container.images.values_list('id', flat=True))
 
         # --- 解析 text_ids：TextDetectionResult → extra_payload → container ---
-        text_ids = list(
-            TextDetectionResult.objects.filter(
-                detection_task=det_task
-            ).values_list('text_resource_id', flat=True)
-        )
-        if not text_ids and det_task.extra_payload:
-            raw_ids = det_task.extra_payload.get('review_text_ids') or []
-            if raw_ids:
-                text_ids = [int(x) for x in raw_ids if str(x).isdigit()]
-        if not text_ids and det_task.container:
-            text_ids = list(det_task.container.review_texts.values_list('id', flat=True))
+        if allow_texts and not text_ids:
+            text_ids = list(
+                TextDetectionResult.objects.filter(
+                    detection_task=det_task
+                ).values_list('text_resource_id', flat=True)
+            )
+            if not text_ids and det_task.extra_payload:
+                raw_ids = det_task.extra_payload.get('review_text_ids') or []
+                if raw_ids:
+                    text_ids = [int(x) for x in raw_ids if str(x).isdigit()]
+            if not text_ids and det_task.container and not file_ids:
+                text_ids = list(det_task.container.review_texts.values_list('id', flat=True))
 
     # 验证参数
     if not image_ids and not text_ids and not file_ids and not container_id and not task_id:
@@ -224,23 +267,73 @@ def create_review_task_with_admin_check(request):
         texts = []
         
         # 获取图片对象
-        if image_ids:
+        if allow_images and image_ids:
             images = ImageUpload.objects.filter(id__in=image_ids)
             if len(images) != len(image_ids):
                 return Response({'error': 'Some image IDs do not exist'}, status=404)
                 
         # 获取文本对象
-        if text_ids:
+        if allow_texts and text_ids and not selected_section_ids:
             texts = list(ReviewTextResource.objects.filter(id__in=text_ids))
             if len(texts) != len(text_ids):
                 return Response({'error': 'Some text IDs do not exist'}, status=404)
 
-        if not texts and container_id:
+        if allow_texts and selected_section_ids:
+            if not task_obj or not task_obj.container_id:
+                return Response({'error': 'Detection task is required for selected section review'}, status=400)
+            structured = StructuredDetectionResult.objects.filter(detection_task=task_obj).first()
+            if not structured:
+                return Response({'error': 'Structured detection result not found'}, status=404)
+            from core.services.structured_detection_service import StructuredDetectionService
+            payload = structured.result_payload or {}
+            per_section = ((payload.get('evidence') or {}).get('per_section') or [])
+            section_lookup = {
+                entry.get('item_id'): entry
+                for entry in per_section
+                if entry.get('item_id')
+            }
+            item_text_lookup = {}
+            try:
+                snapshot = StructuredDetectionService.build_input_snapshot(task_obj)
+                text_items = StructuredDetectionService._extract_text_items_from_snapshot(
+                    snapshot,
+                    task_obj.detect_type,
+                )
+                item_text_lookup = {
+                    item.get('id'): item.get('text')
+                    for item in text_items
+                    if item.get('id')
+                }
+            except Exception:
+                item_text_lookup = {}
+
+            for item_id in selected_section_ids:
+                section = section_lookup.get(item_id) or {}
+                raw_text = (
+                    item_text_lookup.get(item_id)
+                    or section.get('text')
+                    or section.get('title')
+                    or item_id
+                )
+                if not raw_text:
+                    continue
+                texts.append(ReviewTextResource.objects.create(
+                    container=task_obj.container,
+                    source_type='paste',
+                    raw_text=str(raw_text),
+                    normalized_text=str(item_id),
+                    parse_status='parsed',
+                ))
+
+            if not texts:
+                return Response({'error': 'No selected sections found for review'}, status=400)
+
+        if allow_texts and not texts and not selected_section_ids and container_id and not file_ids:
             container = ResourceContainer.objects.filter(id=container_id, owner=request.user).first()
             if container:
                 texts = list(ReviewTextResource.objects.filter(container=container))
 
-        if not texts and container_id and not file_ids:
+        if allow_texts and not texts and not selected_section_ids and container_id and not file_ids:
             container = ResourceContainer.objects.filter(id=container_id, owner=request.user).first()
             if container:
                 if task_type == 'paper_text':
@@ -262,7 +355,7 @@ def create_review_task_with_admin_check(request):
                     if text_resource:
                         texts.append(text_resource)
 
-        if not texts and file_ids:
+        if allow_texts and not texts and not selected_section_ids and file_ids:
             file_queryset = FileManagement.objects.filter(id__in=file_ids, user=request.user)
             for file_record in file_queryset:
                 text_resource = _build_text_resource_from_file(
@@ -332,8 +425,8 @@ def create_review_task_with_admin_check(request):
         elif text_detection_result:
             task_type = 'text'
 
-        image_count = len(image_ids)
-        text_count = len(text_ids)
+        image_count = len(images)
+        text_count = len(texts)
         if image_count > 0 and text_count > 0:
             material_type = 'mixed'
         elif image_count > 0:
@@ -1408,7 +1501,11 @@ def post_review(request, manual_review_id):
 
     # 综合判定审核结果：任何一张图/文本判为假则整体标记为 fake
     image_results = [item.get('final') for item in results if item.get('final') is not None]
-    text_results = [item.get('result') for item in text_reviews_data if item.get('result') is not None]
+    text_results = [
+        item.get('final', item.get('result'))
+        for item in text_reviews_data
+        if item.get('final', item.get('result')) is not None
+    ]
     all_results = image_results + text_results
     overall_result = 'fake' if any(all_results) else 'real' if all_results else 'unknown'
 
