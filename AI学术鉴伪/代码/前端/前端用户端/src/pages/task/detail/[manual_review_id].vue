@@ -1,30 +1,30 @@
 ﻿<template>
   <div class="task-detail pa-4">
-    <!-- 杩斿洖鎸夐挳 -->
+    <!-- 返回按钮 -->
     <div class="d-flex align-center mb-6">
       <v-btn icon="mdi-arrow-left" variant="text" @click="router.back()" class="mr-2 return-btn">
         <v-icon>mdi-arrow-left</v-icon>
       </v-btn>
-      <span class="text-h6 font-weight-medium">杩斿洖鎴戠殑浠诲姟</span>
+      <span class="text-h6 font-weight-medium">返回我的任务</span>
     </div>
 
-    <!-- 涓昏鍐呭鍖哄煙 -->
+    <!-- 主要内容区域 -->
     <div class="main-content rounded-lg">
-      <!-- 椤堕儴淇℃伅鍖哄煙 -->
+      <!-- 顶部信息区域 -->
       <div class="info-section pa-6">
         <div class="content-wrapper d-flex justify-center">
           <div class="content-container">
             <div class="info-content d-flex align-center justify-space-between pa-4">
-              <!-- 宸︿晶杩涘害鍜屾爣绛?-->
+              <!-- 左侧进度和标签 -->
               <div class="d-flex align-center" style="min-width: 320px; margin-left: 200px">
                 <div class="progress-circle mr-3 elevation-1">
                   <span class="text-h5 font-weight-bold primary--text">{{
                     formatNumber(overallScore) }}</span>
-                  <span class="text-caption">涓哄亣</span>
+                  <span class="text-caption">为假</span>
                 </div>
                 <v-btn-toggle v-if="hasImages && hasTexts" v-model="reviewMode" mandatory class="ml-4">
-                  <v-btn value="image" size="small">鍥剧墖</v-btn>
-                  <v-btn value="text" size="small">鏂囨湰</v-btn>
+                  <v-btn value="image" size="small">图片</v-btn>
+                  <v-btn value="text" size="small">文本</v-btn>
                 </v-btn-toggle>
                 <v-card class="ml-4 pa-2 elevation-1" flat rounded="lg" width="250">
                   <v-card-title class="pa-2 pb-1 text-subtitle-2 font-weight-bold">AI 检测结果</v-card-title>
@@ -43,17 +43,17 @@
                 </v-card>
               </div>
 
-              <!-- 鍙充晶浠诲姟淇℃伅 -->
+              <!-- 右侧任务信息 -->
               <div class="task-stats d-flex align-center">
                 <div class="answer-card">
 
                   <v-row align="center" justify="start">
                     <v-col class="d-flex" cols="auto">
-                      <div class="text-h6 font-weight-medium mb-4">瀹℃牳杩涘害</div>
+                      <div class="text-h6 font-weight-medium mb-4">审核进度</div>
                     </v-col>
                     <v-col class="d-flex align-center ml-4" cols="auto">
                       <v-btn color="primary" @click="handleSubmit">
-                        鎻愪氦
+                        提交
                       </v-btn>
                     </v-col>
                   </v-row>
@@ -71,15 +71,15 @@
         </div>
       </div>
 
-      <!-- 鍒嗗壊绾?-->
+      <!-- 分割线 -->
       <v-divider></v-divider>
 
-      <!-- 涓昏鍐呭鍖哄煙 -->
+      <!-- 主要内容区域 -->
       <div class="content-wrapper d-flex pa-2 justify-center">
         <div class="content-container d-flex" style="gap: 12px;">
           <div v-if="!isTextMode" class="image-list rounded-lg elevation-1"
             style="background-color: rgb(var(--v-theme-surface)); padding: 20px;">
-            <div class="text-h6 font-weight-medium text-center mb-4" style="white-space: nowrap;">鍥剧墖鍒楄〃</div>
+            <div class="text-h6 font-weight-medium text-center mb-4" style="white-space: nowrap;">图片列表</div>
             <div class="image-grid">
               <div v-for="(image, index) in images" :key="index" class="image-grid-item"
                 :class="{ 'active': currentImageIndex === index }" @click="handleImageSelect(index)">
@@ -89,11 +89,11 @@
           </div>
           <div v-else class="image-list rounded-lg elevation-1"
             style="background-color: rgb(var(--v-theme-surface)); padding: 20px;">
-            <div class="text-h6 font-weight-medium text-center mb-4" style="white-space: nowrap;">鏂囨湰鍒楄〃</div>
+            <div class="text-h6 font-weight-medium text-center mb-4" style="white-space: nowrap;">文本列表</div>
             <div class="image-grid">
               <div v-for="(text, index) in texts" :key="index" class="image-grid-item"
                 :class="{ 'active': currentTextIndex === index }" @click="handleTextSelect(index)">
-                <div class="d-flex align-center justify-center h-100 text-caption">鏂囨湰 {{ index + 1 }}</div>
+                <div class="d-flex align-center justify-center h-100 text-caption">文本 {{ index + 1 }}</div>
               </div>
             </div>
           </div>
@@ -132,7 +132,7 @@
                     </v-card-text>
                   </v-card>
                 </template>
-                <div v-else class="text-h6 text-grey">鏆傛棤鏂囨湰</div>
+                <div v-else class="text-h6 text-grey">暂无文本</div>
                 <div class="preview-controls">
                   <v-btn icon="mdi-chevron-left" variant="flat" @click="handlePrevText"
                     :disabled="currentTextIndex <= 0" class="control-btn" color="black" size="x-large"></v-btn>
@@ -145,9 +145,9 @@
           </div>
 
           <div v-if="!isTextMode" class="dimension-section rounded-lg elevation-1">
-            <div class="text-h6 font-weight-medium mb-4">璇勫垎缁村害</div>
+            <div class="text-h6 font-weight-medium mb-4">评分维度</div>
             <div class="text-caption text-medium-emphasis mb-4">
-              请根据图片特征，对每一种造假方式进行可能性评估，必要时可使用绘制标注功能标记具体位置。</div>
+              请根据图片特征，对每个造假方式进行可能性评估，分值越大表示相应维度造假可能性越大，必要时可使用绘制标注功能标记具体位置。</div>
             <div class="dimension-list">
               <div v-for="(dimension, index) in dimensionsPerImage[currentImageIndex]" :key="index"
                 class="dimension-item mb-6">
@@ -156,13 +156,13 @@
                   <div class="d-flex">
                     <v-btn size="small" color="primary" variant="tonal" @click="openDrawingDialog(index)" class="mr-2">
                       <v-icon size="small" icon="mdi-pencil" class="mr-1"></v-icon>
-                      缁樺埗鏍囨敞
+                      绘制标注
                     </v-btn>
                     <v-btn size="small" :color="urn[index]?.visible ? 'error' : 'grey'" variant="tonal"
                       @click="handleDisplayFake(urn[index])" class="fake-area-btn">
                       <v-icon size="small" :icon="urn[index]?.visible ? 'mdi-eye-off' : 'mdi-eye'"
                         class="mr-1"></v-icon>
-                      {{ urn[index]?.visible ? '闅愯棌閫犲亣鍖哄煙' : '鏄剧ず閫犲亣鍖哄煙' }}
+                      {{ urn[index]?.visible ? '隐藏造假区域' : '显示造假区域' }}
                     </v-btn>
                   </div>
                 </div>
@@ -176,60 +176,60 @@
                     </v-btn>
                   </v-btn-group>
                 </div>
-                <v-text-field v-model="dimension.reason" :label="`请输入${dimension.name}的理由`" variant="outlined"
+                <v-text-field v-model="dimension.reason" :label="'请输入' + dimension.name + '的理由'" variant="outlined"
                   density="compact" hide-details class="mt-2"></v-text-field>
               </div>
 
               <div class="fake-judge-section mt-4 pt-4">
-                <div class="text-subtitle-1 mb-4">閫犲亣鍒ゅ畾</div>
+                <div class="text-subtitle-1 mb-4">造假判定</div>
                 <div class="d-flex justify-space-between">
                   <v-btn :color="imageJudgements[currentImageIndex] === true ? 'error' : 'grey-lighten-1'"
                     variant="tonal" class="flex-grow-1 mr-2" @click="handleJudgement(true)">
-                    閫犲亣鍥剧墖
+                    造假图片
                   </v-btn>
                   <v-btn :color="imageJudgements[currentImageIndex] === false ? 'success' : 'grey-lighten-1'"
                     variant="tonal" class="flex-grow-1" @click="handleJudgement(false)">
-                    鐪熷疄鍥剧墖
+                    真实图片
                   </v-btn>
                 </div>
               </div>
             </div>
           </div>
           <div v-else class="dimension-section rounded-lg elevation-1">
-            <div class="text-h6 font-weight-medium mb-4">鏂囨湰瀹℃牳</div>
+            <div class="text-h6 font-weight-medium mb-4">文本审核</div>
             <div class="text-caption text-medium-emphasis mb-4">请对当前文本给出人工审核结论与说明。</div>
-            <v-textarea v-model="textComments[currentTextIndex]" label="瀹℃牳璇存槑" variant="outlined" rows="6"
+            <v-textarea v-model="textComments[currentTextIndex]" label="审核说明" variant="outlined" rows="6"
               hide-details class="mb-4"></v-textarea>
             <v-text-field v-if="isReviewText" v-model.number="textTemplateScores[currentTextIndex]" type="number"
-              label="妯℃澘鍖栧€惧悜澶嶆牳璇勫垎(0-1)" min="0" max="1" step="0.01" variant="outlined" hide-details
+              label="模板化倾向复核评分(0-1)" min="0" max="1" step="0.01" variant="outlined" hide-details
               class="mb-4"></v-text-field>
-            <v-textarea v-if="isReviewText" v-model="textTemplateComments[currentTextIndex]" label="妯℃澘鍖栧€惧悜璇存槑"
+            <v-textarea v-if="isReviewText" v-model="textTemplateComments[currentTextIndex]" label="模板化倾向说明"
               variant="outlined" rows="3" hide-details class="mb-4"></v-textarea>
             <div class="fake-judge-section mt-2 pt-2">
-              <div class="text-subtitle-1 mb-4">鎬讳綋鍒ゅ畾</div>
+              <div class="text-subtitle-1 mb-4">总体判定</div>
               <div class="d-flex justify-space-between">
                 <v-btn :color="textJudgements[currentTextIndex] === true ? 'error' : 'grey-lighten-1'"
                   variant="tonal" class="flex-grow-1 mr-2" @click="handleTextJudgement(true)">
-                  鐤戜技AI
+                  疑似AI
                 </v-btn>
                 <v-btn :color="textJudgements[currentTextIndex] === false ? 'success' : 'grey-lighten-1'"
                   variant="tonal" class="flex-grow-1" @click="handleTextJudgement(false)">
-                  浜哄伐鎾板啓
+                  人工撰写
                 </v-btn>
               </div>
             </div>
             <div v-if="currentTextItems.length" class="mb-4">
-              <div class="text-subtitle-2 mb-2">缁嗗垎娈佃惤瀹℃牳</div>
+              <div class="text-subtitle-2 mb-2">细分段落审核</div>
               <v-card v-for="(item, idx) in currentTextItems" :key="item.item_id || idx" variant="outlined" class="mb-3">
                 <v-card-text>
                   <div class="d-flex align-center justify-space-between mb-2">
                     <div class="text-caption">
-                      <span v-if="item.paragraph_index">娈佃惤 {{ item.paragraph_index }}</span>
-                      <span v-else>鏉＄洰 {{ idx + 1 }}</span>
+                      <span v-if="item.paragraph_index">段落 {{ item.paragraph_index }}</span>
+                      <span v-else>条目 {{ idx + 1 }}</span>
                       <span v-if="item.item_id">({{ item.item_id }})</span>
                     </div>
                     <v-chip v-if="item.ai_probability !== undefined && item.ai_probability !== null" size="small" color="primary" variant="outlined">
-                      AI姒傜巼 {{ (item.ai_probability * 100).toFixed(1) }}%
+                      AI概率 {{ (item.ai_probability * 100).toFixed(1) }}%
                     </v-chip>
                   </div>
                   <div class="text-body-2 mb-3" style="white-space: pre-wrap;">{{ item.text || '' }}</div>
@@ -237,17 +237,17 @@
                     <v-btn
                       :color="textItemReviews[currentTextIndex][idx].is_ai_agreed === true ? 'error' : 'grey-lighten-1'"
                       variant="tonal" class="flex-grow-1 mr-2" @click="handleTextItemJudgement(idx, true)">
-                      鐤戜技AI
+                      疑似AI
                     </v-btn>
                     <v-btn
                       :color="textItemReviews[currentTextIndex][idx].is_ai_agreed === false ? 'success' : 'grey-lighten-1'"
                       variant="tonal" class="flex-grow-1" @click="handleTextItemJudgement(idx, false)">
-                      浜哄伐鎾板啓
+                      人工撰写
                     </v-btn>
                   </div>
                   <v-textarea
                     v-model="textItemReviews[currentTextIndex][idx].comment"
-                    label="娈佃惤瀹℃牳璇存槑"
+                    label="段落审核说明"
                     variant="outlined"
                     rows="2"
                     hide-details
@@ -255,13 +255,13 @@
                 </v-card-text>
               </v-card>
             </div>
-            <div v-else class="text-body-2 text-grey">鏆傛棤鐤戜技AI鏉＄洰</div>
+            <div v-else class="text-body-2 text-grey">暂无疑似AI条目</div>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- 娣诲姞鎻愮ず瀵硅瘽妗?-->
+    <!-- 添加提示对话框 -->
     <v-dialog v-model="showAlert" max-width="400">
       <v-card>
         <v-card-text class="pa-4">
@@ -269,13 +269,13 @@
         </v-card-text>
         <v-card-actions class="justify-center pb-4">
           <v-btn color="primary" variant="text" @click="showAlert = false">
-            纭畾
+            确定
           </v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
 
-    <!-- 缁樺埗寮圭獥 -->
+    <!-- 绘制弹窗 -->
     <DrawingDialog v-model="showDrawingDialog" :image-url="currentImage ? getImageUrl(currentImage.url) : ''"
       :initial-paths="currentDimensionPaths" @save="handleDrawingSave" />
   </div>
@@ -336,7 +336,7 @@ interface SubMethod {
   visible: boolean
 }
 
-// 鍥剧墖鐩稿叧鏁版嵁鍜屾柟娉?
+// 图片相关数据和方法
 const currentImageIndex = ref(0)
 const images = ref<Image[]>([])
 const texts = ref<TextResource[]>([])
@@ -383,7 +383,7 @@ const convert = (index: number) => {
     case 4:
       return '同图复制'
     case 5:
-      return '重录切割'
+      return '重叠切割'
     case 6:
       return '跨图拼接'
   }
@@ -440,14 +440,14 @@ onMounted(async () => {
       }))
     })
 
-    // 涓烘瘡涓浘鐗囩殑姣忎釜缁村害鍒濆鍖栫嫭绔嬬殑鏁版嵁
+    // 为每个图片的每个维度初始化独立的数据
     dimensionsPerImage.value = images.value.map(() => [
       { name: '高斯模糊', value: null, reason: '', showFakeArea: false, drawingPaths: [] },
       { name: '亮度/对比度调节', value: null, reason: '', showFakeArea: false, drawingPaths: [] },
       { name: '智能修复', value: null, reason: '', showFakeArea: false, drawingPaths: [] },
       { name: '暴力覆盖', value: null, reason: '', showFakeArea: false, drawingPaths: [] },
       { name: '同图复制', value: null, reason: '', showFakeArea: false, drawingPaths: [] },
-      { name: '重录切割', value: null, reason: '', showFakeArea: false, drawingPaths: [] },
+      { name: '重叠切割', value: null, reason: '', showFakeArea: false, drawingPaths: [] },
       { name: '跨图拼接', value: null, reason: '', showFakeArea: false, drawingPaths: [] }
     ])
     if (images.value.length) {
@@ -456,7 +456,7 @@ onMounted(async () => {
     }
 
   } catch (error) {
-    snackbar.showMessage('鑾峰彇浠诲姟璇︽儏澶辫触', 'error')
+    snackbar.showMessage('获取任务详情失败', 'error')
   }
 })
 
@@ -513,7 +513,7 @@ const fetchMaskImage = async () => {
     }))
     overall.value = res.overall
   } catch (error) {
-    snackbar.showMessage('鑾峰彇mask澶辫触', 'error')
+    snackbar.showMessage('获取mask失败', 'error')
   }
 }
 
@@ -525,14 +525,14 @@ const handleDisplayFake = (dimension: SubMethod) => {
     return
   }
 
-  // 鍏抽棴鍏朵粬鎵€鏈夎鐩栧眰
+  // 关闭其他所有覆盖层
   urn.value.forEach(d => {
     if (d !== dimension) {
       d.visible = false
     }
   })
 
-  // 鏄剧ず褰撳墠瑕嗙洊灞?
+  // 显示当前覆盖层
   dimension.visible = true
   isOverlayVisible.value = true
   activeOverlay.value = dimension.mask_image
@@ -540,7 +540,7 @@ const handleDisplayFake = (dimension: SubMethod) => {
 
 const handleImageSelect = (index: number) => {
   currentImageIndex.value = index
-  currentDrawingDimension.value = -1 // 閲嶇疆缁樺埗鐘舵€?
+  currentDrawingDimension.value = -1 // 重置绘制状态
   fetchMaskImage()
   fetchDetectionResults()
 }
@@ -589,7 +589,7 @@ const handleNextText = () => {
   }
 }
 
-// 璇勫垎缁村害鏁版嵁
+// 评分维度数据
 interface Dimension {
   name: string;
   value: number | null;
@@ -605,7 +605,7 @@ const drawingCanvases = ref<HTMLCanvasElement[]>([])
 const imageRect = ref<DOMRect | null>(null)
 const currentDrawingDimension = ref<number>(-1)
 
-// 璁＄畻褰撳墠缁村害鐨勭瑪杩瑰垪琛?
+// 计算当前维度的笔迹列表
 const currentDimensionPaths = computed(() => {
   if (currentDrawingDimension.value === -1) return []
   const currentImage = dimensionsPerImage.value[currentImageIndex.value]
@@ -614,24 +614,24 @@ const currentDimensionPaths = computed(() => {
   return currentDim?.drawingPaths || []
 })
 
-// 鎵撳紑缁樺埗瀵硅瘽妗?
+// 打开绘制对话框
 const openDrawingDialog = (index: number) => {
   currentDrawingDimension.value = index
   showDrawingDialog.value = true
 }
 
-// 澶勭悊缁樺埗淇濆瓨
+// 处理绘制保存
 const handleDrawingSave = (paths: Array<{ points: Array<{ x: number; y: number }>; color: string }>) => {
   if (currentDrawingDimension.value === -1) return
 
   const currentImage = dimensionsPerImage.value[currentImageIndex.value]
   if (!currentImage) return
 
-  // 鍙洿鏂板綋鍓嶇淮搴︾殑缁樺埗璺緞
+  // 只更新当前维度的绘制路径
   currentImage[currentDrawingDimension.value].drawingPaths = [...paths]
 }
 
-// 鐩戝惉鍥剧墖鍔犺浇瀹屾垚
+// 监听图片加载完成
 watch(() => currentImage.value?.url, () => {
   const imgElement = document.querySelector('.preview-box .v-img img') as HTMLImageElement
   if (imgElement) {
@@ -645,7 +645,7 @@ watch(() => currentImage.value?.url, () => {
   }
 })
 
-// 鐩戝惉绐楀彛澶у皬鍙樺寲
+// 监听窗口大小变化
 onMounted(() => {
   window.addEventListener('resize', () => {
     const imgElement = document.querySelector('.preview-box .v-img img') as HTMLImageElement
@@ -684,7 +684,7 @@ const getDegreeColor = (value: number) => {
   }
 }
 
-// 澶勭悊閫犲亣鍒ゅ畾
+// 处理造假判定
 const handleJudgement = (isFake: boolean) => {
   imageJudgements.value[currentImageIndex.value] = isFake
 }
@@ -693,7 +693,7 @@ const handleTextJudgement = (isFake: boolean) => {
   textJudgements.value[currentTextIndex.value] = isFake
 }
 
-// 鑾峰彇绛旈鍗℃寜閽鑹?
+// 获取答题卡按钮颜色
 const getAnswerButtonColor = (index: number) => {
   if (!isTextMode.value && index === currentImageIndex.value) return 'primary'
   if (isTextMode.value && index === currentTextIndex.value) return 'primary'
@@ -706,13 +706,13 @@ const showAlert = ref(false)
 const alertMessage = ref('')
 
 const checkAnswerCompletion = () => {
-  // 妫€鏌ユ瘡寮犲浘鐗囨槸鍚﹂兘宸插畬鎴愯瘎鍒嗗拰鍒ゅ畾
+  // 检查每张图片是否都已完成评分和判定
   for (let i = 0; i < images.value.length; i++) {
-    // 妫€鏌ラ€犲亣鍒ゅ畾鏄惁宸插畬鎴?
+    // 检查造假判定是否已完成
     if (imageJudgements.value[i] === null) {
       return {
         complete: false,
-        message: `绗?${i + 1} 寮犲浘鐗囧皻鏈繘琛岄€犲亣鍒ゅ畾`
+        message: `第 ${i + 1} 张图片尚未进行造假判定`
       }
     }
   }
@@ -724,7 +724,7 @@ const checkAnswerCompletion = () => {
     if (hasUnratedDimension) {
       return {
         complete: false,
-        message: `绗?${i + 1} 寮犲浘鐗囩殑璇勫垎缁村害灏氭湭璇勫垎瀹屾暣`
+        message: `第 ${i + 1} 张图片的评分维度尚未评分完整`
       }
     }
 
@@ -732,14 +732,14 @@ const checkAnswerCompletion = () => {
     if (hasEmptyReason) {
       return {
         complete: false,
-        message: `绗?${i + 1} 寮犲浘鐗囩殑璇勫垎缁村害鐞嗙敱灏氭湭濉啓瀹屾暣`
+        message: `第 ${i + 1} 张图片的评分维度理由尚未填写完整`
       }
     }
   }
 
   return {
     complete: true,
-    message: '鎵€鏈夊浘鐗囧凡瀹屾垚璇勫垎'
+    message: '所有图片已完成评分'
   }
 }
 
@@ -770,15 +770,15 @@ const checkTextCompletion = () => {
 
   return {
     complete: true,
-    message: '鎵€鏈夋枃鏈凡瀹屾垚瀹℃牳'
+    message: '所有文本已完成审核'
   }
 }
 
 interface ImageItem {
   img_id: number
-  score: Array<number | null>  // 缁村害寰楀垎鏁扮粍锛屽彲鑳芥槸鏁板€兼垨鑰卬ull
-  reason: Array<string | null>  // 缁村害鐞嗙敱鏁扮粍锛屽彲鑳芥槸瀛楃涓叉垨鑰卬ull
-  final: boolean | null  // 閫犲亣鍒ゅ畾缁撴灉
+  score: Array<number | null>  // 维度得分数组，可能是数值或者null
+  reason: Array<string | null>  // 维度理由数组，可能是字符串或者null
+  final: boolean | null  // 造假判定结果
   points: Array<Array<{}>>
 }
 
@@ -852,29 +852,29 @@ const handleSubmit = async () => {
 
   try {
     await reviewer.submitReview(manual_review_id.value, constructData())
-    snackbar.showMessage('鎻愪氦鎴愬姛', 'success')
+    snackbar.showMessage('提交成功', 'success')
   } catch (error) {
-    snackbar.showMessage('鎻愪氦澶辫触', 'error')
+    snackbar.showMessage('提交失败', 'error')
   }
 }
 
 const showDrawingDialog = ref(false)
 
-// 鐩戝惉鍥剧墖鍒囨崲
+// 监听图片切换
 watch(() => currentImageIndex.value, () => {
-  currentDrawingDimension.value = -1 // 閲嶇疆缁樺埗鐘舵€?
+  currentDrawingDimension.value = -1 // 重置绘制状态
 })
 
-// 鐩戝惉缁村害鍒囨崲
+// 监听维度切换
 watch(() => currentDrawingDimension.value, (newVal, oldVal) => {
-  // 纭繚鎵€鏈夌敾甯冮兘琚殣钘?
+  // 确保所有画布都被隐藏
   drawingCanvases.value.forEach((canvas, index) => {
     if (canvas) {
       canvas.style.display = 'none'
     }
   })
 
-  // 鍙樉绀哄綋鍓嶇淮搴︾殑鐢诲竷
+  // 只显示当前维度的画布
   if (newVal !== -1) {
     const newCanvas = drawingCanvases.value[newVal]
     if (newCanvas) {
@@ -1118,7 +1118,7 @@ watch(() => currentDrawingDimension.value, (newVal, oldVal) => {
   transform: none;
 }
 
-/* 婊氬姩鏉℃牱寮?*/
+/* 滚动条样式 */
 ::-webkit-scrollbar {
   width: 6px;
 }
@@ -1207,7 +1207,7 @@ watch(() => currentDrawingDimension.value, (newVal, oldVal) => {
   text-transform: none;
   letter-spacing: 0;
   min-width: 120px;
-  /* 纭繚鎸夐挳鏈夊浐瀹氱殑鏈€灏忓搴?*/
+  /* 确保按钮有固定的最小宽度 */
 }
 
 .drawing-canvas {

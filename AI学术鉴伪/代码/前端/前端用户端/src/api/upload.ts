@@ -2,12 +2,7 @@ import http from './request'
 
 export default {
   uploadFile(data: any) {
-    return http.post('/upload/', data, {
-      headers: {
-        'Content-Type': 'multipart/form-data'
-      },
-      timeout: 120000
-    })
+    return http.post('/upload/', data, { timeout: 120000 })
   },
 
   getExtractedImages(data: any) {

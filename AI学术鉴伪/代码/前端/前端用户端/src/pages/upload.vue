@@ -827,6 +827,26 @@ const formatFileSize = (bytes: number): string => {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
 }
 
+const createUploadContainerIfNeeded = async (): Promise<number | null> => {
+  if (selectedModule.value !== 'paper' && selectedModule.value !== 'review') {
+    return null
+  }
+
+  const safeTime = new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14)
+  const title = currentTaskName.value?.trim() || `${selectedModule.value}-${safeTime}`
+  const { data } = await publisher.createResourceContainer({
+    container_type: selectedModule.value,
+    title,
+    metadata: {
+      source: 'upload_page',
+      detect_type: selectedModule.value,
+    },
+  })
+
+  const createdContainerId = Number(data?.id)
+  return Number.isFinite(createdContainerId) && createdContainerId > 0 ? createdContainerId : null
+}
+
 const handleSubmit = async () => {
   if (!selectedVersion.value) {
     snackbar.showMessage('请选择检测版本', 'error')
@@ -853,7 +873,12 @@ const handleSubmit = async () => {
 
   loading.value = true
   try {
+    const uploadContainerId = await createUploadContainerIfNeeded()
     const formData = new FormData()
+    if (uploadContainerId) {
+      formData.append('container_id', String(uploadContainerId))
+    }
+
     if (selectedModule.value === 'multi') {
       ;(['image', 'paper', 'review'] as UploadCategoryKey[]).forEach(category => {
         multiSelectedFiles.value[category].forEach(file => {
@@ -878,7 +903,7 @@ const handleSubmit = async () => {
 
     fileIds.value = normalizedFileIds
     fileId.value = normalizedFileIds[0] ?? ''
-    containerId.value = data.container_id || null
+    containerId.value = Number(data.container_id || uploadContainerId) || null
 
     const nextCategoryIds: Record<UploadCategoryKey, number[]> = {
       image: [],
@@ -927,7 +952,7 @@ const handleSubmit = async () => {
     // 显示进度页面
     showProgress.value = true
   } catch (error: any) {
-    let message = '提交图片失败'
+    let message = error?.response?.data?.message || error?.response?.data?.error || 'Upload failed'
     if (axios.isAxiosError(error)) {
       const status = error?.code
       if (status === 'ERR_NETWORK') {

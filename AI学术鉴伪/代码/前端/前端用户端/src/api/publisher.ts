@@ -155,6 +155,10 @@ export default {
 
   getResourceContainers() {
     return http.get('/resource-containers/')
+  },
+
+  createResourceContainer(data: any) {
+    return http.post('/resource-containers/', data)
   }
 
 }
