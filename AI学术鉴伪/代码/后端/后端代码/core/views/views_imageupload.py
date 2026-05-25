@@ -4,8 +4,9 @@ import logging
 from PIL import Image
 import zipfile
 from django.core.files.storage import FileSystemStorage
-from ..models import FileManagement, ImageUpload, User, ResourceContainer, DetectionResult, SubDetectionResult
 from django.core.paginator import Paginator, EmptyPage
+from django.db.models import Q
+from ..models import FileManagement, ImageUpload, User, ResourceContainer, ManualReview
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated, IsAdminUser, AllowAny
 from rest_framework.response import Response
@@ -34,20 +35,11 @@ def upload_file(request):
     container_id = request.data.get('container_id')
     resource_role = request.data.get('resource_role', 'material_other')
     batch_id = request.data.get('batch_id')
-    detect_type = request.data.get('detect_type', 'image')
 
     if container_id:
         container = ResourceContainer.objects.filter(id=container_id).first()
         if not container:
             return Response({'error_code': 'CONTAINER_NOT_FOUND', 'message': 'container not found'}, status=404)
-    elif detect_type == 'multi':
-        from django.utils import timezone
-        container = ResourceContainer.objects.create(
-            organization=user.organization,
-            owner=user,
-            container_type='multi_material',
-            title=f'多材料检测 - {timezone.now().strftime("%Y%m%d%H%M%S")}',
-        )
 
     upload_results = []
     file_types = request.data.getlist('file_type')
@@ -357,10 +349,10 @@ def preview_resource(request, resource_type, resource_id):
 
     if resource_type == 'image':
         try:
-            qs = ImageUpload.objects.select_related('file_management')
-            if not auth_user.is_staff:
-                qs = qs.filter(file_management__user=auth_user)
-            image = qs.get(id=resource_id)
+            image = ImageUpload.objects.select_related('file_management').get(
+                id=resource_id,
+                file_management__user=auth_user,
+            )
         except ImageUpload.DoesNotExist:
             return Response({"message": "Image not found"}, status=404)
 
@@ -378,13 +370,51 @@ def preview_resource(request, resource_type, resource_id):
         return FileResponse(open(image_path, 'rb'), content_type='image/*')
 
     if resource_type == 'file':
+        file_management = None
         try:
-            qs = FileManagement.objects.all()
-            if not auth_user.is_staff:
-                qs = qs.filter(user=auth_user)
-            file_management = qs.get(id=resource_id)
+            file_management = FileManagement.objects.get(id=resource_id, user=auth_user)
         except FileManagement.DoesNotExist:
-            return Response({"message": "File not found"}, status=404)
+            file_management = None
+
+        if file_management is None:
+            try:
+                candidate = FileManagement.objects.get(id=resource_id)
+            except FileManagement.DoesNotExist:
+                candidate = None
+
+            if not candidate:
+                return Response({"message": "File not found"}, status=404)
+
+            if auth_user.role != 'reviewer' or candidate.organization_id != auth_user.organization_id:
+                return Response({"message": "File not found"}, status=404)
+
+            manual_reviews = ManualReview.objects.filter(
+                reviewer=auth_user,
+                review_request__organization_id=auth_user.organization_id,
+            ).select_related('review_request', 'review_request__detection_task')
+
+            allow_access = False
+            if candidate.container_id:
+                allow_access = manual_reviews.filter(
+                    review_request__detection_task__container_id=candidate.container_id
+                ).exists()
+
+            if not allow_access:
+                for review in manual_reviews:
+                    task = getattr(review.review_request, 'detection_task', None)
+                    extra_payload = getattr(task, 'extra_payload', {}) if task else {}
+                    file_ids = extra_payload.get('file_ids') or []
+                    try:
+                        if int(candidate.id) in [int(fid) for fid in file_ids]:
+                            allow_access = True
+                            break
+                    except Exception:
+                        continue
+
+            if not allow_access:
+                return Response({"message": "File not found"}, status=404)
+
+            file_management = candidate
 
         storage_path = file_management.storage_path
         if not storage_path:
@@ -403,52 +433,6 @@ def preview_resource(request, resource_type, resource_id):
             as_attachment=force_download,
             filename=file_management.file_name,
         )
-
-    if resource_type == 'detection':
-        try:
-            dr = DetectionResult.objects.select_related('image_upload').get(id=resource_id)
-        except DetectionResult.DoesNotExist:
-            return Response({"message": "Detection result not found"}, status=404)
-
-        image_type = request.query_params.get('image_type')
-        if image_type == 'ela':
-            field = dr.ela_image
-        elif image_type == 'llm':
-            field = dr.llm_image
-        else:
-            field = dr.image_upload.image
-
-        if not field or not field.name:
-            return Response({"message": "Image file missing"}, status=404)
-
-        try:
-            image_path = field.path
-        except Exception:
-            return Response({"message": "Image path unavailable"}, status=404)
-
-        if not os.path.exists(image_path):
-            return Response({"message": "Image file not found on disk"}, status=404)
-
-        return FileResponse(open(image_path, 'rb'), content_type='image/*', as_attachment=False)
-
-    if resource_type == 'sub_result':
-        try:
-            sub = SubDetectionResult.objects.get(id=resource_id)
-        except SubDetectionResult.DoesNotExist:
-            return Response({"message": "Sub detection result not found"}, status=404)
-
-        if not sub.mask_image or not sub.mask_image.name:
-            return Response({"message": "Mask image file missing"}, status=404)
-
-        try:
-            image_path = sub.mask_image.path
-        except Exception:
-            return Response({"message": "Mask image path unavailable"}, status=404)
-
-        if not os.path.exists(image_path):
-            return Response({"message": "Mask image file not found on disk"}, status=404)
-
-        return FileResponse(open(image_path, 'rb'), content_type='image/*', as_attachment=False)
 
     return Response({"message": "Unsupported preview resource type"}, status=400)
 

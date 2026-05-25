@@ -12,26 +12,11 @@ export const resolveApiAssetUrl = (path: string): string => {
     return ''
   }
 
-  // For absolute URLs pointing to the backend, strip the host to use the dev proxy
-  const envBase = String(import.meta.env.VITE_API_URL || '').trim()
-  const backendHosts = ['http://116.63.14.7']
-  if (envBase) {
-    try {
-      const url = new URL(envBase)
-      backendHosts.push(`${url.protocol}//${url.host}`)
-    } catch { /* ignore */ }
-  }
-
-  for (const host of backendHosts) {
-    if (path.startsWith(host)) {
-      return path.slice(host.length) || '/'
-    }
-  }
-
   if (/^https?:\/\//i.test(path)) {
     return path
   }
 
+  const envBase = String(import.meta.env.VITE_API_URL || '').trim()
   if (!envBase) {
     return path
   }
@@ -71,8 +56,23 @@ export const appendPreviewToken = (url: string): string => {
     return url
   }
 
-  const separator = url.includes('?') ? '&' : '?'
-  return `${url}${separator}token=${encodeURIComponent(token)}`
+  let normalizedUrl = url
+  try {
+    const parsed = new URL(url, window.location.origin)
+    parsed.searchParams.delete('token')
+    parsed.searchParams.delete('access')
+    parsed.searchParams.delete('access_token')
+    normalizedUrl = /^https?:\/\//i.test(url)
+      ? parsed.toString()
+      : `${parsed.pathname}${parsed.search}${parsed.hash}`
+  } catch {
+    normalizedUrl = url
+      .replace(/([?&])(token|access|access_token)=[^&#]*&?/g, '$1')
+      .replace(/[?&]$/, '')
+  }
+
+  const separator = normalizedUrl.includes('?') ? '&' : '?'
+  return `${normalizedUrl}${separator}token=${encodeURIComponent(token)}`
 }
 
 export const buildOriginalDownloadUrl = (url: string): string => {

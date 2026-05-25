@@ -282,6 +282,30 @@
         <result-component v-if="showDetailDialog && currentImage" :task-id="taskData?.id"
           :imageUrl="getImageUrl(currentImage.img_url)" :reasons="reasons" :result="result"
           :scores="scores" :ai_detection="AI_detection" :annotations="annotations" />
+        <v-card-text v-else-if="showDetailDialog && textReviewDetail" class="pa-6">
+          <v-alert :color="textReviewDetail.result ? 'error' : 'success'" variant="tonal" class="mb-4">
+            人工判定：{{ textReviewDetail.result ? '疑似造假/AI生成' : '真实' }}
+          </v-alert>
+          <div class="text-subtitle-1 font-weight-bold mb-2">总体说明</div>
+          <div class="text-body-1 mb-4">{{ textReviewDetail.overall_comment || '暂无说明' }}</div>
+          <template v-if="textReviewDetail.template_review_score !== null && textReviewDetail.template_review_score !== undefined">
+            <div class="text-subtitle-1 font-weight-bold mb-2">模板化复核</div>
+            <div class="text-body-1 mb-2">评分：{{ textReviewDetail.template_review_score }}</div>
+            <div class="text-body-1 mb-4">{{ textReviewDetail.template_review_comment || '暂无说明' }}</div>
+          </template>
+          <template v-if="Array.isArray(textReviewDetail.paragraph_reviews) && textReviewDetail.paragraph_reviews.length">
+            <div class="text-subtitle-1 font-weight-bold mb-2">段落复核</div>
+            <v-card
+              v-for="(item, index) in textReviewDetail.paragraph_reviews"
+              :key="index"
+              variant="outlined"
+              class="pa-3 mb-3"
+            >
+              <div class="text-body-2 mb-1">段落 {{ item.paragraph_index ?? index + 1 }}</div>
+              <div class="text-body-1">{{ item.comment || item.reason || '暂无说明' }}</div>
+            </v-card>
+          </template>
+        </v-card-text>
       </v-card>
     </v-dialog>
   </div>
@@ -328,6 +352,14 @@ interface Review {
   result: boolean
 }
 
+interface TextReviewDetail {
+  overall_comment?: string
+  paragraph_reviews?: any[]
+  template_review_score?: number | null
+  template_review_comment?: string | null
+  result: boolean
+}
+
 // 定义路由参数的类型
 interface RouteParams {
   id: string
@@ -355,6 +387,7 @@ const taskData = ref<Task | null>(null)
 const images = ref<Image[]>([])
 const textResults = ref<TextResult[]>([])
 const taskType = ref<string>('image')
+const structuredTaskId = ref<number | null>(null)
 const isTextTask = computed(() => ['paper_text', 'review_text'].includes(taskType.value))
 const isMultiMaterial = computed(() => taskType.value === 'multi_material')
 const activeTab = ref<'image' | 'text'>('image')
@@ -363,6 +396,7 @@ const done = ref(0)
 const process = ref(0)
 const AI_detection = ref(0)
 const review_results = ref<Review[]>([])
+const textReviewDetail = ref<TextReviewDetail | null>(null)
 const reasons = ref<string[]>([])
 const result = ref(false)
 const scores = ref<number[]>([])
@@ -397,30 +431,86 @@ const convert = (index: number) => {
   }
 }
 
+const resolveTaskType = (response: any) => {
+  const detectType = response?.detect_type
+  const responseTaskType = response?.task_type
+  if (responseTaskType === 'multi_material' || detectType === 'multi') return 'multi_material'
+  if (responseTaskType === 'review_text' || detectType === 'review') return 'review_text'
+  if (responseTaskType === 'paper_text' || detectType === 'paper') return 'paper_text'
+  return responseTaskType || 'image'
+}
+
+const buildTextResultsFromStructuredResult = (structured: any, fallbackTexts: any[] = []) => {
+  const overall = structured?.overall || structured?.result?.overall || {}
+  const sections = structured?.sections || structured?.result?.evidence?.per_section || []
+  const summary = structured?.summary || structured?.result?.summary || ''
+  const detectType = structured?.detect_type
+  const resolveTextResourceId = (section: any, index: number) => {
+    const itemId = String(section?.item_id || '')
+    const parts = itemId.split('_')
+    let resourceIndex = -1
+
+    const reviewFilePos = parts.findIndex((part, idx) => part === 'review' && parts[idx + 1] === 'file')
+    const reviewTextPos = parts.findIndex((part, idx) => part === 'review' && parts[idx + 1] === 'text')
+    const paperPos = parts.lastIndexOf('paper')
+    if (reviewFilePos >= 0) resourceIndex = Number(parts[reviewFilePos + 2])
+    else if (reviewTextPos >= 0) resourceIndex = Number(parts[reviewTextPos + 2])
+    else if (paperPos >= 0) resourceIndex = Number(parts[paperPos + 1])
+
+    const fallback = Number(fallbackTexts[resourceIndex]?.text_id ?? fallbackTexts[index]?.text_id ?? fallbackTexts[0]?.text_id)
+    return Number.isFinite(fallback) && fallback > 0 ? fallback : index + 1
+  }
+
+  if (Array.isArray(sections) && sections.length > 0) {
+    return sections.map((section: any, index: number) => {
+      const probability = section?.probabilities?.aigc ?? section?.confidence_score ?? overall?.confidence_score ?? 0
+      return {
+        result_id: index + 1,
+        resource_id: resolveTextResourceId(section, index),
+        text_type: section?.source_file || section?.title || detectType || 'structured',
+        status: structured?.status || 'completed',
+        is_fake: Boolean(section?.is_aigc),
+        confidence_score: Number(probability || 0),
+        ai_generated_paragraphs: section?.is_aigc && section?.text ? [section.text] : [],
+        factual_fake_reason: detectType === 'paper' ? (section?.text || summary) : undefined,
+        template_tendency_score: detectType === 'review' ? Number(probability || 0) : undefined,
+        template_analysis_reason: detectType === 'review' ? (section?.text || summary) : undefined,
+      }
+    })
+  }
+
+  return fallbackTexts.map((text: any, index: number) => ({
+    result_id: text.text_id || index + 1,
+    resource_id: text.text_id || index + 1,
+    text_type: text.source_type || detectType || 'structured',
+    status: structured?.status || 'completed',
+    is_fake: Boolean(overall?.is_fake ?? structured?.overall_is_fake),
+    confidence_score: Number(overall?.confidence_score ?? structured?.confidence_score ?? 0),
+    ai_generated_paragraphs: [],
+    factual_fake_reason: detectType === 'paper' ? summary : undefined,
+    template_tendency_score: detectType === 'review' ? Number(overall?.confidence_score ?? structured?.confidence_score ?? 0) : undefined,
+    template_analysis_reason: detectType === 'review' ? summary : undefined,
+  }))
+}
+
+const fetchStructuredDetectionResults = async (fallbackTexts: any[] = []) => {
+  if (!structuredTaskId.value) return
+  const structured = (await publisher.getStructuredTaskResult(structuredTaskId.value)).data
+  const overall = structured?.overall || structured?.result?.overall || {}
+  taskType.value = structured?.task_type || resolveTaskType(structured)
+  AI_detection.value = Number(overall?.confidence_score ?? structured?.confidence_score ?? 0)
+  textResults.value = buildTextResultsFromStructuredResult(structured, fallbackTexts)
+  done.value = textResults.value.filter(t => t.status === 'completed').length
+  process.value = Math.max(textResults.value.length - done.value, 0)
+}
+
 
 // 获取检测结果
 const fetchDetectionResults = async () => {
   try {
     const isTextMode = isTextTask.value || (isMultiMaterial.value && activeTab.value === 'text')
     if (isTextMode) {
-      // 获取当前选中文本的详细大模型结果
-      if (currentTextResult.value && currentTextResult.value.resource_id) {
-        const res = await publisher.getSingleTextResult(currentTextResult.value.resource_id)
-        if (res.data) {
-          // 更新当前文本的详细数据
-          const detail = res.data
-          textResults.value[currentResourceIndex.value] = {
-            ...textResults.value[currentResourceIndex.value],
-            is_fake: detail.is_fake,
-            confidence_score: detail.confidence_score,
-            ai_generated_paragraphs: detail.ai_generated_paragraphs,
-            factual_fake_reason: detail.factual_fake_reason,
-            template_tendency_score: detail.template_tendency_score,
-            template_analysis_reason: detail.template_analysis_reason,
-            status: detail.status
-          }
-        }
-      }
+      await fetchStructuredDetectionResults(textResults.value)
     } else {
       if (currentImage.value) {
         const id = await (await publisher.getDetectionID({ img_id: currentImage.value.img_id })).data.detection_result_id
@@ -441,11 +531,24 @@ watch(activeTab, () => {
   }
 })
 
-const fetchReview = async (img: Image) => {
+const fetchReview = async (img?: Image) => {
   try {
-    if (isTextTask.value) return // 文本任务暂不展示细粒度人工审核列表
-    if (isMultiMaterial.value && activeTab.value === 'text') return // 文本tab不获取图片审核
-    review_results.value = (await publisher.getImageReviewAll({ review_request_id: review_request_id.value, img_id: img.img_id })).data.reviewers_results
+    if (isTextTask.value || (isMultiMaterial.value && activeTab.value === 'text')) {
+      if (!currentTextResult.value?.resource_id) {
+        review_results.value = []
+        return
+      }
+      review_results.value = (await publisher.getTextReviewAll({
+        review_request_id: review_request_id.value,
+        text_id: currentTextResult.value.resource_id,
+      })).data.reviewers_results || []
+      return
+    }
+    if (!img) {
+      review_results.value = []
+      return
+    }
+    review_results.value = (await publisher.getImageReviewAll({ review_request_id: review_request_id.value, img_id: img.img_id })).data.reviewers_results || []
   } catch (error) {
     snackbar.showMessage('获取人工审核结果失败', 'error')
   }
@@ -453,7 +556,17 @@ const fetchReview = async (img: Image) => {
 
 const fetchReviewDetail = async (review: Review) => {
   try {
+    if (isTextTask.value || (isMultiMaterial.value && activeTab.value === 'text')) {
+      if (!currentTextResult.value?.resource_id) return
+      textReviewDetail.value = (await publisher.getTextReviewDetail({
+        review_request_id: review_request_id.value,
+        text_id: currentTextResult.value.resource_id,
+        reviewer_id: review.id,
+      })).data
+      return
+    }
     if (!currentImage.value) return
+    textReviewDetail.value = null
     const response = (await publisher.getImageReviewDetail({ review_request_id: review_request_id.value, img_id: currentImage.value.img_id, reviewer_id: review.id })).data
     reasons.value = response.reasons
     result.value = response.result
@@ -470,7 +583,11 @@ const handleResourceSelect = (index: number) => {
   if (isMultiMaterial.value) {
     if (activeTab.value === 'image' && currentImage.value) {
       fetchReview(currentImage.value)
+    } else if (activeTab.value === 'text') {
+      fetchReview()
     }
+  } else if (isTextTask.value) {
+    fetchReview()
   } else if (!isTextTask.value && currentImage.value) {
     fetchReview(currentImage.value)
   }
@@ -478,11 +595,7 @@ const handleResourceSelect = (index: number) => {
 }
 
 const getResult = (result: boolean) => {
-  if (result === true) {
-    return '假'
-  } else {
-    return '真'
-  }
+  return result === true ? '疑似造假/AI生成' : '真实'
 }
 
 const handlePrevResource = () => {
@@ -519,6 +632,7 @@ const formatNumber = (result: number) => {
 
 // 修改查看详情按钮的点击事件
 const handleViewDetail = (review: Review) => {
+  textReviewDetail.value = null
   showDetailDialog.value = true
   fetchReviewDetail(review)
 }
@@ -571,18 +685,40 @@ onMounted(async () => {
     const response = (await publisher.getRequestDetail({ review_request_id: review_request_id.value })).data
     const hasImages = response.images && response.images.length > 0
     const hasTexts = response.texts && response.texts.length > 0
+    const resolvedTaskType = resolveTaskType(response)
+    const isStructuredTask = ['paper_text', 'review_text', 'multi_material'].includes(resolvedTaskType)
 
+    structuredTaskId.value = response.task_id ? Number(response.task_id) : null
     done.value = response.status.done
     process.value = response.status.process
     AI_detection.value = response.ai_detection_result?.confidence_score || 0
 
-    if (hasImages && hasTexts) {
+    if (isStructuredTask) {
+      taskType.value = resolvedTaskType
+      images.value = resolvedTaskType === 'multi_material' ? response.images : []
+      activeTab.value = resolvedTaskType === 'multi_material' ? 'image' : 'text'
+      textResults.value = (response.texts || []).map((t: any) => ({
+        result_id: t.text_id,
+        resource_id: t.text_id,
+        text_type: t.source_type,
+        status: 'completed',
+        is_fake: false,
+        confidence_score: 0,
+      }))
+      currentResourceIndex.value = 0
+      await fetchStructuredDetectionResults(response.texts || [])
+      if (resolvedTaskType === 'multi_material' && images.value.length > 0) {
+        review_results.value = (await publisher.getImageReviewAll({ review_request_id: review_request_id.value, img_id: images.value[0].img_id })).data.reviewers_results
+      } else {
+        await fetchReview()
+      }
+    } else if (hasImages && hasTexts) {
       // multi_material: 既有图片又有文本
       taskType.value = 'multi_material'
       images.value = response.images
       activeTab.value = 'image'
 
-      // 使用 request detail 返回的文本信息构建列表，详细数据在选中时通过 getSingleTextResult 获取
+      // 使用 request detail 返回的文本信息构建列表
       textResults.value = response.texts.map((t: any) => ({
         result_id: t.text_id,
         resource_id: t.text_id,
@@ -598,6 +734,7 @@ onMounted(async () => {
       }
       currentResourceIndex.value = 0
       fetchDetectionResults()
+      fetchReview()
     } else if (hasImages) {
       // 纯图片任务
       taskType.value = 'image'
@@ -626,6 +763,7 @@ onMounted(async () => {
       }
       currentResourceIndex.value = 0
       fetchDetectionResults()
+      fetchReview()
     } else {
       taskType.value = 'image'
     }
