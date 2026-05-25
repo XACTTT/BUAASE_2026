@@ -80,7 +80,7 @@
                         <v-img :src="getImageUrl(img.image_url)" cover height="100%">
                           <div class="image-overlay" v-if="isHovering || img.selected">
                             <div class="d-flex flex-column align-center gap-4">
-                              <v-checkbox v-model="img.selected" color="primary" class="image-checkbox"></v-checkbox>
+                              <v-checkbox v-model="img.selected" color="primary" class="image-checkbox" @click.stop></v-checkbox>
                               <v-btn icon="mdi-magnify" variant="text" color="white" size="large"
                                 @click.stop="viewImageDetail(img)"></v-btn>
                             </div>
@@ -116,7 +116,7 @@
                         <v-img :src="getImageUrl(img.image_url)" cover height="100%">
                           <div class="image-overlay" v-if="isHovering || img.selected">
                             <div class="d-flex flex-column align-center gap-4">
-                              <v-checkbox v-model="img.selected" color="primary" class="image-checkbox"></v-checkbox>
+                              <v-checkbox v-model="img.selected" color="primary" class="image-checkbox" @click.stop></v-checkbox>
                               <v-btn icon="mdi-magnify" variant="text" color="white" size="large"
                                 @click.stop="viewImageDetail(img)"></v-btn>
                             </div>
@@ -578,39 +578,23 @@ const getAvatar = (url: string) => {
   return resolveImageUrl(url)
 }
 
-const selectedFakeCount = ref(0)
-const selectedRealCount = ref(0)
-const isAllFakeSelected = ref(false)
-const isAllRealSelected = ref(false)
+const selectedFakeCount = computed(() => detectionResult.value.fakeImages.filter(img => img.selected).length)
+const selectedRealCount = computed(() => detectionResult.value.realImages.filter(img => img.selected).length)
+const isAllFakeSelected = computed(() => detectionResult.value.fakeImages.length > 0 && detectionResult.value.fakeImages.every(img => img.selected))
+const isAllRealSelected = computed(() => detectionResult.value.realImages.length > 0 && detectionResult.value.realImages.every(img => img.selected))
 
 const selectAllFake = () => {
-  isAllFakeSelected.value = !isAllFakeSelected.value
-  detectionResult.value.fakeImages.forEach(img => img.selected = isAllFakeSelected.value)
-  selectedFakeCount.value = isAllFakeSelected.value ? detectionResult.value.fakeImages.length : 0
+  const newState = !isAllFakeSelected.value
+  detectionResult.value.fakeImages.forEach(img => img.selected = newState)
 }
 
 const selectAllReal = () => {
-  isAllRealSelected.value = !isAllRealSelected.value
-  detectionResult.value.realImages.forEach(img => img.selected = isAllRealSelected.value)
-  selectedRealCount.value = isAllRealSelected.value ? detectionResult.value.realImages.length : 0
+  const newState = !isAllRealSelected.value
+  detectionResult.value.realImages.forEach(img => img.selected = newState)
 }
 
-const toggleImageSelection = (image: Image, type: string) => {
-  if (type === 'fake') {
-    image.selected = !image.selected
-    if (image.selected) {
-      selectedFakeCount.value++
-    } else {
-      selectedFakeCount.value--
-    }
-  } else {
-    image.selected = !image.selected
-    if (image.selected) {
-      selectedRealCount.value++
-    } else {
-      selectedRealCount.value--
-    }
-  }
+const toggleImageSelection = (image: Image, _type: string) => {
+  image.selected = !image.selected
 }
 
 const hasSelectedImages = computed(() => selectedFakeCount.value > 0 || selectedRealCount.value > 0)

@@ -263,7 +263,82 @@ const reviewReason = ref('')
 const submittingReview = ref(false)
 const reviewSearchQuery = ref('')
 
-const canSubmitReview = computed(() => selectedReviewers.value.length > 0)
+// --- Per-material checkbox selection ---
+const selectedItemIds = ref<Set<string>>(new Set())
+
+function toggleItemSelection(id: string): void {
+  const newSet = new Set(selectedItemIds.value)
+  if (newSet.has(id)) {
+    newSet.delete(id)
+  } else {
+    newSet.add(id)
+  }
+  selectedItemIds.value = newSet
+}
+
+function isItemSelected(id: string): boolean {
+  return selectedItemIds.value.has(id)
+}
+
+function selectAllItems(type: 'paper' | 'review' | 'image'): void {
+  const newSet = new Set(selectedItemIds.value)
+  if (type === 'paper') {
+    paperParagraphs.value.forEach((p: any) => newSet.add(p.id))
+  } else if (type === 'review') {
+    reviewParagraphs.value.forEach((p: any) => newSet.add(p.id))
+  } else {
+    imageItems.value.forEach((img: any) => {
+      if (img.image_id) newSet.add(`image_${img.image_id}`)
+    })
+  }
+  selectedItemIds.value = newSet
+}
+
+function deselectAllItems(type: 'paper' | 'review' | 'image'): void {
+  const newSet = new Set(selectedItemIds.value)
+  if (type === 'paper') {
+    paperParagraphs.value.forEach((p: any) => newSet.delete(p.id))
+  } else if (type === 'review') {
+    reviewParagraphs.value.forEach((p: any) => newSet.delete(p.id))
+  } else {
+    imageItems.value.forEach((img: any) => {
+      if (img.image_id) newSet.delete(`image_${img.image_id}`)
+    })
+  }
+  selectedItemIds.value = newSet
+}
+
+const selectedPaperCount = computed(() => {
+  return paperParagraphs.value.filter((p: any) => selectedItemIds.value.has(p.id)).length
+})
+
+const selectedReviewCount = computed(() => {
+  return reviewParagraphs.value.filter((p: any) => selectedItemIds.value.has(p.id)).length
+})
+
+const selectedImageCount = computed(() => {
+  return imageItems.value.filter((img: any) => img.image_id && selectedItemIds.value.has(`image_${img.image_id}`)).length
+})
+
+const selectedTotalCount = computed(() => {
+  return selectedPaperCount.value + selectedReviewCount.value + selectedImageCount.value
+})
+
+const allPaperSelected = computed(() => {
+  return paperParagraphs.value.length > 0 && paperParagraphs.value.every((p: any) => selectedItemIds.value.has(p.id))
+})
+
+const allReviewSelected = computed(() => {
+  return reviewParagraphs.value.length > 0 && reviewParagraphs.value.every((p: any) => selectedItemIds.value.has(p.id))
+})
+
+const allImageSelected = computed(() => {
+  return imageItems.value.length > 0 && imageItems.value.every((img: any) => img.image_id && selectedItemIds.value.has(`image_${img.image_id}`))
+})
+
+const canSubmitReview = computed(() => {
+  return selectedItemIds.value.size > 0 && selectedReviewers.value.length > 0
+})
 
 const filteredReviewers = computed(() => {
   if (!reviewSearchQuery.value) return allReviewers.value
@@ -450,6 +525,14 @@ function formatLlmAnalysisValue(value: unknown): string {
 function openReviewDialog() {
   selectedReviewers.value = []
   reviewReason.value = ''
+  // Auto-select all items by default
+  const allIds = new Set<string>()
+  paperParagraphs.value.forEach((p: any) => allIds.add(p.id))
+  reviewParagraphs.value.forEach((p: any) => allIds.add(p.id))
+  imageItems.value.forEach((img: any) => {
+    if (img.image_id) allIds.add(`image_${img.image_id}`)
+  })
+  selectedItemIds.value = allIds
   showReviewDialog.value = true
 }
 
@@ -492,8 +575,23 @@ const submitReview = async () => {
       reviewers: selectedReviewers.value,
       reason: reviewReason.value
     }
-    if (imageItems.value.length > 0) {
-      payload.image_ids = imageItems.value.map((img: any) => img.image_id).filter(Boolean)
+    // Only include selected images
+    const selectedImageIds = imageItems.value
+      .filter((img: any) => img.image_id && selectedItemIds.value.has(`image_${img.image_id}`))
+      .map((img: any) => img.image_id)
+    if (selectedImageIds.length > 0) {
+      payload.image_ids = selectedImageIds
+    }
+    // Only include selected text paragraphs (paper + review)
+    const selectedPaperIds = paperParagraphs.value
+      .filter((p: any) => selectedItemIds.value.has(p.id))
+      .map((p: any) => p.id)
+    const selectedReviewParIds = reviewParagraphs.value
+      .filter((p: any) => selectedItemIds.value.has(p.id))
+      .map((p: any) => p.id)
+    const textIds = [...selectedPaperIds, ...selectedReviewParIds]
+    if (textIds.length > 0) {
+      payload.text_ids = textIds
     }
     await publisher.dispatchAnnual(payload)
     snackbar.showMessage('已提交人工审核任务，请等待审核', 'success')
@@ -934,7 +1032,18 @@ onMounted(async () => {
               <div v-if="paperParagraphs.length > 0">
                 <div class="d-flex align-center mb-3">
                   <span class="text-subtitle-1 font-weight-bold">段落AI生成分析</span>
+                  <v-chip size="small" class="ml-2" :color="selectedPaperCount > 0 ? 'primary' : 'default'">
+                    已选 {{ selectedPaperCount }}/{{ paperParagraphs.length }}
+                  </v-chip>
                   <v-spacer />
+                  <v-btn
+                    size="small"
+                    variant="text"
+                    :color="allPaperSelected ? 'warning' : 'primary'"
+                    @click="allPaperSelected ? deselectAllItems('paper') : selectAllItems('paper')"
+                  >
+                    {{ allPaperSelected ? '取消全选' : '全选' }}
+                  </v-btn>
                   <v-btn-toggle v-model="paperSortMode" mandatory density="compact" variant="outlined" divided>
                     <v-btn value="order" size="small">按顺序</v-btn>
                     <v-btn value="risk" size="small">按风险</v-btn>
@@ -949,10 +1058,20 @@ onMounted(async () => {
                           v-for="para in sortedPaperParagraphs"
                           :key="para.id"
                           class="section-list-item"
-                          :class="{ 'section-selected': selectedPaperId === para.id }"
+                          :class="{ 'section-selected': selectedPaperId === para.id, 'section-checked': isItemSelected(para.id) }"
                           @click="selectPaperParagraph(para.id)"
                         >
                           <div class="d-flex align-center mb-1">
+                            <v-checkbox
+                              :model-value="isItemSelected(para.id)"
+                              @click.stop
+                              @update:model-value="toggleItemSelection(para.id)"
+                              color="primary"
+                              hide-details
+                              density="compact"
+                              class="flex-shrink-0 mr-1"
+                              style="margin-top: 0; padding-top: 0;"
+                            />
                             <v-icon :color="getProbabilityColor(para.confidence)" class="mr-2" size="small">
                               {{ para.confidence > 0.5 ? 'mdi-alert-circle' : 'mdi-check-circle' }}
                             </v-icon>
@@ -1116,7 +1235,18 @@ onMounted(async () => {
               <div v-if="reviewParagraphs.length > 0" class="mt-4">
                 <div class="d-flex align-center mb-3">
                   <span class="text-subtitle-1 font-weight-bold">评审文本段落分析</span>
+                  <v-chip size="small" class="ml-2" :color="selectedReviewCount > 0 ? 'primary' : 'default'">
+                    已选 {{ selectedReviewCount }}/{{ reviewParagraphs.length }}
+                  </v-chip>
                   <v-spacer />
+                  <v-btn
+                    size="small"
+                    variant="text"
+                    :color="allReviewSelected ? 'warning' : 'primary'"
+                    @click="allReviewSelected ? deselectAllItems('review') : selectAllItems('review')"
+                  >
+                    {{ allReviewSelected ? '取消全选' : '全选' }}
+                  </v-btn>
                   <v-btn-toggle v-model="reviewSortMode" mandatory density="compact" variant="outlined" divided>
                     <v-btn value="order" size="small">按顺序</v-btn>
                     <v-btn value="risk" size="small">按风险</v-btn>
@@ -1131,10 +1261,20 @@ onMounted(async () => {
                           v-for="para in sortedReviewParagraphs"
                           :key="para.id"
                           class="section-list-item"
-                          :class="{ 'section-selected': selectedReviewId === para.id }"
+                          :class="{ 'section-selected': selectedReviewId === para.id, 'section-checked': isItemSelected(para.id) }"
                           @click="selectReviewParagraph(para.id)"
                         >
                           <div class="d-flex align-center mb-1">
+                            <v-checkbox
+                              :model-value="isItemSelected(para.id)"
+                              @click.stop
+                              @update:model-value="toggleItemSelection(para.id)"
+                              color="primary"
+                              hide-details
+                              density="compact"
+                              class="flex-shrink-0 mr-1"
+                              style="margin-top: 0; padding-top: 0;"
+                            />
                             <v-icon :color="getProbabilityColor(para.confidence)" class="mr-2" size="small">
                               {{ para.confidence > 0.5 ? 'mdi-alert-circle' : 'mdi-check-circle' }}
                             </v-icon>
@@ -1249,6 +1389,18 @@ onMounted(async () => {
             <v-card-title class="pa-6">
               <v-icon color="info" class="mr-2">mdi-image-search</v-icon>
               <span class="text-h6">图片分析</span>
+              <v-chip size="small" class="ml-4" :color="selectedImageCount > 0 ? 'primary' : 'default'">
+                已选 {{ selectedImageCount }}/{{ imageItems.length }}
+              </v-chip>
+              <v-spacer />
+              <v-btn
+                size="small"
+                variant="text"
+                :color="allImageSelected ? 'warning' : 'primary'"
+                @click="allImageSelected ? deselectAllItems('image') : selectAllItems('image')"
+              >
+                {{ allImageSelected ? '取消全选' : '全选' }}
+              </v-btn>
             </v-card-title>
             <v-card-text class="pa-6">
               <div v-if="imageCard && imageCard.summary" class="text-body-1 mb-4">
@@ -1268,10 +1420,24 @@ onMounted(async () => {
                     elevation="2"
                     rounded="lg"
                     class="overflow-hidden cursor-pointer"
-                    :class="{ 'image-card-fake': img.is_fake, 'image-card-normal': img.result_id && !img.is_fake }"
+                    :class="{
+                      'image-card-fake': img.is_fake,
+                      'image-card-normal': img.result_id && !img.is_fake,
+                      'image-card-checked': img.image_id && isItemSelected(`image_${img.image_id}`)
+                    }"
                     hover
                     @click="viewImageDetail(img)"
                   >
+                    <div class="image-checkbox-overlay" @click.stop>
+                      <v-checkbox
+                        :model-value="img.image_id ? isItemSelected(`image_${img.image_id}`) : false"
+                        @update:model-value="img.image_id ? toggleItemSelection(`image_${img.image_id}`) : undefined"
+                        color="primary"
+                        hide-details
+                        density="compact"
+                        style="margin-top: 0; padding-top: 0;"
+                      />
+                    </div>
                     <v-img
                       v-if="img.image_url || img.url"
                       :src="getImageUrl(img.image_url || img.url)"
@@ -1688,6 +1854,28 @@ onMounted(async () => {
         </v-card-title>
 
         <v-card-text class="pa-6">
+          <!-- Selection summary -->
+          <div class="mb-4">
+            <div class="text-subtitle-1 font-weight-bold mb-2">已选材料</div>
+            <div class="d-flex flex-wrap gap-2">
+              <v-chip v-if="selectedPaperCount > 0" size="small" color="primary" variant="tonal">
+                <v-icon start size="x-small">mdi-file-document</v-icon>
+                论文段落 {{ selectedPaperCount }} 篇
+              </v-chip>
+              <v-chip v-if="selectedReviewCount > 0" size="small" color="warning" variant="tonal">
+                <v-icon start size="x-small">mdi-comment-text</v-icon>
+                评审段落 {{ selectedReviewCount }} 篇
+              </v-chip>
+              <v-chip v-if="selectedImageCount > 0" size="small" color="info" variant="tonal">
+                <v-icon start size="x-small">mdi-image</v-icon>
+                图片 {{ selectedImageCount }} 张
+              </v-chip>
+              <div v-if="selectedTotalCount === 0" class="text-body-2 text-grey">
+                未选择任何材料，请在下方返回选择需要审核的材料
+              </div>
+            </div>
+          </div>
+
           <!-- Reviewer selection -->
           <div class="mb-4">
             <div class="text-subtitle-1 font-weight-bold mb-2">选择审核人员</div>
@@ -1815,6 +2003,10 @@ onMounted(async () => {
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
 }
 
+.section-list-item.section-checked {
+  border-left-color: #4caf50;
+}
+
 .paragraph-detail-text {
   line-height: 1.8;
   color: #333;
@@ -1838,6 +2030,19 @@ onMounted(async () => {
 
 .image-card-normal {
   border-left: 4px solid rgb(var(--v-theme-success)) !important;
+}
+
+.image-card-checked {
+  box-shadow: 0 0 0 2px rgb(var(--v-theme-primary)) !important;
+}
+
+.image-checkbox-overlay {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 10;
+  background-color: rgba(255, 255, 255, 0.8);
+  border-radius: 4px;
 }
 
 .image-verdict-overlay {
