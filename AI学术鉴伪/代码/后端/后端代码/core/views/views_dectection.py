@@ -788,7 +788,7 @@ def get_task_text_results(request, task_id):
             return Response({"message": "Not a text-related task"}, status=400)
             
         results = TextDetectionResult.objects.filter(detection_task=task)
-        
+
         data = []
         for tdr in results:
             data.append({
@@ -800,7 +800,24 @@ def get_task_text_results(request, task_id):
                 "confidence_score": tdr.confidence_score,
                 "detection_time": timezone.localtime(tdr.detection_time) if tdr.detection_time else None
             })
-            
+
+        # 结构化任务 (paper_text/review_text/multi_material) 结果在 StructuredDetectionResult，
+        # 没有逐资源的 TextDetectionResult 记录，需要从容器补充文本资源列表
+        if not data and task.task_type in ['paper_text', 'review_text', 'multi_material']:
+            from core.models import StructuredDetectionResult, ReviewTextResource
+            if StructuredDetectionResult.objects.filter(detection_task=task).exists() and task.container:
+                container_texts = ReviewTextResource.objects.filter(container=task.container)
+                for txt in container_texts:
+                    data.append({
+                        "result_id": None,
+                        "resource_id": txt.id,
+                        "text_type": _resolve_text_result_type(txt, task),
+                        "status": task.status,
+                        "is_fake": False,
+                        "confidence_score": 0,
+                        "detection_time": None
+                    })
+
         return Response({
             "task_id": task.id,
             "task_name": task.task_name,

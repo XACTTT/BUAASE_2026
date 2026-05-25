@@ -496,12 +496,15 @@ const submitReview = async () => {
   if (!canSubmitReview.value) return
   submittingReview.value = true
   try {
-    await publisher.dispatchAnnual({
+    const payload: any = {
       task_id: props.taskId,
-      text_ids: selectedResourceIds.value,
       reviewers: selectedReviewers.value,
       reason: reviewReason.value
-    })
+    }
+    if (selectedResourceIds.value.length > 0) {
+      payload.text_ids = selectedResourceIds.value
+    }
+    await publisher.dispatchAnnual(payload)
     snackbar.showMessage('已提交人工审核任务，请等待审核', 'success')
     router.push('/annual')
   } catch (error: any) {
