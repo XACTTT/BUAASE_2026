@@ -200,6 +200,8 @@ def parse_uploaded_file_task(file_management_id, container_id, content_type, fil
         
         if content_type == 'application/pdf' or file_ext == 'pdf':
             FileIngestService._extract_images_from_pdf(file_management, container, storage_path)
+        elif FileIngestService._is_docx_upload(content_type, file_ext):
+            FileIngestService._extract_images_from_docx(file_management, container, full_saved_path)
         elif is_zip:
             FileIngestService._extract_images_from_zip(file_management, container, full_saved_path)
         elif content_type.startswith('image/') or file_ext in FileIngestService.IMAGE_EXTENSIONS:

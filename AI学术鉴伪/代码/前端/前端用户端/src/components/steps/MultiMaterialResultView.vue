@@ -373,6 +373,17 @@ function getProbabilityColor(probability: number): string {
   return 'success'
 }
 
+const SUB_METHOD_LABELS: Record<string, string> = {
+  splicing: '拼接',
+  blurring: '模糊',
+  bruteforce: '暴力',
+  contrast: '对比度',
+  inpainting: '修复',
+}
+function getSubMethodLabel(method: string): string {
+  return SUB_METHOD_LABELS[method] || method
+}
+
 function getProbabilityLevel(probability: number): string {
   if (probability > 0.8) return '高风险'
   if (probability > 0.5) return '中风险'
@@ -1283,6 +1294,18 @@ onMounted(async () => {
                           size="small"
                         >
                           {{ ((img.confidence || 0) * 100).toFixed(1) }}%
+                        </v-chip>
+                      </div>
+                      <div v-if="img.sub_methods && img.sub_methods.length > 0" class="d-flex flex-wrap justify-center ga-1 mt-1">
+                        <v-chip
+                          v-for="sm in img.sub_methods"
+                          :key="sm.method"
+                          :color="sm.probability > 0.5 ? 'error' : sm.probability > 0.3 ? 'warning' : 'success'"
+                          size="x-small"
+                          label
+                          variant="tonal"
+                        >
+                          {{ getSubMethodLabel(sm.method) }} {{ (sm.probability * 100).toFixed(0) }}%
                         </v-chip>
                       </div>
                       <div v-if="img.image_id" class="text-caption text-grey mt-1">

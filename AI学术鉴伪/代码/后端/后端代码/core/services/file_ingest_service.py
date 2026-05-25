@@ -363,6 +363,17 @@ class FileIngestService:
         return False
 
     @staticmethod
+    def _is_docx_upload(content_type: str, file_ext: str) -> bool:
+        docx_mime_types = {
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        }
+        if content_type in docx_mime_types:
+            return True
+        if file_ext in ('docx', 'doc'):
+            return True
+        return False
+
+    @staticmethod
     def _save_pil_image(image: Image.Image, relative_path: str) -> None:
         full_path = os.path.join(settings.MEDIA_ROOT, relative_path)
         os.makedirs(os.path.dirname(full_path), exist_ok=True)
@@ -456,6 +467,66 @@ class FileIngestService:
                 'PDF image extraction for file %s: kept %d, skipped %d small, %d duplicates',
                 file_management.id, image_counter, skipped_small, skipped_dup,
             )
+
+    @staticmethod
+    def _extract_images_from_docx(file_management, container, file_path, source_kind='docx_extracted'):
+        import logging
+        _logger = logging.getLogger(__name__)
+
+        full_file_path = os.path.join(settings.MEDIA_ROOT, file_path) if not os.path.isabs(file_path) else file_path
+        image_counter = 0
+        seen_hashes = set()
+        skipped_small = 0
+        skipped_dup = 0
+
+        with zipfile.ZipFile(full_file_path, 'r') as zf:
+            for member_name in zf.namelist():
+                info = zf.getinfo(member_name)
+                if info.is_dir():
+                    continue
+                lower_name = member_name.lower()
+                if not lower_name.startswith('word/media/'):
+                    continue
+                file_ext = os.path.splitext(lower_name)[1].lstrip('.').lower()
+                if file_ext not in FileIngestService.IMAGE_EXTENSIONS:
+                    continue
+
+                image_data = zf.read(member_name)
+                with Image.open(io.BytesIO(image_data)) as pil_check:
+                    w, h = pil_check.size
+                if w * h < FileIngestService.MIN_IMAGE_AREA:
+                    skipped_small += 1
+                    continue
+
+                content_hash = hashlib.sha256(image_data).hexdigest()
+                if content_hash in seen_hashes:
+                    skipped_dup += 1
+                    continue
+                seen_hashes.add(content_hash)
+
+                image_counter += 1
+                if not file_ext or not file_ext.isalnum():
+                    file_ext = 'png'
+                unique_name = f"{file_management.id}_{uuid.uuid4().hex}.{file_ext}"
+                relative_path = os.path.join('extracted_images', unique_name).replace('\\', '/')
+
+                with Image.open(io.BytesIO(image_data)) as pil_image:
+                    FileIngestService._save_pil_image(pil_image, relative_path)
+
+                FileIngestService._create_image_record(
+                    file_management=file_management,
+                    container=container,
+                    relative_path=relative_path,
+                    image_data=image_data,
+                    image_role='figure',
+                    source_kind=source_kind,
+                    image_index=image_counter,
+                )
+
+        _logger.info(
+            'DOCX image extraction for file %s: kept %d, skipped %d small, %d duplicates',
+            file_management.id, image_counter, skipped_small, skipped_dup,
+        )
 
     @staticmethod
     def _extract_images_from_zip(file_management, container, zip_file_path):

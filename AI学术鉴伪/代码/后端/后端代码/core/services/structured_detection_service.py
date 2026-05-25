@@ -478,12 +478,18 @@ class StructuredDetectionService:
         if images:
             image_ids = [img.get('image_id') for img in images if img.get('image_id')]
             detection_map = {}
+            sub_map = {}
             if image_ids:
                 for dr in DetectionResult.objects.filter(
                     image_upload_id__in=image_ids
                 ).order_by('-id'):
                     if dr.image_upload_id not in detection_map:
                         detection_map[dr.image_upload_id] = dr
+                for sub in SubDetectionResult.objects.filter(
+                    detection_result__image_upload_id__in=image_ids
+                ).select_related('detection_result'):
+                    dr_id = sub.detection_result_id
+                    sub_map.setdefault(dr_id, []).append(sub)
 
             image_items = []
             for img in images:
@@ -497,6 +503,22 @@ class StructuredDetectionService:
                     item['is_fake'] = dr.is_fake
                     item['confidence'] = float(dr.confidence_score) if dr.confidence_score else 0
                     item['status'] = dr.status
+                    item['has_ela'] = bool(dr.ela_image)
+                    item['has_llm'] = bool(dr.llm_judgment)
+                    item['exif_flags'] = {
+                        'photoshop': dr.exif_photoshop,
+                        'time_modified': dr.exif_time_modified,
+                    }
+                    subs = sub_map.get(dr.id, [])
+                    if subs:
+                        item['sub_methods'] = [
+                            {
+                                'method': s.method,
+                                'probability': float(s.probability) if s.probability is not None else 0,
+                                'has_mask': bool(s.mask_image),
+                            }
+                            for s in subs
+                        ]
                 image_items.append(item)
 
             material_cards.append({
@@ -910,7 +932,8 @@ class StructuredDetectionService:
                     parse_status__in=['parsed', 'failed']
                 ).exists()
             except Exception:
-                return True
+                logger.exception('Error checking parse status for files %s', target_file_ids)
+                return False
 
         elapsed = 0
         last_count = 0
