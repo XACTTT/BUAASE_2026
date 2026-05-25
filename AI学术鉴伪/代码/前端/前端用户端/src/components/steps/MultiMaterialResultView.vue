@@ -500,12 +500,19 @@ const submitReview = async () => {
     showReviewDialog.value = false
     router.push('/annual')
   } catch (error: any) {
-    const backendMsg = error?.response?.data?.error || error?.response?.data?.错误
+    console.error('Review submit error:', JSON.stringify(error?.response, null, 2))
+    const respData = error?.response?.data
+    let backendMsg = ''
+    if (typeof respData === 'string') {
+      backendMsg = respData.substring(0, 200)
+    } else if (respData) {
+      backendMsg = respData.error || respData.错误 || respData.detail || respData.message || ''
+    }
     let message = '提交人工审核任务失败'
     if (error?.code === 'ERR_NETWORK') {
       message = '用户无权限'
     } else if (backendMsg) {
-      message = backendMsg
+      message = typeof backendMsg === 'string' ? backendMsg : JSON.stringify(backendMsg)
     }
     snackbar.showMessage(message, 'error')
   } finally {

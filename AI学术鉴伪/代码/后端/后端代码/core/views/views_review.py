@@ -7,7 +7,7 @@ from rest_framework import status
 from ..models import (
     ReviewRequest, ManualReview, DetectionResult, User, DetectionTask,
     PublisherReviewerRelationship, ImageReview, TextReview, ReviewTextResource,
-    ImageUpload, Log, StructuredDetectionResult,
+    ImageUpload, Log, StructuredDetectionResult, TextDetectionResult,
 )
 from django.utils import timezone
 from rest_framework.decorators import api_view, permission_classes
@@ -168,8 +168,11 @@ def get_reviewers_for_publisher(request, publisher_id):
 @permission_classes([IsAuthenticated])
 @action_log('audit_submit', target_type='ReviewRequest', target_id_field='review_request_id')
 def create_review_task_with_admin_check(request):
-    user_id = request.user.id
-    user = User.objects.get(id=user_id)
+    try:
+        user = User.objects.get(id=request.user.id)
+    except User.DoesNotExist:
+        return Response({'error': 'User not found'}, status=404)
+
     if not user.has_permission('publish'):
         return Response({"错误": "该用户没有发布的权限"}, status=403)
 
@@ -182,51 +185,50 @@ def create_review_task_with_admin_check(request):
     reviewers = request.data.get('reviewers', [])
     reason = request.data.get('reason', 'No reason provided')
 
-    # 如果提供了 task_id，自动从 DetectionTask 中解析 image_ids 和 text_ids
-    if task_id and not image_ids and not text_ids:
-        from core.models import DetectionTask, TextDetectionResult, DetectionResult
-        try:
-            det_task = DetectionTask.objects.get(id=task_id, user=request.user)
-        except DetectionTask.DoesNotExist:
-            return Response({'error': 'DetectionTask not found'}, status=404)
-
-        # --- 解析 image_ids：ImageUpload FK → DetectionResult FK → container ---
-        image_ids = list(det_task.image_uploads.values_list('id', flat=True))
-        if not image_ids:
-            image_ids = list(
-                DetectionResult.objects.filter(detection_task=det_task)
-                .values_list('image_upload_id', flat=True)
-            )
-        if not image_ids and det_task.container:
-            image_ids = list(det_task.container.images.values_list('id', flat=True))
-
-        # --- 解析 text_ids：TextDetectionResult → extra_payload → container ---
-        text_ids = list(
-            TextDetectionResult.objects.filter(
-                detection_task=det_task
-            ).values_list('text_resource_id', flat=True)
-        )
-        if not text_ids and det_task.extra_payload:
-            raw_ids = det_task.extra_payload.get('review_text_ids') or []
-            if raw_ids:
-                text_ids = [int(x) for x in raw_ids if str(x).isdigit()]
-        if not text_ids and det_task.container:
-            text_ids = list(det_task.container.review_texts.values_list('id', flat=True))
-
-        # --- 结构化检测任务 (paper_text/review_text/multi_material) 回退 ---
-        if not image_ids and not text_ids:
-            if StructuredDetectionResult.objects.filter(detection_task=det_task).exists():
-                if det_task.container:
-                    image_ids = list(det_task.container.images.values_list('id', flat=True))
-                    text_ids = list(det_task.container.review_texts.values_list('id', flat=True))
-
-    # 验证参数
-    if not image_ids and not text_ids:
-        return Response({'error': 'image_ids or text_ids is required'}, status=400)
-    if not reviewers:
-        return Response({'error': 'reviewers is required'}, status=400)
-
     try:
+        # 如果提供了 task_id，自动从 DetectionTask 中解析 image_ids 和 text_ids
+        if task_id and not image_ids and not text_ids:
+            try:
+                det_task = DetectionTask.objects.get(id=task_id, user=request.user)
+            except DetectionTask.DoesNotExist:
+                return Response({'error': 'DetectionTask not found'}, status=404)
+
+            # --- 解析 image_ids：ImageUpload FK → DetectionResult FK → container ---
+            image_ids = list(det_task.image_uploads.values_list('id', flat=True))
+            if not image_ids:
+                image_ids = list(
+                    DetectionResult.objects.filter(detection_task=det_task)
+                    .values_list('image_upload_id', flat=True)
+                )
+            if not image_ids and det_task.container:
+                image_ids = list(det_task.container.images.values_list('id', flat=True))
+
+            # --- 解析 text_ids：TextDetectionResult → extra_payload → container ---
+            text_ids = list(
+                TextDetectionResult.objects.filter(
+                    detection_task=det_task
+                ).values_list('text_resource_id', flat=True)
+            )
+            if not text_ids and det_task.extra_payload:
+                raw_ids = det_task.extra_payload.get('review_text_ids') or []
+                if raw_ids:
+                    text_ids = [int(x) for x in raw_ids if str(x).isdigit()]
+            if not text_ids and det_task.container:
+                text_ids = list(det_task.container.review_texts.values_list('id', flat=True))
+
+            # --- 结构化检测任务 (paper_text/review_text/multi_material) 回退 ---
+            if not image_ids and not text_ids:
+                if StructuredDetectionResult.objects.filter(detection_task=det_task).exists():
+                    if det_task.container:
+                        image_ids = list(det_task.container.images.values_list('id', flat=True))
+                        text_ids = list(det_task.container.review_texts.values_list('id', flat=True))
+
+        # 验证参数
+        if not image_ids and not text_ids:
+            return Response({'error': 'image_ids or text_ids is required'}, status=400)
+        if not reviewers:
+            return Response({'error': 'reviewers is required'}, status=400)
+
         images = []
         texts = []
         
