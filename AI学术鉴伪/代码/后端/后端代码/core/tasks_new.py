@@ -982,12 +982,13 @@ def finalize_text_task(_chord_results: list | None, task_pk: int, text_num: int,
             
         task.completion_time = timezone.now()
         task.save(update_fields=["status", "completion_time"])
-        
-        try:
-            generate_text_detection_report(task)
-        except Exception:
-            import logging
-            logging.getLogger(__name__).exception("Failed to generate text detection report for task %s", task_pk)
+
+    # Report generation outside the transaction - failure doesn't affect task status
+    try:
+        generate_text_detection_report(task)
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception("Failed to generate text detection report for task %s", task_pk)
 
     log_action(
         user=task.user,
@@ -1029,11 +1030,6 @@ def run_structured_detection_task(self, task_pk: int):
 
     try:
         StructuredDetectionService.execute_task(task)
-        try:
-            generate_structured_detection_report(task)
-        except Exception:
-            import logging
-            logging.getLogger(__name__).exception("Failed to generate structured detection report for task %s", task_pk)
     except BertTextAITransientError as exc:
         StructuredDetectionService.mark_failed(task, str(exc))
         send_task_progress_update(
@@ -1052,6 +1048,13 @@ def run_structured_detection_task(self, task_pk: int):
             message=f'检测失败: {exc}'
         )
         return
+
+    # Report generation after task completion - failure doesn't affect detection status
+    try:
+        generate_structured_detection_report(task)
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception("Failed to generate structured detection report for task %s", task_pk)
 
     send_task_progress_update(
         task_id=task_pk,

@@ -213,6 +213,13 @@ def create_review_task_with_admin_check(request):
         if not text_ids and det_task.container:
             text_ids = list(det_task.container.review_texts.values_list('id', flat=True))
 
+        # --- 结构化检测任务 (paper_text/review_text/multi_material) 回退 ---
+        if not image_ids and not text_ids:
+            if StructuredDetectionResult.objects.filter(detection_task=det_task).exists():
+                if det_task.container:
+                    image_ids = list(det_task.container.images.values_list('id', flat=True))
+                    text_ids = list(det_task.container.review_texts.values_list('id', flat=True))
+
     # 验证参数
     if not image_ids and not text_ids:
         return Response({'error': 'image_ids or text_ids is required'}, status=400)

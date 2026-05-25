@@ -411,6 +411,11 @@ const toggleLLM = () => {
 const downloadReport = async () => {
   try {
     const response = await publisher.downloadReport(props.task_id)
+    if (response.status !== 200) {
+      const msg = response.data?.detail || '报告生成中，请稍后重试'
+      snackbar.showMessage(msg, 'warning')
+      return
+    }
     const contentDisposition = response.headers['content-disposition']
 
     let fileName = `task_${props.task_id}_report.pdf`
@@ -428,6 +433,7 @@ const downloadReport = async () => {
     a.click();
     document.body.removeChild(a);
     window.URL.revokeObjectURL(url);
+    snackbar.showMessage('报告下载成功', 'success')
   } catch (error) {
     snackbar.showMessage('报告下载失败', 'error')
   }

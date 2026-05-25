@@ -446,6 +446,11 @@ function openReviewDialog() {
 const downloadReport = async () => {
   try {
     const response = await publisher.downloadReport(props.taskId)
+    if (response.status !== 200) {
+      const msg = response.data?.detail || '报告生成中，请稍后重试'
+      snackbar.showMessage(msg, 'warning')
+      return
+    }
     const contentDisposition = response.headers['content-disposition']
     let fileName = `task_${props.taskId}_report.pdf`
     if (contentDisposition) {
@@ -461,6 +466,7 @@ const downloadReport = async () => {
     a.click()
     document.body.removeChild(a)
     window.URL.revokeObjectURL(url)
+    snackbar.showMessage('报告下载成功', 'success')
   } catch (error) {
     snackbar.showMessage('报告下载失败', 'error')
   }
@@ -470,11 +476,15 @@ const submitReview = async () => {
   if (!canSubmitReview.value) return
   submittingReview.value = true
   try {
-    await publisher.dispatchAnnual({
+    const payload: any = {
       task_id: props.taskId,
       reviewers: selectedReviewers.value,
       reason: reviewReason.value
-    })
+    }
+    if (imageItems.value.length > 0) {
+      payload.image_ids = imageItems.value.map((img: any) => img.image_id).filter(Boolean)
+    }
+    await publisher.dispatchAnnual(payload)
     snackbar.showMessage('已提交人工审核任务，请等待审核', 'success')
     showReviewDialog.value = false
     router.push('/annual')

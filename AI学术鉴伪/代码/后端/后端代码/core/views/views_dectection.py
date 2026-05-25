@@ -31,7 +31,11 @@ from core.services.structured_detection_service import StructuredDetectionServic
 from core.services.permissions import can_access_detection_task
 from ..utils.log_utils import action_log, log_action, get_client_ip
 from django.db.models import Q
-from ..utils.report_generator import generate_detection_task_report
+from ..utils.report_generator import (
+    generate_detection_task_report,
+    generate_text_detection_report,
+    generate_structured_detection_report,
+)
 from ..utils.serializers_safe import serialize_value
 
 @api_view(['GET'])
@@ -817,7 +821,11 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from ..models import DetectionTask
 
-from ..utils.report_generator import generate_detection_task_report
+from ..utils.report_generator import (
+    generate_detection_task_report,
+    generate_text_detection_report,
+    generate_structured_detection_report,
+)
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
@@ -838,8 +846,21 @@ def download_task_report(request, task_id):
         return Response({"detail": "Task not completed yet."}, status=400)
 
     if not task.report_file:
-        # generate_detection_task_report(task)
-        return Response({"detail": "Report is still being generated."}, status=202)
+        # On-demand generation: try to generate the report now
+        try:
+            if task.task_type == 'image':
+                generate_detection_task_report(task)
+            elif task.task_type in ('paper_text', 'review_text'):
+                generate_text_detection_report(task)
+            elif task.task_type == 'multi_material':
+                generate_structured_detection_report(task)
+            task.refresh_from_db()
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception("On-demand report generation failed for task %s", task_id)
+
+        if not task.report_file:
+            return Response({"detail": "报告生成失败，请稍后重试"}, status=500)
 
     abs_path = os.path.join(settings.MEDIA_ROOT, task.report_file.name)
     if not os.path.exists(abs_path):
