@@ -2056,7 +2056,9 @@ def get_review_request_detail(request, manual_review_id):
         }
 
     task_type = None
-    if review_request.detection_result and review_request.detection_result.detection_task:
+    if review_request.detection_task:
+        task_type = review_request.detection_task.task_type or review_request.detection_task.detect_type
+    elif review_request.detection_result and review_request.detection_result.detection_task:
         task_type = review_request.detection_result.detection_task.task_type
     elif review_request.text_detection_result and review_request.text_detection_result.detection_task:
         task_type = review_request.text_detection_result.detection_task.task_type
@@ -2134,6 +2136,7 @@ def get_review_request_detail(request, manual_review_id):
 
     # 获取 texts 数据
     texts = []
+    grouped_texts = {}
     for index, text in enumerate(manual_review.text_resources.all()):
         text_result = None
         if review_request.detection_task_id:
@@ -2148,8 +2151,19 @@ def get_review_request_detail(request, manual_review_id):
         items = []
         if text_result:
             items = text_result.ai_generated_paragraphs or []
-        elif structured_items and index == 0:
-            items = structured_items
+        elif structured_items:
+            selected_item_id = (text.normalized_text or '').strip()
+            matched_items = [
+                item for item in structured_items
+                if selected_item_id and item.get('item_id') == selected_item_id
+            ]
+            raw_text = (text.raw_text or '').strip()
+            if not matched_items:
+                matched_items = [
+                    item for item in structured_items
+                    if str(item.get('text') or '').strip() == raw_text
+                ]
+            items = matched_items
 
         source_file_id = None
         if paper_files:
@@ -2159,15 +2173,60 @@ def get_review_request_detail(request, manual_review_id):
         elif structured_items:
             source_file_id = structured_items[0].get('source_file_id')
 
-        texts.append({
+        if review_request.detection_task_id and structured_items and not items and not text_result:
+            continue
+
+        text_payload = {
             "id": text.id,
-            "raw_text": text.raw_text[:200] + '...' if len(text.raw_text) > 200 else text.raw_text,
+            "raw_text": text.raw_text,
             "source_type": text.source_type,
             "items": items,
             "source_file_id": source_file_id,
-        })
+        }
+        if review_request.detection_task_id and items:
+            item = dict(items[0])
+            item["text_resource_id"] = text.id
+            group_key = item.get("source_file_id") or text.container_id or "text"
+            group = grouped_texts.setdefault(group_key, {
+                "id": text.id,
+                "raw_text": "",
+                "source_type": text.source_type,
+                "items": [],
+                "source_file_id": item.get("source_file_id"),
+                "preview_url": None,
+                "preview_pdf_url": None,
+                "file_ext": None,
+                "file_name": None,
+            })
+            group["items"].append(item)
+            continue
+
+        texts.append(text_payload)
 
     # 获取 persons 数据：所有参与该请求的 reviewer（来自 ManualReview 表）
+    for group in grouped_texts.values():
+        source_file_id = group.get("source_file_id")
+        file_material = None
+        if source_file_id:
+            for material in paper_files + review_files:
+                if material.get("file_id") == source_file_id:
+                    file_material = material
+                    break
+        if file_material:
+            sections = file_material.get("sections") or []
+            group["raw_text"] = "\n\n".join(
+                str(section.get("text") or "").strip()
+                for section in sections
+                if str(section.get("text") or "").strip()
+            )
+            group["file_ext"] = file_material.get("file_ext")
+            group["file_name"] = file_material.get("file_name")
+            group["preview_url"] = request.build_absolute_uri(f"/api/preview/file/{source_file_id}/")
+            group["preview_pdf_url"] = request.build_absolute_uri(f"/api/preview/file/{source_file_id}/?as_pdf=1")
+        if not group["raw_text"]:
+            group["raw_text"] = "\n\n".join(item.get("text") or "" for item in group["items"])
+        texts.append(group)
+
     persons = []
     for reviewer in review_request.reviewers.all():
         persons.append({

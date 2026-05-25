@@ -71,10 +71,18 @@ const submittingReview = ref(false)
 // --- Section checkbox selection (for review submission) ---
 const selectedSectionIds = ref<Set<string>>(new Set())
 
-function toggleSectionSelection(item_id: string, event?: Event) {
-  if (event) event.stopPropagation()
+function toggleSectionSelection(item_id: string, checked?: boolean | Event) {
+  if (checked && typeof checked !== 'boolean' && typeof checked.stopPropagation === 'function') {
+    checked.stopPropagation()
+  }
   const newSet = new Set(selectedSectionIds.value)
-  if (newSet.has(item_id)) {
+  if (typeof checked === 'boolean') {
+    if (checked) {
+      newSet.add(item_id)
+    } else {
+      newSet.delete(item_id)
+    }
+  } else if (newSet.has(item_id)) {
     newSet.delete(item_id)
   } else {
     newSet.add(item_id)
@@ -141,6 +149,71 @@ const selectedResourceIds = computed<number[]>(() => {
   }
 
   return [...idSet]
+})
+
+const manualReviewTaskType = computed(() => {
+  const rawTaskType = props.taskMeta?.task_type
+  if (['paper_text', 'review_text', 'multi_material'].includes(rawTaskType)) {
+    return rawTaskType
+  }
+  const detectType = props.taskMeta?.detect_type
+  if (detectType === 'review') return 'review_text'
+  if (detectType === 'multi') return 'multi_material'
+  return 'paper_text'
+})
+
+const selectedManualReviewResources = computed(() => {
+  const materials = props.taskMeta?.materials || {}
+  const files = Array.isArray(materials.files) ? materials.files : []
+  const reviewTexts = Array.isArray(materials.review_texts) ? materials.review_texts : []
+  const fileIds = new Set<number>()
+  const textIds = new Set<number>()
+
+  const addFileByIndex = (index: number) => {
+    const id = Number(files[index]?.id)
+    if (Number.isFinite(id) && id > 0) fileIds.add(id)
+  }
+
+  const addTextByIndex = (index: number) => {
+    const id = Number(reviewTexts[index]?.id)
+    if (Number.isFinite(id) && id > 0) textIds.add(id)
+  }
+
+  for (const itemId of selectedSectionIds.value) {
+    const parts = String(itemId).split('_')
+    const paperIndexPos = parts.lastIndexOf('paper')
+    if (paperIndexPos >= 0) {
+      addFileByIndex(Number(parts[paperIndexPos + 1]))
+      continue
+    }
+
+    const reviewFilePos = parts.findIndex((part, index) => part === 'review' && parts[index + 1] === 'file')
+    if (reviewFilePos >= 0) {
+      addFileByIndex(Number(parts[reviewFilePos + 2]))
+      continue
+    }
+
+    const reviewTextPos = parts.findIndex((part, index) => part === 'review' && parts[index + 1] === 'text')
+    if (reviewTextPos >= 0) {
+      addTextByIndex(Number(parts[reviewTextPos + 2]))
+    }
+  }
+
+  if (fileIds.size === 0 && textIds.size === 0) {
+    for (const id of selectedResourceIds.value) {
+      if (manualReviewTaskType.value === 'review_text' && files.length === 0) {
+        textIds.add(id)
+      } else {
+        fileIds.add(id)
+      }
+    }
+  }
+
+  return {
+    file_ids: [...fileIds],
+    text_ids: [...textIds],
+    selected_section_ids: [...selectedSectionIds.value],
+  }
 })
 
 const allPaperSelected = computed(() => {
@@ -496,13 +569,16 @@ const submitReview = async () => {
   if (!canSubmitReview.value) return
   submittingReview.value = true
   try {
+    const selectedResources = selectedManualReviewResources.value
     const payload: any = {
       task_id: props.taskId,
+      task_type: manualReviewTaskType.value,
+      review_type: 'text',
+      file_ids: selectedResources.file_ids,
+      text_ids: selectedResources.text_ids,
+      selected_section_ids: selectedResources.selected_section_ids,
       reviewers: selectedReviewers.value,
       reason: reviewReason.value
-    }
-    if (selectedResourceIds.value.length > 0) {
-      payload.text_ids = selectedResourceIds.value
     }
     await publisher.dispatchAnnual(payload)
     snackbar.showMessage('已提交人工审核任务，请等待审核', 'success')

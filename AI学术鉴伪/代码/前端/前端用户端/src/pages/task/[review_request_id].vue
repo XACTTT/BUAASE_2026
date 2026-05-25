@@ -182,6 +182,18 @@
                       </v-chip>
                     </div>
 
+                    <v-card variant="flat" class="text-content-card pa-4 mb-4">
+                      <div class="d-flex align-center mb-3">
+                        <v-icon class="mr-2" color="primary">mdi-text-box</v-icon>
+                        <div class="text-subtitle-1 font-weight-bold text-truncate">
+                          {{ currentTextResult.title || `文本 ${currentResourceIndex + 1}` }}
+                        </div>
+                      </div>
+                      <div class="text-body-1 text-content">
+                        {{ currentTextResult.raw_text || '暂无文本内容' }}
+                      </div>
+                    </v-card>
+
                     <!-- 事实性造假分析 (论文模式) -->
                     <div v-if="currentTextResult.factual_fake_reason" class="mb-6">
                       <div class="text-h6 font-weight-bold mb-2 d-flex align-center text-error">
@@ -238,15 +250,62 @@
               <div class="reviewer-info mt-4">
                 <template v-if="review_results.length > 0">
                   <div v-for="(review, index) in review_results" :key="index"
-                    class="reviewer-item d-flex align-center pa-3 mb-4 rounded" style="min-height: 64px;">
-                    <v-avatar size="40" class="mr-3" color="primary">
-                      <v-img v-if="review.avatar" :src="getImageUrl(review.avatar)" cover></v-img>
-                      <span v-else class="text-h6">{{ review.username.charAt(0) }}</span>
-                    </v-avatar>
-                    <div class="flex-grow-1">
-                      <div class="text-body-1 font-weight-medium">{{ review.username }}</div>
-                      <div class="text-caption text-grey mt-1">结果：{{ getResult(review.result) }}</div>
+                    class="reviewer-item pa-4 mb-4 rounded">
+                    <div class="d-flex align-center mb-3">
+                      <v-avatar size="40" class="mr-3" color="primary">
+                        <v-img v-if="review.avatar" :src="getImageUrl(review.avatar)" cover></v-img>
+                        <span v-else class="text-h6">{{ review.username.charAt(0) }}</span>
+                      </v-avatar>
+                      <div class="flex-grow-1">
+                        <div class="text-body-1 font-weight-medium">{{ review.username }}</div>
+                        <div class="text-caption text-grey" v-if="review.review_time">{{ review.review_time }}</div>
+                      </div>
+                      <v-chip size="small" :color="review.result ? 'error' : 'success'" variant="tonal">
+                        {{ getResult(review.result) }}
+                      </v-chip>
                     </div>
+
+                    <div class="review-summary-block mb-3">
+                      <div class="text-caption text-grey mb-1">综合审核意见</div>
+                      <div class="text-body-2 review-comment">
+                        {{ review.overall_comment || '暂无综合审核意见' }}
+                      </div>
+                    </div>
+
+                    <div v-if="review.template_review_score !== null && review.template_review_score !== undefined" class="review-summary-block mb-3">
+                      <div class="d-flex justify-space-between align-center mb-1">
+                        <span class="text-caption text-grey">模板化复核</span>
+                        <v-chip size="x-small" color="warning" variant="tonal">{{ review.template_review_score }} 分</v-chip>
+                      </div>
+                      <div class="text-body-2 review-comment">
+                        {{ review.template_review_comment || '暂无模板化复核意见' }}
+                      </div>
+                    </div>
+
+                    <div v-if="review.paragraph_reviews && review.paragraph_reviews.length" class="review-summary-block">
+                      <div class="text-caption text-grey mb-2">段落复核</div>
+                      <div
+                        v-for="(paragraph, pIndex) in review.paragraph_reviews.slice(0, 3)"
+                        :key="pIndex"
+                        class="paragraph-review-item pa-2 mb-2 rounded"
+                      >
+                        <div class="d-flex align-center mb-1">
+                          <v-chip size="x-small" color="primary" variant="tonal" class="mr-2">
+                            段落 {{ paragraph.paragraph_index ?? pIndex + 1 }}
+                          </v-chip>
+                          <span class="text-caption text-grey">
+                            {{ paragraph.is_ai_agreed === false ? '不同意AI判定' : '同意AI判定' }}
+                          </span>
+                        </div>
+                        <div class="text-caption review-comment">
+                          {{ paragraph.comment || paragraph.reason || '暂无段落说明' }}
+                        </div>
+                      </div>
+                      <div v-if="review.paragraph_reviews.length > 3" class="text-caption text-grey">
+                        还有 {{ review.paragraph_reviews.length - 3 }} 条段落复核意见
+                      </div>
+                    </div>
+
                     <v-btn variant="text" density="comfortable" class="details-btn" color="primary"
                       @click="handleViewDetail(review)">
                       查看详情
@@ -346,10 +405,16 @@ interface Image {
 }
 
 interface Review {
-  id: number,
-  username: string,
-  avatar: string,
+  id: number
+  username: string
+  avatar: string
   result: boolean
+  status?: string
+  review_time?: string | null
+  overall_comment?: string
+  paragraph_reviews?: any[]
+  template_review_score?: number | null
+  template_review_comment?: string | null
 }
 
 interface TextReviewDetail {
@@ -358,6 +423,19 @@ interface TextReviewDetail {
   template_review_score?: number | null
   template_review_comment?: string | null
   result: boolean
+}
+
+interface ManualReviewRecord {
+  manual_review_id: number
+  status: string
+  review_time?: string | null
+  reviewer: {
+    id: number
+    username: string
+    avatar: string
+  }
+  image_reviews?: any[]
+  text_reviews?: any[]
 }
 
 // 定义路由参数的类型
@@ -373,6 +451,9 @@ interface dimension {
 interface TextResult {
   result_id: number
   resource_id: number
+  item_id?: string
+  raw_text?: string
+  title?: string
   text_type: string
   status: string
   is_fake: boolean
@@ -396,6 +477,7 @@ const done = ref(0)
 const process = ref(0)
 const AI_detection = ref(0)
 const review_results = ref<Review[]>([])
+const allManualReviews = ref<ManualReviewRecord[]>([])
 const textReviewDetail = ref<TextReviewDetail | null>(null)
 const reasons = ref<string[]>([])
 const result = ref(false)
@@ -445,6 +527,38 @@ const buildTextResultsFromStructuredResult = (structured: any, fallbackTexts: an
   const sections = structured?.sections || structured?.result?.evidence?.per_section || []
   const summary = structured?.summary || structured?.result?.summary || ''
   const detectType = structured?.detect_type
+  const sectionLookup = new Map<string, any>()
+  if (Array.isArray(sections)) {
+    sections.forEach((section: any) => {
+      if (section?.item_id) sectionLookup.set(String(section.item_id), section)
+    })
+  }
+
+  if (fallbackTexts.length > 0) {
+    return fallbackTexts.map((text: any, index: number) => {
+      const itemId = String(text.item_id || '')
+      const section = itemId ? sectionLookup.get(itemId) : null
+      const probability = section?.probabilities?.aigc ?? section?.confidence_score ?? overall?.confidence_score ?? 0
+      return {
+        result_id: text.text_id || index + 1,
+        resource_id: text.text_id || index + 1,
+        item_id: itemId,
+        raw_text: text.full_text || text.raw_text || section?.text || '',
+        title: section?.title || text.source_type || `文本 ${index + 1}`,
+        text_type: text.source_type || section?.source_file || detectType || 'structured',
+        status: structured?.status || 'completed',
+        is_fake: Boolean(section?.is_aigc ?? overall?.is_fake ?? structured?.overall_is_fake),
+        confidence_score: Number(probability || 0),
+        ai_generated_paragraphs: section?.is_aigc && (section?.text || text.full_text || text.raw_text)
+          ? [section?.text || text.full_text || text.raw_text]
+          : [],
+        factual_fake_reason: detectType === 'paper' ? (section?.label_name || summary || '') : undefined,
+        template_tendency_score: detectType === 'review' ? Number(probability || 0) : undefined,
+        template_analysis_reason: detectType === 'review' ? (section?.label_name || summary || '') : undefined,
+      }
+    })
+  }
+
   const resolveTextResourceId = (section: any, index: number) => {
     const itemId = String(section?.item_id || '')
     const parts = itemId.split('_')
@@ -467,6 +581,9 @@ const buildTextResultsFromStructuredResult = (structured: any, fallbackTexts: an
       return {
         result_id: index + 1,
         resource_id: resolveTextResourceId(section, index),
+        item_id: section?.item_id,
+        raw_text: section?.text || '',
+        title: section?.title || section?.item_id || `文本 ${index + 1}`,
         text_type: section?.source_file || section?.title || detectType || 'structured',
         status: structured?.status || 'completed',
         is_fake: Boolean(section?.is_aigc),
@@ -482,6 +599,9 @@ const buildTextResultsFromStructuredResult = (structured: any, fallbackTexts: an
   return fallbackTexts.map((text: any, index: number) => ({
     result_id: text.text_id || index + 1,
     resource_id: text.text_id || index + 1,
+    item_id: text.item_id,
+    raw_text: text.full_text || text.raw_text || '',
+    title: text.source_type || `文本 ${index + 1}`,
     text_type: text.source_type || detectType || 'structured',
     status: structured?.status || 'completed',
     is_fake: Boolean(overall?.is_fake ?? structured?.overall_is_fake),
@@ -523,6 +643,43 @@ const fetchDetectionResults = async () => {
   }
 }
 
+const normalizeTextReviewResults = (textId: number | string): Review[] => {
+  const normalizedTextId = Number(textId)
+  return allManualReviews.value
+    .filter(item => item.status === 'completed')
+    .flatMap(item => {
+      const textReviews = Array.isArray(item.text_reviews) ? item.text_reviews : []
+      return textReviews
+        .filter((textReview: any) => Number(textReview.text_id) === normalizedTextId)
+        .map((textReview: any) => ({
+          id: item.reviewer.id,
+          username: item.reviewer.username,
+          avatar: item.reviewer.avatar,
+          status: item.status,
+          review_time: textReview.review_time || item.review_time,
+          result: Boolean(textReview.result),
+          overall_comment: textReview.overall_comment || '',
+          paragraph_reviews: Array.isArray(textReview.paragraph_reviews) ? textReview.paragraph_reviews : [],
+          template_review_score: textReview.template_review_score,
+          template_review_comment: textReview.template_review_comment,
+        }))
+    })
+}
+
+const fetchAllManualReviews = async () => {
+  try {
+    allManualReviews.value = (await publisher.getManualReviewsByRequest({
+      review_request_id: review_request_id.value,
+    })).data || []
+  } catch (error: any) {
+    const status = error?.response?.status
+    if (status !== 404) {
+      console.warn('Failed to fetch manual review aggregate:', error)
+    }
+    allManualReviews.value = []
+  }
+}
+
 // 当 multi_material 模式下切换 tab 时重置索引
 watch(activeTab, () => {
   if (isMultiMaterial.value) {
@@ -536,6 +693,14 @@ const fetchReview = async (img?: Image) => {
     if (isTextTask.value || (isMultiMaterial.value && activeTab.value === 'text')) {
       if (!currentTextResult.value?.resource_id) {
         review_results.value = []
+        return
+      }
+      if (allManualReviews.value.length === 0) {
+        await fetchAllManualReviews()
+      }
+      const aggregateResults = normalizeTextReviewResults(currentTextResult.value.resource_id)
+      if (aggregateResults.length > 0) {
+        review_results.value = aggregateResults
         return
       }
       review_results.value = (await publisher.getTextReviewAll({
@@ -558,6 +723,16 @@ const fetchReviewDetail = async (review: Review) => {
   try {
     if (isTextTask.value || (isMultiMaterial.value && activeTab.value === 'text')) {
       if (!currentTextResult.value?.resource_id) return
+      if (review.overall_comment !== undefined || review.paragraph_reviews !== undefined) {
+        textReviewDetail.value = {
+          overall_comment: review.overall_comment,
+          paragraph_reviews: review.paragraph_reviews || [],
+          template_review_score: review.template_review_score,
+          template_review_comment: review.template_review_comment,
+          result: review.result,
+        }
+        return
+      }
       textReviewDetail.value = (await publisher.getTextReviewDetail({
         review_request_id: review_request_id.value,
         text_id: currentTextResult.value.resource_id,
@@ -687,6 +862,7 @@ onMounted(async () => {
     const hasTexts = response.texts && response.texts.length > 0
     const resolvedTaskType = resolveTaskType(response)
     const isStructuredTask = ['paper_text', 'review_text', 'multi_material'].includes(resolvedTaskType)
+    await fetchAllManualReviews()
 
     structuredTaskId.value = response.task_id ? Number(response.task_id) : null
     done.value = response.status.done
@@ -700,6 +876,9 @@ onMounted(async () => {
       textResults.value = (response.texts || []).map((t: any) => ({
         result_id: t.text_id,
         resource_id: t.text_id,
+        item_id: t.item_id,
+        raw_text: t.full_text || t.raw_text || '',
+        title: t.source_type || `文本 ${t.text_id}`,
         text_type: t.source_type,
         status: 'completed',
         is_fake: false,
@@ -722,6 +901,9 @@ onMounted(async () => {
       textResults.value = response.texts.map((t: any) => ({
         result_id: t.text_id,
         resource_id: t.text_id,
+        item_id: t.item_id,
+        raw_text: t.full_text || t.raw_text || '',
+        title: t.source_type || `文本 ${t.text_id}`,
         text_type: t.source_type,
         status: 'completed',
         is_fake: false,
@@ -751,6 +933,9 @@ onMounted(async () => {
       textResults.value = response.texts.map((t: any) => ({
         result_id: t.text_id,
         resource_id: t.text_id,
+        item_id: t.item_id,
+        raw_text: t.full_text || t.raw_text || '',
+        title: t.source_type || `文本 ${t.text_id}`,
         text_type: t.source_type,
         status: 'completed',
         is_fake: false,
@@ -777,14 +962,14 @@ onMounted(async () => {
 .task-detail {
   position: relative;
   min-height: 100vh;
-  max-height: 100vh;
   background-color: rgb(var(--v-theme-surface));
-  overflow: hidden;
+  overflow-y: auto;
+  padding-bottom: 88px;
 }
 
 .main-content {
-  height: calc(100vh - 80px);
-  overflow: hidden;
+  min-height: calc(100vh - 80px);
+  overflow: visible;
   background-color: rgb(var(--v-theme-surface));
 }
 
@@ -894,23 +1079,25 @@ onMounted(async () => {
 
 .content-container {
   width: 100%;
-  max-width: min(1200px, 95vw);
+  max-width: min(1400px, 96vw);
   display: flex;
   justify-content: center;
+  align-items: stretch;
 }
 
 .preview-section {
   flex: 1;
   min-width: 0;
-  max-width: min(800px, 60vw);
+  max-width: min(780px, 52vw);
   margin: 0 12px;
 }
 
 .preview-box {
   position: relative;
   height: calc(100vh - 380px);
+  min-height: 520px;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
   background-color: transparent;
   overflow: hidden;
@@ -943,18 +1130,18 @@ onMounted(async () => {
 }
 
 .review-section {
-  width: clamp(260px, 20vw, 300px);
+  width: clamp(320px, 26vw, 380px);
   padding: 20px;
   background-color: rgb(var(--v-theme-surface));
   height: calc(100vh - 380px);
+  min-height: 520px;
   overflow-y: auto;
   flex-shrink: 0;
   position: relative;
 }
 
 .review-header {
-  position: sticky;
-  top: 0;
+  position: relative;
   background-color: rgb(var(--v-theme-surface));
   z-index: 1;
   padding-bottom: 8px;
@@ -977,13 +1164,40 @@ onMounted(async () => {
 }
 
 .details-btn {
-  opacity: 0;
+  opacity: 1;
   transition: opacity 0.2s ease;
   white-space: nowrap;
 }
 
 .reviewer-item:hover .details-btn {
   opacity: 1;
+}
+
+.text-content-card {
+  background: rgb(var(--v-theme-surface)) !important;
+  border: 1px solid rgba(var(--v-theme-primary), 0.12);
+}
+
+.text-content {
+  white-space: pre-wrap;
+  line-height: 1.8;
+  word-break: break-word;
+}
+
+.review-summary-block {
+  border-top: 1px solid rgba(var(--v-theme-on-surface), 0.08);
+  padding-top: 10px;
+}
+
+.review-comment {
+  white-space: pre-wrap;
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+.paragraph-review-item {
+  background: rgba(var(--v-theme-primary), 0.04);
+  border: 1px solid rgba(var(--v-theme-primary), 0.10);
 }
 
 .unprocessed-chip {

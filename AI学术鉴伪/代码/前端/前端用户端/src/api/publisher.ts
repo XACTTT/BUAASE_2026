@@ -116,6 +116,10 @@ export default {
     return http.get(`/get_request_detail/${data.review_request_id}/`)
   },
 
+  getManualReviewsByRequest(data: any) {
+    return http.get(`/manual-review/${data.review_request_id}/`)
+  },
+
   //publisher获取单个图片的所有人工审核结果
   getImageReviewAll(data: any) {
     return http.get(`/get_img_review_all/?review_request_id=${data.review_request_id}&img_id=${data.img_id}`)
@@ -127,6 +131,14 @@ export default {
   },
 
   //publisher根据imgid获取detectionid
+  getTextReviewAll(data: any) {
+    return http.get(`/get_text_review_all/?review_request_id=${data.review_request_id}&text_id=${data.text_id}`)
+  },
+
+  getTextReviewDetail(data: any) {
+    return http.get(`/get_text_review/?review_request_id=${data.review_request_id}&text_id=${data.text_id}&reviewer_id=${data.reviewer_id}`)
+  },
+
   getDetectionID(data: any) {
     return http.get(`/tasks_image/${data.img_id}/getdr/`)
   },
