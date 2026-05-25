@@ -262,7 +262,6 @@ def create_review_task_with_admin_check(request):
         # 不会有逐资源的 DetectionResult / TextDetectionResult
         if not detection_result and not text_detection_result:
             if task_id:
-                from core.models import StructuredDetectionResult
                 if not StructuredDetectionResult.objects.filter(detection_task_id=task_id).exists():
                     return Response({'error': 'No detection result found for the provided resources'}, status=404)
             else:
