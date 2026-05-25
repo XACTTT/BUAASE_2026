@@ -99,7 +99,7 @@ def _draw_footer(c, W, page_num, gen_time):
 
 
 def _draw_cover_page(c, W, H, title, subtitle, task):
-    """Draw a branded cover page. Returns nothing; caller should call c.showPage()."""
+    """Draw a branded cover page. Does NOT call c.showPage() — caller handles page transitions."""
     gen_time = timezone.localtime(timezone.now()).strftime("%Y-%m-%d %H:%M:%S")
 
     # Navy background block at top
@@ -157,7 +157,6 @@ def _draw_cover_page(c, W, H, title, subtitle, task):
     c.drawCentredString(W / 2, 50, f"报告生成时间：{gen_time}")
     c.setFillColor(COLOR_BODY_TEXT)
 
-    c.showPage()
     return gen_time
 
 
@@ -467,6 +466,195 @@ def generate_text_detection_report(task: DetectionTask) -> str:
 
     text_results = task.text_detection_results.select_related("text_resource").order_by("id")
 
+    # ── Structured Detection Result Page (rich content from StructuredDetectionResult) ──
+    structured = None
+    try:
+        structured = task.structured_result
+    except Exception:
+        pass
+
+    if structured:
+        c.showPage()
+        page_num += 1
+        _draw_header(c, (W, H), header_title)
+        _draw_footer(c, (W, H), page_num, gen_time)
+        y = H - HEADER_BAR_HEIGHT - 16
+
+        # ── 1. Overall Conclusion ──
+        y = _draw_section_title(c, y, W, "综合检测结论")
+
+        overall_fake = structured.overall_is_fake if structured.overall_is_fake is not None else False
+        overall_conf = structured.confidence_score if structured.confidence_score is not None else 0.0
+        y = _draw_verdict_badge(c, MARGIN + 8, y, overall_fake, overall_conf)
+        y -= 4
+
+        # Parse payload for risk_level and other structured data
+        payload = {}
+        if structured.result_payload:
+            try:
+                payload = structured.result_payload
+                if isinstance(payload, str):
+                    payload = json.loads(payload)
+            except Exception:
+                payload = {}
+
+        overall_data = payload.get("overall", {})
+        risk_level = overall_data.get("risk_level", "-")
+
+        conclusion_rows = [
+            ("综合判定", "造假" if overall_fake else "真实"),
+            ("综合置信度", f"{overall_conf:.1%}"),
+            ("风险等级", str(risk_level)),
+        ]
+        y, page_num = _ensure_space(c, y, W, H, 80, page_num, header_title, gen_time)
+        y = _draw_info_box(c, y, W, conclusion_rows, col_widths=110)
+        y -= 6
+
+        # ── 2. Summary ──
+        if structured.summary:
+            y, page_num = _ensure_space(c, y, W, H, 50, page_num, header_title, gen_time)
+            y = _draw_section_title(c, y, W, "检测摘要", level=2)
+            y = _draw_multiline(c, MARGIN + 8, y, structured.summary, max_chars=72)
+            y -= 8
+
+        # ── 3. Dimensions Table ──
+        dimensions = payload.get("dimensions", [])
+        if dimensions:
+            y, page_num = _ensure_space(c, y, W, H, 50, page_num, header_title, gen_time)
+            y = _draw_section_title(c, y, W, "检测维度评分", level=2)
+
+            dim_rows = []
+            for dim in dimensions:
+                dim_name = dim.get("name", "-")
+                dim_score = dim.get("score", 0)
+                dim_summary = dim.get("summary", "")
+                if isinstance(dim_score, (int, float)):
+                    dim_rows.append((dim_name, f"{dim_score:.2f}  |  {dim_summary}"))
+                else:
+                    dim_rows.append((dim_name, str(dim_summary)))
+
+            y, page_num = _ensure_space(c, y, W, H, len(dim_rows) * 20 + 20, page_num, header_title, gen_time)
+            y = _draw_info_box(c, y, W, dim_rows, col_widths=130)
+            y -= 8
+
+        # ── 4. Evidence Statistics ──
+        evidence = payload.get("evidence", {})
+        if evidence:
+            y, page_num = _ensure_space(c, y, W, H, 50, page_num, header_title, gen_time)
+            y = _draw_section_title(c, y, W, "AIGC 检测统计", level=2)
+
+            ev_stat_rows = [
+                ("检测模型", str(evidence.get("model_dir", "-"))),
+                ("文本语言", str(evidence.get("lang", "-"))),
+                ("总段落数", str(evidence.get("section_count", "-"))),
+                ("AIGC段落数", str(evidence.get("aigc_section_count", "-"))),
+            ]
+
+            aggregate = evidence.get("aggregate", {})
+            if aggregate:
+                ev_stat_rows.extend([
+                    ("AIGC比例", f"{aggregate.get('aigc_ratio', 0):.1%}"),
+                    ("平均AIGC概率", f"{aggregate.get('mean_aigc_probability', 0):.4f}"),
+                    ("平均置信度", f"{aggregate.get('mean_confidence', 0):.4f}"),
+                    ("最高置信度", f"{aggregate.get('max_confidence', 0):.4f}"),
+                    ("最低置信度", f"{aggregate.get('min_confidence', 0):.4f}"),
+                ])
+
+            y, page_num = _ensure_space(c, y, W, H, len(ev_stat_rows) * 20 + 20, page_num, header_title, gen_time)
+            y = _draw_info_box(c, y, W, ev_stat_rows, col_widths=130)
+            y -= 8
+
+        # ── 5. Per-Section Analysis ──
+        per_section = evidence.get("per_section", [])
+        if per_section:
+            y, page_num = _ensure_space(c, y, W, H, 50, page_num, header_title, gen_time)
+            y = _draw_section_title(c, y, W, "逐段落 AI 生成检测", level=2)
+
+            for sec_idx, sec in enumerate(per_section):
+                # Each section needs ~80px minimum
+                y, page_num = _ensure_space(c, y, W, H, 80, page_num, header_title, gen_time)
+
+                sec_title = sec.get("title", f"段落 {sec_idx + 1}")
+                sec_is_aigc = sec.get("is_aigc", False)
+                sec_label_name = sec.get("label_name", "")
+                sec_confidence = sec.get("confidence_score", 0)
+                sec_item_id = sec.get("item_id", "")
+                sec_page_num = sec.get("page_number")
+                sec_source = sec.get("source_file", "")
+                sec_text = sec.get("text", "")
+                sec_probs = sec.get("probabilities", {})
+
+                # Color-coded header line
+                if sec_is_aigc:
+                    c.setFillColor(COLOR_RED)
+                    status_tag = " [AIGC]"
+                else:
+                    c.setFillColor(COLOR_GREEN)
+                    status_tag = " [非AIGC]"
+
+                header_text = f"{sec_title}{status_tag}"
+                c.setFont(FONT_BOLD, 9)
+                c.drawString(MARGIN + 8, y, header_text)
+
+                # Confidence and label on the same line, right-aligned area
+                c.setFillColor(COLOR_BODY_TEXT)
+                c.setFont(FONT_REGULAR, 8)
+                conf_text = f"{sec_label_name}  置信度: {sec_confidence:.2%}"
+                c.drawString(MARGIN + 220, y, conf_text)
+                y -= 14
+
+                # Probabilities row
+                human_prob = sec_probs.get("human", 0)
+                aigc_prob = sec_probs.get("aigc", 0)
+                c.setFont(FONT_REGULAR, 8)
+                c.drawString(MARGIN + 16, y, f"人工概率: {human_prob:.2%}  AIGC概率: {aigc_prob:.2%}")
+                y -= 12
+
+                # Source metadata
+                meta_parts = []
+                if sec_page_num is not None:
+                    meta_parts.append(f"页码: {sec_page_num}")
+                if sec_source:
+                    meta_parts.append(f"来源: {sec_source}")
+                if meta_parts:
+                    c.setFont(FONT_REGULAR, 7)
+                    c.setFillColor(COLOR_FOOTER_TEXT)
+                    c.drawString(MARGIN + 16, y, "  |  ".join(meta_parts))
+                    c.setFillColor(COLOR_BODY_TEXT)
+                    y -= 12
+
+                # Text preview (shorten to 300 chars)
+                if sec_text:
+                    text_preview = sec_text[:300] + ("..." if len(sec_text) > 300 else "")
+                    y = _draw_multiline(c, MARGIN + 16, y, text_preview, max_chars=68, size=8, leading=11)
+
+                # Divider
+                y -= 4
+                c.setStrokeColor(COLOR_LIGHT_GRAY)
+                c.setLineWidth(0.3)
+                c.line(MARGIN + 16, y, W - MARGIN - 16, y)
+                c.setLineWidth(1)
+                y -= 8
+
+        # ── LLM Analysis from payload ──
+        llm_analysis = payload.get("llm_analysis", "")
+        if llm_analysis:
+            y, page_num = _ensure_space(c, y, W, H, 50, page_num, header_title, gen_time)
+            y = _draw_section_title(c, y, W, "大语言模型分析", level=2)
+            y = _draw_multiline(c, MARGIN + 8, y, str(llm_analysis), max_chars=72)
+            y -= 8
+
+    # ── End of Structured Result Section ──
+
+    if not text_results.exists() and not structured:
+        # No data at all — draw a notice on the cover page
+        c.setFont(FONT_REGULAR, 11)
+        c.setFillColor(COLOR_FOOTER_TEXT)
+        c.drawCentredString(W / 2, 280, "暂无检测数据")
+        c.setFillColor(COLOR_BODY_TEXT)
+        c.save()
+        return _save_task_report(task, rel_path)
+
     for idx, tr in enumerate(text_results, start=1):
         # Each text result gets its own page(s)
         c.showPage()
@@ -715,42 +903,25 @@ def generate_structured_detection_report(task: DetectionTask) -> str:
                 y = _draw_info_box(c, y, W, rows, col_widths=120)
                 y -= 6
 
-        # Per-section analysis
-        per_section = payload.get("per_section", [])
-        if per_section:
+        # ── Dimensions (paper/review tasks) ───────────────────────────────────
+        dimensions = payload.get("dimensions", [])
+        if dimensions:
             y, page_num = _ensure_space(c, y, W, H, 50, page_num, header_title, gen_time)
-            y = _draw_section_title(c, y, W, "分章节分析", level=2)
+            y = _draw_section_title(c, y, W, "评分维度", level=2)
+            for dim in dimensions:
+                y, page_num = _ensure_space(c, y, W, H, 50, page_num, header_title, gen_time)
+                dim_name = dim.get("name", "维度")
+                dim_score = dim.get("score", None)
+                dim_summary = dim.get("summary", "")
 
-            for sec_idx, section in enumerate(per_section):
-                y, page_num = _ensure_space(c, y, W, H, 60, page_num, header_title, gen_time)
-
-                sec_name = section.get("section_name", section.get("name", f"章节 {sec_idx + 1}"))
-                sec_fake = section.get("is_fake", section.get("fake", None))
-                sec_conf = section.get("confidence", section.get("score", 0))
-                sec_reason = section.get("reason", section.get("analysis", ""))
-
-                # Section header with color
-                if sec_fake is True:
-                    c.setFillColor(COLOR_RED)
-                    label = f"{sec_name}  - 疑似造假"
-                elif sec_fake is False:
-                    c.setFillColor(COLOR_GREEN)
-                    label = f"{sec_name}  - 正常"
-                else:
-                    c.setFillColor(COLOR_BODY_TEXT)
-                    label = sec_name
-
-                c.setFont(FONT_BOLD, 10)
-                c.drawString(MARGIN + 8, y, label)
-                c.setFillColor(COLOR_BODY_TEXT)
-
-                if isinstance(sec_conf, (int, float)):
+                c.setFont(FONT_BOLD, 9)
+                c.drawString(MARGIN + 8, y, dim_name)
+                if isinstance(dim_score, (int, float)):
                     c.setFont(FONT_REGULAR, 8)
-                    c.drawString(MARGIN + 250, y, f"置信度：{sec_conf:.4f}")
-
+                    c.drawString(MARGIN + 250, y, f"评分：{dim_score:.2f}")
                 y -= 14
-                if sec_reason:
-                    y = _draw_multiline(c, MARGIN + 16, y, str(sec_reason), max_chars=68, size=8, leading=11)
+                if dim_summary:
+                    y = _draw_multiline(c, MARGIN + 16, y, str(dim_summary), max_chars=68, size=8, leading=11)
                 y -= 4
                 c.setStrokeColor(COLOR_LIGHT_GRAY)
                 c.setLineWidth(0.3)
@@ -758,28 +929,225 @@ def generate_structured_detection_report(task: DetectionTask) -> str:
                 c.setLineWidth(1)
                 y -= 6
 
-        # Image analysis from payload
-        img_analysis = payload.get("image_analysis", [])
+        # ── Validation info ───────────────────────────────────────────────────
+        validation = payload.get("validation", {})
+        if validation:
+            y, page_num = _ensure_space(c, y, W, H, 50, page_num, header_title, gen_time)
+            y = _draw_section_title(c, y, W, "数据校验", level=2)
+            val_rows = []
+            if "valid" in validation:
+                val_rows.append(("校验结果", "通过" if validation["valid"] else "未通过"))
+            if "message" in validation:
+                val_rows.append(("校验信息", str(validation["message"])[:100]))
+            if "missing_required" in validation:
+                missing = validation["missing_required"]
+                if isinstance(missing, list):
+                    val_rows.append(("缺失项", ", ".join(str(m) for m in missing)[:100]))
+                else:
+                    val_rows.append(("缺失项", str(missing)[:100]))
+            for k, v in validation.items():
+                if k not in ("valid", "message", "missing_required"):
+                    val_rows.append((str(k), str(v)[:80]))
+            if val_rows:
+                y, page_num = _ensure_space(c, y, W, H, len(val_rows) * 20 + 20, page_num, header_title, gen_time)
+                y = _draw_info_box(c, y, W, val_rows, col_widths=110)
+                y -= 6
+
+        # ── Evidence statistics ────────────────────────────────────────────────
+        evidence_data = payload.get("evidence", {})
+        if evidence_data:
+            aggregate = evidence_data.get("aggregate", {})
+            has_aggregate = bool(aggregate)
+            section_count = evidence_data.get("section_count")
+            aigc_section_count = evidence_data.get("aigc_section_count")
+            lang = evidence_data.get("lang", "")
+            model_dir = evidence_data.get("model_dir", "")
+
+            if has_aggregate or section_count is not None or lang:
+                y, page_num = _ensure_space(c, y, W, H, 50, page_num, header_title, gen_time)
+                y = _draw_section_title(c, y, W, "证据统计", level=2)
+                stat_rows = []
+                if lang:
+                    stat_rows.append(("文档语言", lang))
+                if model_dir:
+                    stat_rows.append(("检测模型", model_dir))
+                if section_count is not None:
+                    stat_rows.append(("总章节数", str(section_count)))
+                if aigc_section_count is not None:
+                    stat_rows.append(("AIGC章节数", str(aigc_section_count)))
+                if aggregate:
+                    aigc_ratio = aggregate.get("aigc_ratio")
+                    if isinstance(aigc_ratio, (int, float)):
+                        stat_rows.append(("AIGC占比", f"{aigc_ratio:.2%}"))
+                    mean_prob = aggregate.get("mean_aigc_probability")
+                    if isinstance(mean_prob, (int, float)):
+                        stat_rows.append(("平均AIGC概率", f"{mean_prob:.4f}"))
+                    mean_conf = aggregate.get("mean_confidence")
+                    if isinstance(mean_conf, (int, float)):
+                        stat_rows.append(("平均置信度", f"{mean_conf:.4f}"))
+                    max_conf = aggregate.get("max_confidence")
+                    if isinstance(max_conf, (int, float)):
+                        stat_rows.append(("最大置信度", f"{max_conf:.4f}"))
+                    min_conf = aggregate.get("min_confidence")
+                    if isinstance(min_conf, (int, float)):
+                        stat_rows.append(("最小置信度", f"{min_conf:.4f}"))
+                if stat_rows:
+                    y, page_num = _ensure_space(c, y, W, H, len(stat_rows) * 20 + 20, page_num, header_title, gen_time)
+                    y = _draw_info_box(c, y, W, stat_rows, col_widths=120)
+                    y -= 6
+
+        # ── Material cards (multi tasks) ──────────────────────────────────────
+        material_cards = payload.get("material_cards", [])
+        if material_cards:
+            y, page_num = _ensure_space(c, y, W, H, 50, page_num, header_title, gen_time)
+            y = _draw_section_title(c, y, W, "材料卡片", level=2)
+            for mc_idx, card in enumerate(material_cards):
+                y, page_num = _ensure_space(c, y, W, H, 60, page_num, header_title, gen_time)
+                mc_type = card.get("type", "未知")
+                mc_label = card.get("label", f"材料 {mc_idx + 1}")
+                mc_summary = card.get("summary", "")
+                mc_score = card.get("score", None)
+                mc_file_count = card.get("file_count", 0)
+
+                # Card header
+                type_label = {"paper": "论文", "review": "评审", "image": "图像"}.get(mc_type, mc_type)
+                c.setFont(FONT_BOLD, 10)
+                c.setFillColor(COLOR_ACCENT)
+                c.drawString(MARGIN + 8, y, f"[{type_label}] {mc_label}")
+                c.setFillColor(COLOR_BODY_TEXT)
+                if isinstance(mc_score, (int, float)):
+                    c.setFont(FONT_REGULAR, 8)
+                    c.drawString(MARGIN + 250, y, f"评分：{mc_score:.2f}")
+                y -= 14
+
+                if mc_summary:
+                    y = _draw_multiline(c, MARGIN + 16, y, str(mc_summary), max_chars=68, size=8, leading=11)
+
+                if mc_file_count:
+                    c.setFont(FONT_REGULAR, 8)
+                    c.drawString(MARGIN + 16, y, f"文件数量：{mc_file_count}")
+                    y -= 12
+
+                # Files list
+                mc_files = card.get("files", [])
+                if mc_files:
+                    c.setFont(FONT_REGULAR, 8)
+                    for f_idx, f_info in enumerate(mc_files[:10]):
+                        f_name = f_info.get("file_name", f_info.get("name", f"文件{f_idx + 1}"))
+                        f_id = f_info.get("file_id", f_info.get("id", ""))
+                        c.drawString(MARGIN + 24, y, f"- {f_name} (ID: {f_id})")
+                        y -= 11
+                        if y < CONTENT_MIN_Y:
+                            y, page_num = _ensure_space(c, y, W, H, 30, page_num, header_title, gen_time)
+
+                y -= 4
+                c.setStrokeColor(COLOR_LIGHT_GRAY)
+                c.setLineWidth(0.3)
+                c.line(MARGIN + 16, y, W - MARGIN - 16, y)
+                c.setLineWidth(1)
+                y -= 6
+
+        # ── Per-section analysis (from evidence.per_section) ──────────────────
+        per_section = evidence_data.get("per_section", []) if evidence_data else []
+        if per_section:
+            y, page_num = _ensure_space(c, y, W, H, 50, page_num, header_title, gen_time)
+            y = _draw_section_title(c, y, W, "分章节分析", level=2)
+
+            for sec_idx, section in enumerate(per_section):
+                y, page_num = _ensure_space(c, y, W, H, 60, page_num, header_title, gen_time)
+
+                sec_title = section.get("title", section.get("item_id", f"章节 {sec_idx + 1}"))
+                sec_is_aigc = section.get("is_aigc", None)
+                sec_conf = section.get("confidence_score", 0)
+                sec_label = section.get("label_name", "")
+                sec_text = section.get("text", "")
+                sec_page = section.get("page_number")
+                sec_source = section.get("source_file", "")
+                probabilities = section.get("probabilities", {})
+
+                # Section header with color
+                if sec_is_aigc is True:
+                    c.setFillColor(COLOR_RED)
+                    label = f"{sec_title}  - 疑似AIGC"
+                elif sec_is_aigc is False:
+                    c.setFillColor(COLOR_GREEN)
+                    label = f"{sec_title}  - 正常"
+                else:
+                    c.setFillColor(COLOR_BODY_TEXT)
+                    label = sec_title
+
+                c.setFont(FONT_BOLD, 10)
+                c.drawString(MARGIN + 8, y, label)
+                c.setFillColor(COLOR_BODY_TEXT)
+
+                # Confidence and label on the right
+                detail_parts = []
+                if isinstance(sec_conf, (int, float)):
+                    detail_parts.append(f"置信度：{sec_conf:.4f}")
+                if sec_label:
+                    detail_parts.append(f"标签：{sec_label}")
+                if detail_parts:
+                    c.setFont(FONT_REGULAR, 8)
+                    c.drawString(MARGIN + 250, y, "  ".join(detail_parts))
+
+                y -= 14
+
+                # Probabilities
+                if probabilities:
+                    prob_str = f"Human: {probabilities.get('human', 0):.2%}  AIGC: {probabilities.get('aigc', 0):.2%}"
+                    c.setFont(FONT_REGULAR, 8)
+                    c.drawString(MARGIN + 16, y, prob_str)
+                    y -= 12
+
+                # Page number and source
+                meta_parts = []
+                if sec_page is not None:
+                    meta_parts.append(f"页码：{sec_page}")
+                if sec_source:
+                    meta_parts.append(f"来源：{sec_source[:40]}")
+                if meta_parts:
+                    c.setFont(FONT_REGULAR, 8)
+                    c.drawString(MARGIN + 16, y, "  ".join(meta_parts))
+                    y -= 12
+
+                # Text excerpt
+                if sec_text:
+                    excerpt = sec_text[:200] + ("..." if len(sec_text) > 200 else "")
+                    y = _draw_multiline(c, MARGIN + 16, y, excerpt, max_chars=68, size=8, leading=11)
+
+                y -= 4
+                c.setStrokeColor(COLOR_LIGHT_GRAY)
+                c.setLineWidth(0.3)
+                c.line(MARGIN + 16, y, W - MARGIN - 16, y)
+                c.setLineWidth(1)
+                y -= 6
+
+        # ── Image analysis (from material_cards type='image') ─────────────────
+        img_cards = [mc for mc in material_cards if mc.get("type") == "image"] if material_cards else []
+        img_analysis = []
+        for ic in img_cards:
+            for img in ic.get("images", []):
+                img_analysis.append(img)
         if img_analysis:
             y, page_num = _ensure_space(c, y, W, H, 50, page_num, header_title, gen_time)
             y = _draw_section_title(c, y, W, "图像分析结果", level=2)
 
             for ia in img_analysis:
                 y, page_num = _ensure_space(c, y, W, H, 50, page_num, header_title, gen_time)
-                ia_name = ia.get("image_name", ia.get("name", "图像"))
-                ia_fake = ia.get("is_fake", ia.get("fake", None))
-                ia_conf = ia.get("confidence", ia.get("score", 0))
-                ia_reason = ia.get("reason", ia.get("analysis", ""))
+                ia_id = ia.get("image_id", "图像")
+                ia_fake = ia.get("is_fake", None)
+                ia_conf = ia.get("confidence", 0)
+                ia_methods = ia.get("sub_methods", [])
 
                 if ia_fake is True:
                     c.setFillColor(COLOR_RED)
-                    label = f"{ia_name}  - 疑似造假"
+                    label = f"图像 {ia_id}  - 疑似造假"
                 elif ia_fake is False:
                     c.setFillColor(COLOR_GREEN)
-                    label = f"{ia_name}  - 正常"
+                    label = f"图像 {ia_id}  - 正常"
                 else:
                     c.setFillColor(COLOR_BODY_TEXT)
-                    label = ia_name
+                    label = f"图像 {ia_id}"
                 c.setFont(FONT_BOLD, 9)
                 c.drawString(MARGIN + 8, y, label)
                 c.setFillColor(COLOR_BODY_TEXT)
@@ -789,61 +1157,76 @@ def generate_structured_detection_report(task: DetectionTask) -> str:
                     c.drawString(MARGIN + 250, y, f"置信度：{ia_conf:.4f}")
                 y -= 14
 
-                if ia_reason:
-                    y = _draw_multiline(c, MARGIN + 16, y, str(ia_reason), max_chars=68, size=8, leading=11)
-                y -= 6
-
-        # Text analysis from payload
-        txt_analysis = payload.get("text_analysis", [])
-        if txt_analysis:
-            y, page_num = _ensure_space(c, y, W, H, 50, page_num, header_title, gen_time)
-            y = _draw_section_title(c, y, W, "文本分析结果", level=2)
-
-            for ta in txt_analysis:
-                y, page_num = _ensure_space(c, y, W, H, 50, page_num, header_title, gen_time)
-                ta_name = ta.get("section_name", ta.get("name", "文本段"))
-                ta_fake = ta.get("is_fake", ta.get("fake", None))
-                ta_conf = ta.get("confidence", ta.get("score", 0))
-                ta_reason = ta.get("reason", ta.get("analysis", ""))
-
-                if ta_fake is True:
-                    c.setFillColor(COLOR_RED)
-                    label = f"{ta_name}  - 疑似AI生成"
-                elif ta_fake is False:
-                    c.setFillColor(COLOR_GREEN)
-                    label = f"{ta_name}  - 正常"
-                else:
-                    c.setFillColor(COLOR_BODY_TEXT)
-                    label = ta_name
-                c.setFont(FONT_BOLD, 9)
-                c.drawString(MARGIN + 8, y, label)
-                c.setFillColor(COLOR_BODY_TEXT)
-
-                if isinstance(ta_conf, (int, float)):
+                if ia_methods:
+                    methods_str = ", ".join(str(m) for m in ia_methods)[:120]
                     c.setFont(FONT_REGULAR, 8)
-                    c.drawString(MARGIN + 250, y, f"置信度：{ta_conf:.4f}")
-                y -= 14
-                if ta_reason:
-                    y = _draw_multiline(c, MARGIN + 16, y, str(ta_reason), max_chars=68, size=8, leading=11)
+                    c.drawString(MARGIN + 16, y, f"子方法：{methods_str}")
+                    y -= 12
                 y -= 6
 
-        # Cross analysis from payload
-        cross_analysis = payload.get("cross_analysis", {})
+        # ── Cross material analysis ───────────────────────────────────────────
+        cross_analysis = payload.get("cross_material_analysis", {})
         if cross_analysis:
             y, page_num = _ensure_space(c, y, W, H, 50, page_num, header_title, gen_time)
             y = _draw_section_title(c, y, W, "交叉分析", level=2)
-            if isinstance(cross_analysis, dict):
-                rows = [(str(k), str(v)[:100]) for k, v in cross_analysis.items()]
-            elif isinstance(cross_analysis, str):
-                rows = [("交叉分析", cross_analysis[:200])]
-            else:
-                rows = [("交叉分析", str(cross_analysis)[:200])]
-            if rows:
-                y, page_num = _ensure_space(c, y, W, H, len(rows) * 20 + 20, page_num, header_title, gen_time)
-                y = _draw_info_box(c, y, W, rows, col_widths=120)
+
+            cross_checks = cross_analysis.get("cross_checks", [])
+            mismatches = cross_analysis.get("mismatches", [])
+            recommendations = cross_analysis.get("recommendations", [])
+
+            if cross_checks:
+                c.setFont(FONT_BOLD, 9)
+                c.drawString(MARGIN + 8, y, "交叉校验项")
+                y -= 14
+                for cc in cross_checks:
+                    y, page_num = _ensure_space(c, y, W, H, 14, page_num, header_title, gen_time)
+                    y = _draw_multiline(c, MARGIN + 16, y, str(cc), max_chars=68, size=8, leading=11)
+                y -= 4
+
+            if mismatches:
+                y, page_num = _ensure_space(c, y, W, H, 30, page_num, header_title, gen_time)
+                c.setFont(FONT_BOLD, 9)
+                c.setFillColor(COLOR_RED)
+                c.drawString(MARGIN + 8, y, "不一致项")
+                c.setFillColor(COLOR_BODY_TEXT)
+                y -= 14
+                for mm in mismatches:
+                    y, page_num = _ensure_space(c, y, W, H, 14, page_num, header_title, gen_time)
+                    y = _draw_multiline(c, MARGIN + 16, y, str(mm), max_chars=68, size=8, leading=11)
+                y -= 4
+
+            if recommendations:
+                y, page_num = _ensure_space(c, y, W, H, 30, page_num, header_title, gen_time)
+                c.setFont(FONT_BOLD, 9)
+                c.drawString(MARGIN + 8, y, "建议")
+                y -= 14
+                for rec in recommendations:
+                    y, page_num = _ensure_space(c, y, W, H, 14, page_num, header_title, gen_time)
+                    y = _draw_multiline(c, MARGIN + 16, y, str(rec), max_chars=68, size=8, leading=11)
+                y -= 4
+
+            # Fallback: render any other keys in cross_analysis
+            other_keys = [k for k in cross_analysis if k not in ("cross_checks", "mismatches", "recommendations")]
+            if other_keys:
+                other_rows = [(str(k), str(cross_analysis[k])[:100]) for k in other_keys]
+                y, page_num = _ensure_space(c, y, W, H, len(other_rows) * 20 + 20, page_num, header_title, gen_time)
+                y = _draw_info_box(c, y, W, other_rows, col_widths=120)
                 y -= 6
 
-        # AI Response
+        # ── AI contribution ───────────────────────────────────────────────────
+        ai_contribution = payload.get("ai_contribution", [])
+        if ai_contribution:
+            y, page_num = _ensure_space(c, y, W, H, 50, page_num, header_title, gen_time)
+            y = _draw_section_title(c, y, W, "AI 贡献分析", level=2)
+            for ac_item in ai_contribution:
+                y, page_num = _ensure_space(c, y, W, H, 16, page_num, header_title, gen_time)
+                if isinstance(ac_item, str):
+                    y = _draw_multiline(c, MARGIN + 16, y, ac_item, max_chars=68, size=8, leading=11)
+                else:
+                    y = _draw_multiline(c, MARGIN + 16, y, str(ac_item), max_chars=68, size=8, leading=11)
+                y -= 4
+
+        # AI Response (from structured.ai_response field)
         ai_resp = {}
         if structured.ai_response:
             try:
@@ -856,7 +1239,6 @@ def generate_structured_detection_report(task: DetectionTask) -> str:
         if ai_resp:
             y, page_num = _ensure_space(c, y, W, H, 60, page_num, header_title, gen_time)
             y = _draw_section_title(c, y, W, "AI 综合分析意见", level=2)
-            # ai_response could be a dict with keys like 'analysis', 'conclusion', etc.
             if isinstance(ai_resp, dict):
                 for resp_key, resp_val in ai_resp.items():
                     y, page_num = _ensure_space(c, y, W, H, 30, page_num, header_title, gen_time)
