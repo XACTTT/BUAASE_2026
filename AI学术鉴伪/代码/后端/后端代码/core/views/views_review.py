@@ -186,35 +186,37 @@ def create_review_task_with_admin_check(request):
     reason = request.data.get('reason', 'No reason provided')
 
     try:
-        # 如果提供了 task_id，自动从 DetectionTask 中解析 image_ids 和 text_ids
-        if task_id and not image_ids and not text_ids:
+        # 如果提供了 task_id，自动从 DetectionTask 中补全缺失的 image_ids 和 text_ids
+        if task_id:
             try:
                 det_task = DetectionTask.objects.get(id=task_id, user=request.user)
             except DetectionTask.DoesNotExist:
                 return Response({'error': 'DetectionTask not found'}, status=404)
 
-            # --- 解析 image_ids：ImageUpload FK → DetectionResult FK → container ---
-            image_ids = list(det_task.image_uploads.values_list('id', flat=True))
+            # --- 自动补全 image_ids ---
             if not image_ids:
-                image_ids = list(
-                    DetectionResult.objects.filter(detection_task=det_task)
-                    .values_list('image_upload_id', flat=True)
-                )
-            if not image_ids and det_task.container:
-                image_ids = list(det_task.container.images.values_list('id', flat=True))
+                image_ids = list(det_task.image_uploads.values_list('id', flat=True))
+                if not image_ids:
+                    image_ids = list(
+                        DetectionResult.objects.filter(detection_task=det_task)
+                        .values_list('image_upload_id', flat=True)
+                    )
+                if not image_ids and det_task.container:
+                    image_ids = list(det_task.container.images.values_list('id', flat=True))
 
-            # --- 解析 text_ids：TextDetectionResult → extra_payload → container ---
-            text_ids = list(
-                TextDetectionResult.objects.filter(
-                    detection_task=det_task
-                ).values_list('text_resource_id', flat=True)
-            )
-            if not text_ids and det_task.extra_payload:
-                raw_ids = det_task.extra_payload.get('review_text_ids') or []
-                if raw_ids:
-                    text_ids = [int(x) for x in raw_ids if str(x).isdigit()]
-            if not text_ids and det_task.container:
-                text_ids = list(det_task.container.review_texts.values_list('id', flat=True))
+            # --- 自动补全 text_ids ---
+            if not text_ids:
+                text_ids = list(
+                    TextDetectionResult.objects.filter(
+                        detection_task=det_task
+                    ).values_list('text_resource_id', flat=True)
+                )
+                if not text_ids and det_task.extra_payload:
+                    raw_ids = det_task.extra_payload.get('review_text_ids') or []
+                    if raw_ids:
+                        text_ids = [int(x) for x in raw_ids if str(x).isdigit()]
+                if not text_ids and det_task.container:
+                    text_ids = list(det_task.container.review_texts.values_list('id', flat=True))
 
             # --- 结构化检测任务 (paper_text/review_text/multi_material) 回退 ---
             if not image_ids and not text_ids:
