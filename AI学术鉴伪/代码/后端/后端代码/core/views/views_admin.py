@@ -1978,67 +1978,177 @@ def get_review_request_detail_admin(request, reviewRequest_id):
 
         task_id = detection_task.id if detection_task else None
         task_type = detection_task.task_type if detection_task else None
+        detect_type = detection_task.detect_type if detection_task else None
 
-        # 获取 texts 数据
-        texts = []
-        # 预加载结构化检测结果用于文本AI检测数据
-        structured_result = None
+        # 构建 structured_items 和文件信息
+        structured_items = []
+        paper_files = []
+        review_files = []
+        snapshot = None
         if detection_task:
             from core.models import StructuredDetectionResult
             structured_result = StructuredDetectionResult.objects.filter(
                 detection_task=detection_task
             ).first()
-
-        text_ai_map = {}
-        if structured_result and structured_result.result_payload:
-            payload = structured_result.result_payload
-            # 从 result_payload.text_results 提取每个文本的 AI 检测结果
-            text_results = payload.get('text_results', [])
-            for tr in text_results:
-                text_id = tr.get('text_id') or tr.get('id')
-                if text_id:
-                    text_ai_map[text_id] = {
-                        'is_fake': tr.get('is_fake', None),
-                        'confidence_score': tr.get('confidence_score', None),
-                        'factual_fake_reason': tr.get('factual_fake_reason', None),
-                    }
-            # 结构化检测结果使用 per_section 而非 text_results (paper_text/review_text/multi_material)
-            if not text_ai_map:
+            if structured_result and structured_result.result_payload:
+                payload = structured_result.result_payload
                 evidence = payload.get('evidence') or {}
                 per_section = evidence.get('per_section') or []
-                overall = payload.get('overall') or {}
-                # 将 per_section 数据按 item_id 中的 _paper_/_review_ 分组
-                paper_sections = [s for s in per_section if '_paper_' in (s.get('item_id') or '')]
-                review_sections = [s for s in per_section if '_review_' in (s.get('item_id') or '')]
-                all_sections = paper_sections + review_sections
-                # 聚合所有 per_section 数据，按顺序映射到 text resources
-                all_texts = list(review_request.text_resources.all())
-                for idx, text in enumerate(all_texts):
-                    if idx < len(all_sections):
-                        sec = all_sections[idx]
-                        probs = sec.get('probabilities') or {}
-                        text_ai_map[text.id] = {
-                            'is_fake': probs.get('aigc', overall.get('is_fake')),
-                            'confidence_score': probs.get('aigc', overall.get('confidence_score')),
-                            'factual_fake_reason': sec.get('reason') or overall.get('reason'),
-                        }
-                    elif all_sections:
-                        # 超出 per_section 数量的文本，使用 overall 作为兜底
-                        text_ai_map[text.id] = {
-                            'is_fake': overall.get('is_fake'),
-                            'confidence_score': overall.get('confidence_score'),
-                            'factual_fake_reason': overall.get('reason'),
-                        }
+                item_text_lookup = {}
+                try:
+                    from core.services.structured_detection_service import StructuredDetectionService
+                    snapshot = StructuredDetectionService.build_input_snapshot(detection_task)
+                    paper_files = snapshot.get('paper_files') or []
+                    review_files = snapshot.get('review_files') or []
+                    review_texts_list = snapshot.get('review_texts') or []
+                    images_list = snapshot.get('images') or []
+                    text_items = StructuredDetectionService._extract_text_items_from_snapshot(
+                        snapshot, detection_task.detect_type
+                    )
+                    item_text_lookup = {
+                        item.get('id'): item.get('text')
+                        for item in text_items
+                        if item.get('id')
+                    }
+                except Exception:
+                    item_text_lookup = {}
 
-        for text in review_request.text_resources.all():
+                def _resolve_source_file_id(item_id):
+                    if not item_id:
+                        return None
+                    parts = str(item_id).split('_')
+                    if len(parts) >= 4 and parts[1] == 'paper':
+                        try:
+                            file_idx = int(parts[2])
+                            return (paper_files[file_idx] or {}).get('file_id')
+                        except (IndexError, ValueError, TypeError):
+                            return None
+                    if len(parts) >= 5 and parts[1] == 'review' and parts[2] == 'file':
+                        try:
+                            file_idx = int(parts[3])
+                            return (review_files[file_idx] or {}).get('file_id')
+                        except (IndexError, ValueError, TypeError):
+                            return None
+                    return None
+
+                structured_items = [
+                    {
+                        "item_id": entry.get("item_id"),
+                        "text": item_text_lookup.get(entry.get("item_id")),
+                        "is_aigc": entry.get("is_aigc"),
+                        "label_name": entry.get("label_name"),
+                        "confidence_score": entry.get("confidence_score"),
+                        "probabilities": entry.get("probabilities"),
+                        "source_file_id": _resolve_source_file_id(entry.get("item_id")),
+                    }
+                    for entry in per_section
+                ]
+
+        # 获取 texts 数据
+        texts = []
+        for index, text in enumerate(review_request.text_resources.all()):
             text_data = {
                 "id": text.id,
                 "raw_text": text.raw_text,
                 "source_type": text.source_type,
             }
-            if text.id in text_ai_map:
-                text_data['ai_detection'] = text_ai_map[text.id]
+            # per-text structured items
+            text_result = None
+            if detection_task:
+                text_result = TextDetectionResult.objects.filter(
+                    detection_task=detection_task,
+                    text_resource_id=text.id,
+                ).order_by('-id').first()
+            items = []
+            if text_result:
+                items = text_result.ai_generated_paragraphs or []
+            elif structured_items and index == 0:
+                items = structured_items
+            if items:
+                text_data['items'] = items
+
+            source_file_id = None
+            if paper_files:
+                source_file_id = paper_files[0].get('file_id')
+            elif review_files:
+                source_file_id = review_files[0].get('file_id')
+            elif structured_items:
+                source_file_id = structured_items[0].get('source_file_id')
+            if source_file_id:
+                text_data['source_file_id'] = source_file_id
+
+            # AI detection summary
+            if text_result:
+                text_data['ai_detection'] = {
+                    'is_fake': text_result.is_fake,
+                    'confidence_score': text_result.confidence_score,
+                    'factual_fake_reason': getattr(text_result, 'factual_fake_reason', ''),
+                }
+
             texts.append(text_data)
+
+        # 构建 paper_files 和 review_files 的前端展示数据
+        paper_files_display = []
+        for pf in paper_files:
+            file_id = pf.get('file_id')
+            pf_data = {
+                'file_id': file_id,
+                'file_name': pf.get('file_name', ''),
+                'resource_role': pf.get('resource_role', ''),
+                'file_ext': pf.get('file_ext', ''),
+                'sections_count': len(pf.get('sections') or []),
+                'preview_url': request.build_absolute_uri(f'/api/preview/file/{file_id}/') if file_id else None,
+            }
+            paper_files_display.append(pf_data)
+
+        review_files_display = []
+        for rf in review_files:
+            file_id = rf.get('file_id')
+            rf_data = {
+                'file_id': file_id,
+                'file_name': rf.get('file_name', ''),
+                'resource_role': rf.get('resource_role', ''),
+                'file_ext': rf.get('file_ext', ''),
+                'sections_count': len(rf.get('sections') or []),
+                'preview_url': request.build_absolute_uri(f'/api/preview/file/{file_id}/') if file_id else None,
+            }
+            review_files_display.append(rf_data)
+
+        review_texts_display = []
+        if snapshot:
+            for rt in (snapshot.get('review_texts') or []):
+                review_texts_display.append({
+                    'review_text_id': rt.get('review_text_id'),
+                    'source_type': rt.get('source_type', ''),
+                    'language': rt.get('language', ''),
+                    'token_count': rt.get('token_count', 0),
+                    'preview_text': (rt.get('raw_text') or '')[:300],
+                })
+
+        # 构建 top-level AI detection result
+        ai_detection_result = {}
+        if review_request.detection_result:
+            ai_detection_result = {
+                "is_fake": review_request.detection_result.is_fake,
+                "confidence_score": review_request.detection_result.confidence_score,
+                "detection_time": review_request.detection_result.detection_time.strftime('%Y-%m-%d %H:%M:%S')
+                if review_request.detection_result.detection_time else None,
+            }
+        elif review_request.text_detection_result:
+            ai_detection_result = {
+                "is_fake": review_request.text_detection_result.is_fake,
+                "confidence_score": review_request.text_detection_result.confidence_score,
+                "detection_time": review_request.text_detection_result.detection_time.strftime('%Y-%m-%d %H:%M:%S')
+                if review_request.text_detection_result.detection_time else None,
+            }
+        elif detection_task and structured_result:
+            overall = (structured_result.result_payload or {}).get('overall') or {}
+            ai_detection_result = {
+                "is_fake": overall.get('is_fake'),
+                "confidence_score": overall.get('confidence_score'),
+                "detection_time": detection_task.completion_time.strftime('%Y-%m-%d %H:%M:%S')
+                if detection_task.completion_time else None,
+            }
 
         # 获取 persons 数据：所有参与该请求的 reviewer（来自 ManualReview 表）
         persons = []
@@ -2057,6 +2167,12 @@ def get_review_request_detail_admin(request, reviewRequest_id):
             "organization": review_request.organization.name if review_request.organization else None,
             "task_id": task_id,
             "task_type": task_type,
+            "detect_type": detect_type,
+            "ai_detection_result": ai_detection_result,
+            "structured_items": structured_items,
+            "paper_files": paper_files_display,
+            "review_files": review_files_display,
+            "review_texts": review_texts_display,
         })
 
     except ReviewRequest.DoesNotExist:
