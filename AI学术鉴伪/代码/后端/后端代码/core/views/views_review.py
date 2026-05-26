@@ -273,6 +273,7 @@ def create_review_task_with_admin_check(request):
         review_request = ReviewRequest.objects.create(
             detection_result=detection_result,
             text_detection_result=text_detection_result,
+            detection_task=DetectionTask.objects.filter(id=task_id).first() if task_id else None,
             user=request.user,
             reason=reason,
             organization=user.organization,

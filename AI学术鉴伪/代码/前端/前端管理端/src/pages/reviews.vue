@@ -560,7 +560,16 @@ const timeRangeOptions = [
 // 图片URL解析：处理相对路径、绝对路径和空值
 const resolveImageUrl = (url?: string | null): string => {
   if (!url) return ''
-  if (url.startsWith('http://') || url.startsWith('https://')) return url
+  if (url.startsWith('http://') || url.startsWith('https://')) {
+    if (url.includes('/api/preview/')) {
+      const token = localStorage.getItem('1-token')
+      if (token) {
+        const separator = url.includes('?') ? '&' : '?'
+        return url + separator + 'token=' + token
+      }
+    }
+    return url
+  }
   const baseUrl = import.meta.env.VITE_API_URL || ''
   return baseUrl + url
 }

@@ -1948,7 +1948,7 @@ def get_review_request_detail_admin(request, reviewRequest_id):
         for img in review_request.imgs.all():
             imgs.append({
                 "id": img.id,
-                "url": serialize_value(img.image, request) if img.image else None,
+                "url": request.build_absolute_uri(f'/api/preview/image/{img.id}/') if img.image else None,
             })
 
         # 获取 texts 数据
@@ -2232,6 +2232,7 @@ def handle_review_request(request, reviewRequest_id):
             manual_review = ManualReview.objects.create(
                 review_request=review_request,
                 reviewer=reviewer,
+                organization=review_request.organization,
                 status='undo'  # 默认状态
             )
 
