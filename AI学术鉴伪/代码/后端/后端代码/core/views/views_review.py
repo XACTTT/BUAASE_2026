@@ -916,11 +916,62 @@ def get_review_detail(request, manual_review_id):
 
     # 获取文本列表(返回完整内容供审核使用)
     texts = []
+    # 预加载结构化检测结果用于文本AI检测数据
+    per_section_list = []
+    overall_ai = {}
+    detection_task_for_text = _resolve_detection_task(review_request)
+    if detection_task_for_text:
+        try:
+            sdr_for_text = StructuredDetectionResult.objects.get(detection_task=detection_task_for_text)
+            payload_for_text = sdr_for_text.result_payload or {}
+            evidence_for_text = payload_for_text.get('evidence') or {}
+            per_section_list = evidence_for_text.get('per_section') or []
+            overall_ai = payload_for_text.get('overall') or {}
+        except StructuredDetectionResult.DoesNotExist:
+            pass
+
     for text in manual_review.text_resources.all():
+        ai_detection = None
+        # 尝试从 TextDetectionResult 获取 AI 检测数据
+        text_det = TextDetectionResult.objects.filter(
+            detection_task=detection_task_for_text,
+            text_resource_id=text.id,
+        ).first() if detection_task_for_text else None
+        if text_det:
+            ai_detection = {
+                'is_fake': text_det.is_fake,
+                'confidence_score': text_det.confidence_score,
+                'ai_generated_paragraphs': text_det.ai_generated_paragraphs or [],
+                'factual_fake_reason': getattr(text_det, 'factual_fake_reason', ''),
+                'template_tendency_score': getattr(text_det, 'template_tendency_score', None),
+                'template_analysis_reason': getattr(text_det, 'template_analysis_reason', ''),
+            }
+        elif per_section_list:
+            # 结构化检测: 聚合所有 per_section 数据为单个 AI 检测结果
+            all_high_risk = []
+            for sec in per_section_list:
+                paragraphs = sec.get('paragraphs') or []
+                for idx, p in enumerate(paragraphs):
+                    if p.get('ai_probability', 0) > 0.5:
+                        all_high_risk.append({
+                            'paragraph_index': p.get('paragraph_index', p.get('index', idx)),
+                            'ai_probability': p.get('ai_probability', 0),
+                            'text': p.get('text', ''),
+                            'reason': p.get('reason', ''),
+                        })
+            ai_detection = {
+                'is_fake': overall_ai.get('is_fake'),
+                'confidence_score': overall_ai.get('confidence_score'),
+                'ai_generated_paragraphs': all_high_risk,
+                'factual_fake_reason': overall_ai.get('reason', ''),
+                'template_tendency_score': None,
+                'template_analysis_reason': '',
+            }
         texts.append({
             'text_id': text.id,
             'raw_text': text.raw_text,
             'source_type': text.source_type,
+            'ai_detection': ai_detection,
         })
 
     # 解析AI检测结果

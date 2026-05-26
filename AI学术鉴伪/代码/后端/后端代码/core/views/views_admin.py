@@ -1959,7 +1959,7 @@ def get_review_request_detail_admin(request, reviewRequest_id):
             detection_task = review_request.detection_task
         if not detection_task and review_request.detection_result:
             detection_task = review_request.detection_result.detection_task
-        elif not detection_task and review_request.text_detection_result:
+        if not detection_task and review_request.text_detection_result:
             detection_task = review_request.text_detection_result.detection_task
         if not detection_task:
             img = review_request.imgs.first()
@@ -1992,7 +1992,7 @@ def get_review_request_detail_admin(request, reviewRequest_id):
         text_ai_map = {}
         if structured_result and structured_result.result_payload:
             payload = structured_result.result_payload
-            # 从 result_payload 中提取每个文本的 AI 检测结果
+            # 从 result_payload.text_results 提取每个文本的 AI 检测结果
             text_results = payload.get('text_results', [])
             for tr in text_results:
                 text_id = tr.get('text_id') or tr.get('id')
@@ -2002,11 +2002,38 @@ def get_review_request_detail_admin(request, reviewRequest_id):
                         'confidence_score': tr.get('confidence_score', None),
                         'factual_fake_reason': tr.get('factual_fake_reason', None),
                     }
+            # 结构化检测结果使用 per_section 而非 text_results (paper_text/review_text/multi_material)
+            if not text_ai_map:
+                evidence = payload.get('evidence') or {}
+                per_section = evidence.get('per_section') or []
+                overall = payload.get('overall') or {}
+                # 将 per_section 数据按 item_id 中的 _paper_/_review_ 分组
+                paper_sections = [s for s in per_section if '_paper_' in (s.get('item_id') or '')]
+                review_sections = [s for s in per_section if '_review_' in (s.get('item_id') or '')]
+                all_sections = paper_sections + review_sections
+                # 聚合所有 per_section 数据，按顺序映射到 text resources
+                all_texts = list(review_request.text_resources.all())
+                for idx, text in enumerate(all_texts):
+                    if idx < len(all_sections):
+                        sec = all_sections[idx]
+                        probs = sec.get('probabilities') or {}
+                        text_ai_map[text.id] = {
+                            'is_fake': probs.get('aigc', overall.get('is_fake')),
+                            'confidence_score': probs.get('aigc', overall.get('confidence_score')),
+                            'factual_fake_reason': sec.get('reason') or overall.get('reason'),
+                        }
+                    elif all_sections:
+                        # 超出 per_section 数量的文本，使用 overall 作为兜底
+                        text_ai_map[text.id] = {
+                            'is_fake': overall.get('is_fake'),
+                            'confidence_score': overall.get('confidence_score'),
+                            'factual_fake_reason': overall.get('reason'),
+                        }
 
         for text in review_request.text_resources.all():
             text_data = {
                 "id": text.id,
-                "raw_text": text.raw_text[:200] + '...' if len(text.raw_text) > 200 else text.raw_text,
+                "raw_text": text.raw_text,
                 "source_type": text.source_type,
             }
             if text.id in text_ai_map:
@@ -2084,7 +2111,9 @@ def get_review_request_detail(request, manual_review_id):
         }
 
     task_type = None
-    if review_request.detection_result and review_request.detection_result.detection_task:
+    if review_request.detection_task_id:
+        task_type = review_request.detection_task.task_type
+    elif review_request.detection_result and review_request.detection_result.detection_task:
         task_type = review_request.detection_result.detection_task.task_type
     elif review_request.text_detection_result and review_request.text_detection_result.detection_task:
         task_type = review_request.text_detection_result.detection_task.task_type
@@ -2189,7 +2218,7 @@ def get_review_request_detail(request, manual_review_id):
 
         texts.append({
             "id": text.id,
-            "raw_text": text.raw_text[:200] + '...' if len(text.raw_text) > 200 else text.raw_text,
+            "raw_text": text.raw_text,
             "source_type": text.source_type,
             "items": items,
             "source_file_id": source_file_id,
