@@ -71,10 +71,7 @@ const submittingReview = ref(false)
 // --- Section checkbox selection (for review submission) ---
 const selectedSectionIds = ref<Set<string>>(new Set())
 
-function toggleSectionSelection(item_id: string, checked?: boolean | Event) {
-  if (checked && typeof checked !== 'boolean' && typeof checked.stopPropagation === 'function') {
-    checked.stopPropagation()
-  }
+function toggleSectionSelection(item_id: string) {
   const newSet = new Set(selectedSectionIds.value)
   if (typeof checked === 'boolean') {
     if (checked) {
@@ -917,7 +914,7 @@ onMounted(async () => {
                       <v-checkbox
                         :model-value="isSectionSelected(section.item_id)"
                         @click.stop
-                        @update:model-value="toggleSectionSelection(section.item_id, $event)"
+                        @update:model-value="toggleSectionSelection(section.item_id)"
                         color="primary"
                         hide-details
                         density="compact"
@@ -1526,7 +1523,7 @@ onMounted(async () => {
                       <v-checkbox
                         :model-value="isSectionSelected(section.item_id)"
                         @click.stop
-                        @update:model-value="toggleSectionSelection(section.item_id, $event)"
+                        @update:model-value="toggleSectionSelection(section.item_id)"
                         color="primary"
                         hide-details
                         density="compact"

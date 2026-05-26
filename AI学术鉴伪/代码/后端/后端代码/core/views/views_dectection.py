@@ -1259,7 +1259,7 @@ def _serialize_structured_materials(task, request):
         {
             'id': item.id,
             'file_management_id': item.file_management_id,
-            'image_url': serialize_value(item.image, request),
+            'image_url': request.build_absolute_uri(f'/api/preview/image/{item.id}/'),
             'preview_url': request.build_absolute_uri(f'/api/preview/image/{item.id}/'),
             'image_role': item.image_role,
             'source_kind': item.source_kind,
