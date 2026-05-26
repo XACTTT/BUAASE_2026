@@ -1951,30 +1951,15 @@ def get_review_request_detail_admin(request, reviewRequest_id):
                 "url": request.build_absolute_uri(f'/api/preview/image/{img.id}/') if img.image else None,
             })
 
-        # 获取 texts 数据
-        texts = []
-        for text in review_request.text_resources.all():
-            texts.append({
-                "id": text.id,
-                "raw_text": text.raw_text[:200] + '...' if len(text.raw_text) > 200 else text.raw_text,
-                "source_type": text.source_type,
-            })
-
-        # 获取 persons 数据：所有参与该请求的 reviewer（来自 ManualReview 表）
-        persons = []
-        for reviewer in review_request.reviewers.all():
-            persons.append({
-                "id": reviewer.id,
-                "username": reviewer.username,
-                "avatar": _safe_avatar_url(reviewer),
-            })
-
         # 获取关联的 DetectionTask
         from core.models import DetectionTask
         detection_task = None
-        if review_request.detection_result:
+        # 优先直接通过 FK
+        if review_request.detection_task_id:
+            detection_task = review_request.detection_task
+        if not detection_task and review_request.detection_result:
             detection_task = review_request.detection_result.detection_task
-        elif review_request.text_detection_result:
+        elif not detection_task and review_request.text_detection_result:
             detection_task = review_request.text_detection_result.detection_task
         if not detection_task:
             img = review_request.imgs.first()
@@ -1993,6 +1978,49 @@ def get_review_request_detail_admin(request, reviewRequest_id):
 
         task_id = detection_task.id if detection_task else None
         task_type = detection_task.task_type if detection_task else None
+
+        # 获取 texts 数据
+        texts = []
+        # 预加载结构化检测结果用于文本AI检测数据
+        structured_result = None
+        if detection_task:
+            from core.models import StructuredDetectionResult
+            structured_result = StructuredDetectionResult.objects.filter(
+                detection_task=detection_task
+            ).first()
+
+        text_ai_map = {}
+        if structured_result and structured_result.result_payload:
+            payload = structured_result.result_payload
+            # 从 result_payload 中提取每个文本的 AI 检测结果
+            text_results = payload.get('text_results', [])
+            for tr in text_results:
+                text_id = tr.get('text_id') or tr.get('id')
+                if text_id:
+                    text_ai_map[text_id] = {
+                        'is_fake': tr.get('is_fake', None),
+                        'confidence_score': tr.get('confidence_score', None),
+                        'factual_fake_reason': tr.get('factual_fake_reason', None),
+                    }
+
+        for text in review_request.text_resources.all():
+            text_data = {
+                "id": text.id,
+                "raw_text": text.raw_text[:200] + '...' if len(text.raw_text) > 200 else text.raw_text,
+                "source_type": text.source_type,
+            }
+            if text.id in text_ai_map:
+                text_data['ai_detection'] = text_ai_map[text.id]
+            texts.append(text_data)
+
+        # 获取 persons 数据：所有参与该请求的 reviewer（来自 ManualReview 表）
+        persons = []
+        for reviewer in review_request.reviewers.all():
+            persons.append({
+                "id": reviewer.id,
+                "username": reviewer.username,
+                "avatar": _safe_avatar_url(reviewer),
+            })
 
         return Response({
             "imgs": imgs,

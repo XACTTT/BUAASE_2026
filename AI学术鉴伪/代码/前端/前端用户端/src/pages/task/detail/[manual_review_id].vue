@@ -1529,6 +1529,12 @@ onMounted(async () => {
     const configReviewMode = reviewConfig.value?.review_mode
     if (configReviewMode && ['image', 'text', 'multi'].includes(configReviewMode)) {
       reviewMode.value = configReviewMode
+    } else if (taskType.value === 'paper_text' || taskType.value === 'review_text') {
+      reviewMode.value = 'text'
+    } else if (taskType.value === 'multi_material') {
+      reviewMode.value = 'multi'
+    } else if (taskType.value === 'image') {
+      reviewMode.value = 'image'
     } else {
       // Fallback: infer from data presence
       const hasImages = (detailData.image_ids?.length || legacyData.imgs?.length || 0) > 0

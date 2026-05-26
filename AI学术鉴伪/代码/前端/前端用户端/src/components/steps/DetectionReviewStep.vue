@@ -387,7 +387,8 @@ const submitReview = async () => {
     ]
     await publisher.dispatchAnnual({
       image_ids: reviewImages,
-      reviewers: selectedPeopleList.value
+      reviewers: selectedPeopleList.value,
+      task_id: props.task_id
     })
     snackbar.showMessage('已提交人工复查任务，请等待管理员审核', 'success')
     router.push('/annual')

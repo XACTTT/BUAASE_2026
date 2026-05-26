@@ -28,11 +28,15 @@ def _resolve_detection_task(review_request):
     """从 ReviewRequest 解析关联的 DetectionTask，统一处理三种检测路径"""
     detection_task = None
 
+    # 路径0: 直接通过 FK (最直接、最可靠)
+    if review_request.detection_task_id:
+        detection_task = review_request.detection_task
+
     # 路径1: 通过 DetectionResult (图像检测)
-    if review_request.detection_result:
+    if not detection_task and review_request.detection_result:
         detection_task = review_request.detection_result.detection_task
     # 路径2: 通过 TextDetectionResult (旧版文本检测)
-    elif review_request.text_detection_result:
+    elif not detection_task and review_request.text_detection_result:
         detection_task = review_request.text_detection_result.detection_task
 
     # 路径3: 结构化检测 (paper/review/multi) 反查
