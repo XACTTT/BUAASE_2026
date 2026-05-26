@@ -348,12 +348,26 @@ def preview_resource(request, resource_type, resource_id):
         return Response({"detail": "Authentication credentials were not provided."}, status=401)
 
     if resource_type == 'image':
+        image = None
         try:
             image = ImageUpload.objects.select_related('file_management').get(
                 id=resource_id,
                 file_management__user=auth_user,
             )
         except ImageUpload.DoesNotExist:
+            pass
+
+        if image is None and getattr(auth_user, 'is_staff', False):
+            try:
+                image = ImageUpload.objects.select_related('file_management', 'file_management__user').get(id=resource_id)
+            except ImageUpload.DoesNotExist:
+                pass
+            if image:
+                owner = getattr(image.file_management, 'user', None)
+                if owner and owner.organization_id != auth_user.organization_id and not getattr(auth_user, 'is_superuser', False):
+                    image = None
+
+        if image is None:
             return Response({"message": "Image not found"}, status=404)
 
         if not image.image or not image.image.name:
@@ -385,36 +399,42 @@ def preview_resource(request, resource_type, resource_id):
             if not candidate:
                 return Response({"message": "File not found"}, status=404)
 
-            if auth_user.role != 'reviewer' or candidate.organization_id != auth_user.organization_id:
-                return Response({"message": "File not found"}, status=404)
+            is_admin = getattr(auth_user, 'is_staff', False)
+            if is_admin:
+                if candidate.organization_id != auth_user.organization_id and not getattr(auth_user, 'is_superuser', False):
+                    return Response({"message": "File not found"}, status=404)
+                file_management = candidate
+            else:
+                if auth_user.role != 'reviewer' or candidate.organization_id != auth_user.organization_id:
+                    return Response({"message": "File not found"}, status=404)
 
-            manual_reviews = ManualReview.objects.filter(
-                reviewer=auth_user,
-                review_request__organization_id=auth_user.organization_id,
-            ).select_related('review_request', 'review_request__detection_task')
+                manual_reviews = ManualReview.objects.filter(
+                    reviewer=auth_user,
+                    review_request__organization_id=auth_user.organization_id,
+                ).select_related('review_request', 'review_request__detection_task')
 
-            allow_access = False
-            if candidate.container_id:
-                allow_access = manual_reviews.filter(
-                    review_request__detection_task__container_id=candidate.container_id
-                ).exists()
+                allow_access = False
+                if candidate.container_id:
+                    allow_access = manual_reviews.filter(
+                        review_request__detection_task__container_id=candidate.container_id
+                    ).exists()
 
-            if not allow_access:
-                for review in manual_reviews:
-                    task = getattr(review.review_request, 'detection_task', None)
-                    extra_payload = getattr(task, 'extra_payload', {}) if task else {}
-                    file_ids = extra_payload.get('file_ids') or []
-                    try:
-                        if int(candidate.id) in [int(fid) for fid in file_ids]:
-                            allow_access = True
-                            break
-                    except Exception:
-                        continue
+                if not allow_access:
+                    for review in manual_reviews:
+                        task = getattr(review.review_request, 'detection_task', None)
+                        extra_payload = getattr(task, 'extra_payload', {}) if task else {}
+                        file_ids = extra_payload.get('file_ids') or []
+                        try:
+                            if int(candidate.id) in [int(fid) for fid in file_ids]:
+                                allow_access = True
+                                break
+                        except Exception:
+                            continue
 
-            if not allow_access:
-                return Response({"message": "File not found"}, status=404)
+                if not allow_access:
+                    return Response({"message": "File not found"}, status=404)
 
-            file_management = candidate
+                file_management = candidate
 
         storage_path = file_management.storage_path
         if not storage_path:
