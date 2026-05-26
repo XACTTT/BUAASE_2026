@@ -6,7 +6,7 @@ import zipfile
 from django.core.files.storage import FileSystemStorage
 from django.core.paginator import Paginator, EmptyPage
 from django.db.models import Q
-from ..models import FileManagement, ImageUpload, User, ResourceContainer, ManualReview
+from ..models import FileManagement, ImageUpload, User, ResourceContainer, ManualReview, DetectionResult, SubDetectionResult
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated, IsAdminUser, AllowAny
 from rest_framework.response import Response
@@ -337,11 +337,22 @@ def _resolve_auth_user(request):
     return auth_user
 
 
+def _can_preview_resource(auth_user, owner):
+    """检查 auth_user 是否有权限预览 owner 拥有的资源。"""
+    if auth_user == owner:
+        return True
+    if getattr(auth_user, 'is_superuser', False):
+        return True
+    if getattr(auth_user, 'is_staff', False) and owner and owner.organization_id == auth_user.organization_id:
+        return True
+    return False
+
+
 @api_view(['GET'])
 @permission_classes([AllowAny])
 @xframe_options_exempt
 def preview_resource(request, resource_type, resource_id):
-    """统一预览接口：支持 image/file 两类资源。"""
+    """统一预览接口：支持 image/file/detection/sub_result 四类资源。"""
     auth_user = _resolve_auth_user(request)
 
     if not auth_user:
@@ -381,7 +392,8 @@ def preview_resource(request, resource_type, resource_id):
         if not os.path.exists(image_path):
             return Response({"message": "Image file not found on disk"}, status=404)
 
-        return FileResponse(open(image_path, 'rb'), content_type='image/*')
+        guessed_img_type, _ = mimetypes.guess_type(image_path)
+        return FileResponse(open(image_path, 'rb'), content_type=guessed_img_type or 'image/png')
 
     if resource_type == 'file':
         file_management = None
@@ -453,6 +465,59 @@ def preview_resource(request, resource_type, resource_id):
             as_attachment=force_download,
             filename=file_management.file_name,
         )
+
+    if resource_type == 'detection':
+        try:
+            dr = DetectionResult.objects.select_related('image_upload__file_management__user').get(id=resource_id)
+        except DetectionResult.DoesNotExist:
+            return Response({"message": "Detection result not found"}, status=404)
+
+        owner = getattr(getattr(getattr(dr, 'image_upload', None), 'file_management', None), 'user', None)
+        if not _can_preview_resource(auth_user, owner):
+            return Response({"message": "Detection result not found"}, status=404)
+
+        image_type = request.query_params.get('image_type', '').lower()
+        image_field = None
+        if image_type == 'llm':
+            image_field = dr.llm_image
+        elif image_type == 'ela':
+            image_field = dr.ela_image
+
+        if not image_field or not image_field.name:
+            return Response({"message": "Image not available"}, status=404)
+
+        image_path = image_field.path
+        if not os.path.exists(image_path):
+            return Response({"message": "Image file not found on disk"}, status=404)
+
+        guessed_img_type, _ = mimetypes.guess_type(image_path)
+        return FileResponse(open(image_path, 'rb'), content_type=guessed_img_type or 'image/png')
+
+    if resource_type == 'sub_result':
+        try:
+            sub = SubDetectionResult.objects.select_related('detection_result__image_upload__file_management__user').get(id=resource_id)
+        except SubDetectionResult.DoesNotExist:
+            return Response({"message": "Sub detection result not found"}, status=404)
+
+        owner = getattr(
+            getattr(
+                getattr(
+                    getattr(sub, 'detection_result', None), 'image_upload', None
+                ), 'file_management', None
+            ), 'user', None
+        )
+        if not _can_preview_resource(auth_user, owner):
+            return Response({"message": "Sub detection result not found"}, status=404)
+
+        if not sub.mask_image or not sub.mask_image.name:
+            return Response({"message": "Mask image not available"}, status=404)
+
+        mask_path = sub.mask_image.path
+        if not os.path.exists(mask_path):
+            return Response({"message": "Mask image file not found on disk"}, status=404)
+
+        guessed_mask_type, _ = mimetypes.guess_type(mask_path)
+        return FileResponse(open(mask_path, 'rb'), content_type=guessed_mask_type or 'image/png')
 
     return Response({"message": "Unsupported preview resource type"}, status=400)
 
