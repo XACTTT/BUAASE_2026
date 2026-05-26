@@ -141,6 +141,10 @@ export default {
 
   getResourceContainers() {
     return http.get('/resource-containers/')
+  },
+
+  createResourceContainer(data: { container_type: string; title: string; metadata?: Record<string, any> }) {
+    return http.post('/resource-containers/', data)
   }
 
 }
