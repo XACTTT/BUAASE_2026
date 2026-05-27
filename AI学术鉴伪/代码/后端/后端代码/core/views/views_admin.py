@@ -2049,6 +2049,25 @@ def get_review_request_detail_admin(request, reviewRequest_id):
                     for entry in per_section
                 ]
 
+                # Filter: only keep items whose text belongs to a selected text resource
+                if review_request.text_resources.exists() and structured_items:
+                    selected_raw_texts = [
+                        tr.raw_text for tr in review_request.text_resources.all()
+                        if tr.raw_text
+                    ]
+                    if selected_raw_texts:
+                        filtered = []
+                        for item in structured_items:
+                            item_text = item.get('text') or ''
+                            if not item_text:
+                                filtered.append(item)
+                                continue
+                            for raw_text in selected_raw_texts:
+                                if item_text in raw_text:
+                                    filtered.append(item)
+                                    break
+                        structured_items = filtered
+
         # 获取 texts 数据
         texts = []
         for index, text in enumerate(review_request.text_resources.all()):
@@ -2067,8 +2086,11 @@ def get_review_request_detail_admin(request, reviewRequest_id):
             items = []
             if text_result:
                 items = text_result.ai_generated_paragraphs or []
-            elif structured_items and index == 0:
-                items = structured_items
+            elif structured_items and text.raw_text:
+                items = [
+                    item for item in structured_items
+                    if (item.get('text') or '') in text.raw_text
+                ]
             if items:
                 text_data['items'] = items
 

@@ -302,7 +302,7 @@
                         </div>
                       </div>
                       <v-btn v-if="pf.preview_url" size="small" variant="tonal" color="primary"
-                        :href="pf.preview_url" target="_blank" prepend-icon="mdi-eye"
+                        :href="resolveImageUrl(pf.preview_url)" target="_blank" prepend-icon="mdi-eye"
                       >
                         预览
                       </v-btn>
@@ -328,7 +328,7 @@
                         </div>
                       </div>
                       <v-btn v-if="rf.preview_url" size="small" variant="tonal" color="purple"
-                        :href="rf.preview_url" target="_blank" prepend-icon="mdi-eye"
+                        :href="resolveImageUrl(rf.preview_url)" target="_blank" prepend-icon="mdi-eye"
                       >
                         预览
                       </v-btn>
@@ -359,8 +359,8 @@
                   </div>
                 </v-card>
 
-                <!-- 图片资源 -->
-                <v-card v-if="reviewDetails.imgs && reviewDetails.imgs.length > 0" variant="outlined" rounded="lg" class="pa-3">
+                <!-- 图片资源 (仅图像检测和综合检测显示) -->
+                <v-card v-if="reviewDetails.imgs && reviewDetails.imgs.length > 0 && (!reviewDetails.task_type || ['image', 'multi_material'].includes(reviewDetails.task_type))" variant="outlined" rounded="lg" class="pa-3">
                   <div class="text-subtitle-2 font-weight-bold mb-2">
                     <v-icon size="small" class="mr-1">mdi-image-multiple</v-icon>
                     图片资源
