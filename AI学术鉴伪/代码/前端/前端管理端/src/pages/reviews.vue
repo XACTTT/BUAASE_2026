@@ -61,6 +61,16 @@
           </v-avatar>
         </template>
 
+        <template v-slot:item.task_type="{ item }">
+          <v-chip
+            :color="getTaskTypeColor(item.task_type || 'image')"
+            size="small"
+            variant="tonal"
+          >
+            {{ getTaskTypeName(item.task_type || 'image') }}
+          </v-chip>
+        </template>
+
         <template v-slot:item.state="{ item }">
           <v-chip
             :color="getStateColor(item.state)"
@@ -122,7 +132,17 @@
               clearable
               hide-details
             ></v-select>
-            
+
+            <v-select
+              v-model="filters.taskType"
+              :items="taskTypeOptions"
+              label="材料类型"
+              clearable
+              density="compact"
+              variant="outlined"
+              hide-details
+            ></v-select>
+
             <v-select
               v-model="filters.timeRange"
               :items="timeRangeOptions"
@@ -705,11 +725,14 @@ interface ReviewRequest {
   state: string
   file_type: string
   time: string
+  task_type?: string
+  task_type_label?: string
 }
 
 const headers = [
   { title: '头像', key: 'avatar', align: 'center', sortable: false },
   { title: '编辑', key: 'username', align: 'start' },
+  { title: '材料类型', key: 'task_type', align: 'center', sortable: false },
   { title: '审核状态', key: 'state', align: 'center' },
   { title: '提交时间', key: 'time', align: 'center' },
   { title: '操作', key: 'actions', align: 'center', sortable: false },
@@ -730,11 +753,13 @@ const searchQuery = ref('')
 const showFilterDialog = ref(false)
 const filters = ref<{
   status: string | null
+  taskType: string | null
   timeRange: string | null
   startDate: string | null
   endDate: string | null
 }>({
   status: null,
+  taskType: null,
   timeRange: null,
   startDate: null,
   endDate: null
@@ -752,6 +777,13 @@ const timeRangeOptions = [
   { title: '最近一月', value: '30d' },
   { title: '最近三月', value: '90d' },
   { title: '最近一年', value: '365d' }
+]
+
+const taskTypeOptions = [
+  { title: '图像', value: 'image' },
+  { title: '论文', value: 'paper_text' },
+  { title: '审稿', value: 'review_text' },
+  { title: '综合', value: 'multi_material' },
 ]
 
 
@@ -893,6 +925,17 @@ const getTaskTypeName = (type: string): string => {
     'multi_material': '综合材料检测'
   }
   return map[type] || type
+}
+
+// 任务类型颜色映射
+const getTaskTypeColor = (type: string): string => {
+  const map: Record<string, string> = {
+    'image': 'blue',
+    'paper_text': 'teal',
+    'review_text': 'purple',
+    'multi_material': 'orange'
+  }
+  return map[type] || 'grey'
 }
 
 // 来源类型名称映射
@@ -1061,6 +1104,7 @@ const handleCustomTimeChange = () => {
 const resetFilters = () => {
   filters.value = {
     status: null,
+    taskType: null,
     timeRange: null,
     startDate: null,
     endDate: null
@@ -1120,6 +1164,7 @@ const fetchRequests = async (page: number, pageSize: number) => {
       page_size: pageSize,
       query: searchQuery.value || '',
       status: filters.value.status || '',
+      taskType: filters.value.taskType || '',
       startTime: startTimeFilter,
       endTime: endTimeFilter
     }
@@ -1132,7 +1177,9 @@ const fetchRequests = async (page: number, pageSize: number) => {
       avatar: resolveImageUrl(request.avatar),
       state: request.state,
       file_type: request.file_type,
-      time: request.time
+      time: request.time,
+      task_type: request.task_type,
+      task_type_label: request.task_type_label
     }))
     
     currentPage.value = current_page

@@ -28,6 +28,8 @@ from django.core.exceptions import ObjectDoesNotExist
 from core.util import send_notification
 from core.models import Notification
 from core.utils.avatar_utils import safe_avatar_url as _safe_avatar_url
+from core.views.views_review import _resolve_task_type
+from core.services.review_indicator_service import get_task_type_label
 
 
 def _infer_resource_type(file_obj):
@@ -1901,6 +1903,7 @@ def get_all_review_requests(request):
 
     request_data = []
     for req in page_obj.object_list:
+        task_type = _resolve_task_type(req)
         request_data.append({
             "id": req.id,
             "username": req.user.username,
@@ -1908,6 +1911,8 @@ def get_all_review_requests(request):
             "state": req.status2,
             "time": timezone.localtime(req.request_time).strftime('%Y-%m-%d %H:%M:%S'),
             "organization": req.organization.name if req.organization else None,
+            "task_type": task_type,
+            "task_type_label": get_task_type_label(task_type),
         })
 
     return Response({

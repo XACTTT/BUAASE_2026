@@ -693,6 +693,7 @@ def get_request_detail(request, reviewRequest_id):
         'status': review_status,
         'task_type': task_type,
         'task_type_label': get_task_type_label(task_type),
+        'task_id': detection_task.id if detection_task else None,
         'review_config': review_config,
     })
 
@@ -744,13 +745,16 @@ def get_publisher_review_tasks(request):
         else:
             display_status = review_request.status2  # 使用 status2
 
+        task_type = _resolve_task_type(review_request)
         tasks.append({
             'review_request_id': review_request.id,
             'request_time': review_request.request_time.strftime('%Y-%m-%d %H:%M:%S'),
             'status': display_status,  # 动态选择状态
             'status1': review_request.status1,
             'status2': review_request.status2,
-            'progress': progress
+            'progress': progress,
+            'task_type': task_type,
+            'task_type_label': get_task_type_label(task_type),
         })
 
     return Response({

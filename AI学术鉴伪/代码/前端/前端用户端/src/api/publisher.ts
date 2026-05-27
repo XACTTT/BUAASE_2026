@@ -145,6 +145,16 @@ export default {
 
   createResourceContainer(data: { container_type: string; title: string; metadata?: Record<string, any> }) {
     return http.post('/resource-containers/', data)
+  },
+
+  //publisher获取单个文本的所有人工审核结果
+  getTextReviewAll(data: any) {
+    return http.get('/get_text_review_all/', { params: { review_request_id: data.review_request_id, text_id: data.text_id } })
+  },
+
+  //publisher获取单条文本的单个人的详细人工审核结果
+  getTextReviewDetail(data: any) {
+    return http.get('/get_text_review/', { params: { review_request_id: data.review_request_id, text_id: data.text_id, reviewer_id: data.reviewer_id } })
   }
 
 }
