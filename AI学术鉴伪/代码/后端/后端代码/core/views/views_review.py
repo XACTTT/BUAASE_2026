@@ -188,6 +188,7 @@ def create_review_task_with_admin_check(request):
     task_id = request.data.get('task_id', None)
     reviewers = request.data.get('reviewers', [])
     reason = request.data.get('reason', 'No reason provided')
+    selected_section_ids = request.data.get('selected_section_ids', [])
 
     try:
         # 如果提供了 task_id，自动从 DetectionTask 中补全缺失的 image_ids 和 text_ids
@@ -281,6 +282,7 @@ def create_review_task_with_admin_check(request):
             user=request.user,
             reason=reason,
             organization=user.organization,
+            selected_section_ids=selected_section_ids if isinstance(selected_section_ids, list) else [],
         )
 
         if images:

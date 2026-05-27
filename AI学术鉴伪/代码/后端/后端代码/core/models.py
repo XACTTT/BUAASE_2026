@@ -670,6 +670,7 @@ class ReviewRequest(models.Model):
                                choices=[('pending', 'Pending'), ('refused', 'Refused'), ('accepted', 'Accepted')],
                                default='pending')  # 管理员状态
     check_reason = models.TextField()  # 管理员审核的理由
+    selected_section_ids = models.JSONField(default=list, blank=True)  # 用户提交审核时勾选的段落 item_id 列表
 
     def __str__(self):
         if self.detection_result:

@@ -503,6 +503,9 @@ const submitReview = async () => {
     if (selectedResourceIds.value.length > 0) {
       payload.text_ids = selectedResourceIds.value
     }
+    if (selectedSectionIds.value.size > 0) {
+      payload.selected_section_ids = [...selectedSectionIds.value]
+    }
     await publisher.dispatchAnnual(payload)
     snackbar.showMessage('已提交人工审核任务，请等待审核', 'success')
     router.push('/annual')

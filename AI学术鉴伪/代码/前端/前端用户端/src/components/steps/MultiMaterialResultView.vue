@@ -582,9 +582,9 @@ const submitReview = async () => {
     if (selectedImageIds.length > 0) {
       payload.image_ids = selectedImageIds
     }
-    // Multi-material detection uses composite item_ids (e.g. "multi_paper_0_0")
-    // which are not database resource IDs. Let the backend auto-resolve text_ids
-    // from task_id via DetectionTask.container.review_texts.
+    if (selectedItemIds.value.size > 0) {
+      payload.selected_section_ids = [...selectedItemIds.value]
+    }
     await publisher.dispatchAnnual(payload)
     snackbar.showMessage('已提交人工审核任务，请等待审核', 'success')
     showReviewDialog.value = false
