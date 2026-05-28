@@ -302,7 +302,7 @@
                         </div>
                       </div>
                       <v-btn v-if="pf.preview_url" size="small" variant="tonal" color="primary"
-                        :href="resolveImageUrl(pf.preview_url)" target="_blank" prepend-icon="mdi-eye"
+                        @click="openPreviewPanel(pf.file_id, 'file', pf.file_name)" prepend-icon="mdi-eye"
                       >
                         预览
                       </v-btn>
@@ -328,7 +328,7 @@
                         </div>
                       </div>
                       <v-btn v-if="rf.preview_url" size="small" variant="tonal" color="purple"
-                        :href="resolveImageUrl(rf.preview_url)" target="_blank" prepend-icon="mdi-eye"
+                        @click="openPreviewPanel(rf.file_id, 'file', rf.file_name)" prepend-icon="mdi-eye"
                       >
                         预览
                       </v-btn>
@@ -435,56 +435,19 @@
 
               <!-- 检测详情 -->
               <div v-if="reviewDetails.structured_items && reviewDetails.structured_items.length > 0" class="d-flex flex-column gap-2">
-                <div class="text-subtitle-1 font-weight-bold">
-                  <v-icon class="mr-1" color="teal">mdi-shield-search</v-icon>
-                  检测详情
-                  <v-chip size="small" class="ml-2">{{ reviewDetails.structured_items.length }}</v-chip>
-                </div>
-                <v-table density="compact" class="rounded border" hover>
-                  <thead>
-                    <tr>
-                      <th class="text-left" style="min-width: 120px;">段落ID</th>
-                      <th class="text-left" style="min-width: 200px;">文本预览</th>
-                      <th class="text-center" style="width: 100px;">AI判定</th>
-                      <th class="text-center" style="width: 100px;">标签</th>
-                      <th class="text-center" style="width: 90px;">置信度</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr v-for="item in reviewDetails.structured_items" :key="item.item_id">
-                      <td class="text-caption font-mono">{{ item.item_id }}</td>
-                      <td>
-                        <div class="text-body-2" style="max-height: 60px; overflow: hidden;">
-                          {{ (item.text || '').substring(0, 120) }}{{ (item.text || '').length > 120 ? '...' : '' }}
-                        </div>
-                      </td>
-                      <td class="text-center">
-                        <v-chip size="x-small" :color="item.is_aigc ? 'error' : 'success'">
-                          {{ item.is_aigc ? 'AI生成' : '人类' }}
-                        </v-chip>
-                      </td>
-                      <td class="text-center">
-                        <span class="text-caption">{{ item.label_name || '-' }}</span>
-                      </td>
-                      <td class="text-center">
-                        <v-chip v-if="item.confidence_score != null" size="x-small"
-                          :color="item.confidence_score > 0.7 ? 'error' : item.confidence_score > 0.4 ? 'warning' : 'success'"
-                          variant="tonal"
-                        >
-                          {{ (item.confidence_score * 100).toFixed(1) }}%
-                        </v-chip>
-                        <span v-else class="text-caption">-</span>
-                      </td>
-                    </tr>
-                  </tbody>
-                </v-table>
-              </div>
-
-              <!-- 当前选择 -->
-              <div v-if="reviewDetails.structured_items && reviewDetails.structured_items.length > 0" class="d-flex flex-column gap-2">
-                <div class="text-subtitle-1 font-weight-bold">
-                  <v-icon class="mr-1" color="purple">mdi-check-decagram</v-icon>
-                  当前选择
+                <div class="d-flex align-center">
+                  <div class="text-subtitle-1 font-weight-bold">
+                    <v-icon class="mr-1" color="teal">mdi-shield-search</v-icon>
+                    检测详情
+                    <v-chip size="small" class="ml-2">{{ reviewDetails.structured_items.length }}</v-chip>
+                  </div>
+                  <v-spacer></v-spacer>
+                  <v-btn v-if="reviewDetails.task_id"
+                    color="teal" variant="tonal" prepend-icon="mdi-magnify-scan"
+                    @click="viewDetectionResult" :loading="detectionResultLoading" size="small"
+                  >
+                    查看完整检测结果
+                  </v-btn>
                 </div>
                 <v-card variant="outlined" rounded="lg" class="pa-3">
                   <div class="d-flex align-center gap-3 flex-wrap mb-3">
@@ -505,7 +468,6 @@
                       未判定: {{ totalSections - flaggedCount - humanCount }}
                     </v-chip>
                   </div>
-                  <!-- Flagged items list -->
                   <div v-if="flaggedCount > 0" class="d-flex flex-column gap-1">
                     <div class="text-subtitle-2 font-weight-bold mb-1">AI生成段落：</div>
                     <div v-for="item in reviewDetails.structured_items.filter(i => i.is_aigc)" :key="'flagged-' + item.item_id"
@@ -523,20 +485,6 @@
                     未发现AI生成段落
                   </div>
                 </v-card>
-              </div>
-
-              <!-- 查看完整检测结果按钮 -->
-              <div v-if="reviewDetails.task_id" class="d-flex justify-center">
-                <v-btn
-                  color="teal"
-                  variant="tonal"
-                  prepend-icon="mdi-magnify-scan"
-                  @click="viewDetectionResult"
-                  :loading="detectionResultLoading"
-                  size="small"
-                >
-                  查看完整检测结果
-                </v-btn>
               </div>
 
               <v-divider></v-divider>
@@ -584,16 +532,6 @@
         </v-card-text>
         <v-divider></v-divider>
         <v-card-actions class="pa-4">
-          <v-btn
-            v-if="reviewDetails?.task_id"
-            color="teal"
-            variant="tonal"
-            prepend-icon="mdi-magnify-scan"
-            @click="viewDetectionResult"
-            :loading="detectionResultLoading"
-          >
-            查看检测结果
-          </v-btn>
           <v-spacer></v-spacer>
           <v-btn color="grey" variant="text" @click="showReviewDialog = false">关闭</v-btn>
           <v-btn color="error" variant="text" :disabled="!selectedRequest || selectedRequest.state !== 'pending'" @click="handleReviewRequest(0)">拒绝</v-btn>
@@ -703,11 +641,60 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
+
+    <!-- 资源预览侧边面板 -->
+    <transition name="slide-panel">
+      <div v-if="showPreviewPanel" class="preview-side-panel">
+        <div class="preview-panel-header">
+          <span class="text-h6 font-weight-bold">资源预览</span>
+          <v-btn icon variant="text" @click="closePreviewPanel">
+            <v-icon>mdi-close</v-icon>
+          </v-btn>
+        </div>
+        <div v-if="previewFileName" class="px-4 py-2 text-body-2 text-medium-emphasis bg-grey-lighten-4">
+          <v-icon size="small" class="mr-1">mdi-file-document</v-icon>
+          {{ previewFileName }}
+        </div>
+        <div class="preview-panel-content">
+          <div v-if="previewLoading" class="d-flex flex-column align-center justify-center pa-8">
+            <v-progress-circular indeterminate color="primary" size="48"></v-progress-circular>
+            <span class="mt-4 text-body-1">正在加载预览...</span>
+          </div>
+          <div v-else-if="previewBlobUrl">
+            <iframe v-if="previewType === 'pdf'" :src="previewBlobUrl"
+              style="width: 100%; height: 75vh; border: none; border-radius: 8px;"
+            ></iframe>
+            <v-img v-else-if="previewType === 'image'" :src="previewBlobUrl"
+              contain max-height="75vh"
+            >
+              <template v-slot:error>
+                <div class="d-flex flex-column align-center justify-center pa-10">
+                  <v-icon size="64" color="grey">mdi-image-broken-variant</v-icon>
+                  <div class="text-h6 mt-4 text-grey">图片无法加载</div>
+                </div>
+              </template>
+            </v-img>
+            <pre v-else-if="previewType === 'text'" class="text-preview-content">{{ previewTextContent }}</pre>
+            <div v-else class="d-flex flex-column align-center justify-center pa-8">
+              <v-icon size="64" color="grey">mdi-file-question-outline</v-icon>
+              <div class="text-h6 mt-4 text-grey">该文件格式不支持在线预览</div>
+              <v-btn :href="previewBlobUrl" color="primary" class="mt-4" prepend-icon="mdi-download">
+                下载文件
+              </v-btn>
+            </div>
+          </div>
+          <div v-else class="d-flex flex-column align-center justify-center pa-8">
+            <v-icon size="64" color="grey">mdi-file-question-outline</v-icon>
+            <div class="text-h6 mt-4 text-grey">无法预览该资源</div>
+          </div>
+        </div>
+      </div>
+    </transition>
   </v-container>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import reviewApi from '@/api/review'
 import resourceApi from '@/api/resource'
 import type { StructuredResult } from '@/api/resource'
@@ -894,6 +881,54 @@ const detectionResultData = ref<StructuredResult | null>(null)
 const openImagePreview = (url: string) => {
   previewImageUrl.value = resolveImageUrl(url)
   showImagePreview.value = true
+}
+
+// 资源预览侧边面板
+const showPreviewPanel = ref(false)
+const previewLoading = ref(false)
+const previewBlobUrl = ref<string | null>(null)
+const previewType = ref<'image' | 'pdf' | 'text' | 'other'>('other')
+const previewTextContent = ref('')
+const previewFileName = ref('')
+
+const openPreviewPanel = async (fileId: number, resourceType: string = 'file', fileName: string = '') => {
+  showPreviewPanel.value = true
+  previewLoading.value = true
+  previewBlobUrl.value = null
+  previewFileName.value = fileName
+
+  try {
+    const response = await resourceApi.previewResource(fileId, resourceType)
+    const blob = response.data as any
+    const contentType = blob.type || ''
+
+    if (contentType.startsWith('image/')) {
+      previewType.value = 'image'
+    } else if (contentType === 'application/pdf' || fileName.toLowerCase().endsWith('.pdf')) {
+      previewType.value = 'pdf'
+    } else if (contentType.startsWith('text/') || /\.(txt|md|csv|json|xml)$/i.test(fileName)) {
+      previewType.value = 'text'
+      previewTextContent.value = await blob.text()
+    } else {
+      previewType.value = 'other'
+    }
+
+    previewBlobUrl.value = URL.createObjectURL(blob)
+  } catch (error) {
+    console.error('预览资源失败:', error)
+    snackbar.showMessage('预览资源失败', 'error')
+    previewBlobUrl.value = null
+  } finally {
+    previewLoading.value = false
+  }
+}
+
+const closePreviewPanel = () => {
+  showPreviewPanel.value = false
+  if (previewBlobUrl.value) {
+    URL.revokeObjectURL(previewBlobUrl.value)
+    previewBlobUrl.value = null
+  }
 }
 
 // 查看完整检测结果
@@ -1226,6 +1261,12 @@ const formatDateFilter = (timestamp: number) => {
 onMounted(() => {
   fetchRequests(currentPage.value, pageSize.value)
 })
+
+onBeforeUnmount(() => {
+  if (previewBlobUrl.value) {
+    URL.revokeObjectURL(previewBlobUrl.value)
+  }
+})
 </script>
 
 <style scoped>
@@ -1297,5 +1338,56 @@ onMounted(() => {
 
 :deep(.v-select .v-field__append-inner) {
   padding-top: 0;
+}
+
+/* 资源预览侧边面板 */
+.preview-side-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 520px;
+  height: 100vh;
+  background: rgb(var(--v-theme-surface));
+  z-index: 9999;
+  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.15);
+  display: flex;
+  flex-direction: column;
+}
+
+.preview-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px;
+  border-bottom: 1px solid rgb(var(--v-theme-border));
+  flex-shrink: 0;
+}
+
+.preview-panel-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.text-preview-content {
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 75vh;
+  overflow-y: auto;
+  font-size: 13px;
+  line-height: 1.6;
+  padding: 12px;
+  background: rgb(var(--v-theme-surface-variant));
+  border-radius: 8px;
+}
+
+.slide-panel-enter-active,
+.slide-panel-leave-active {
+  transition: transform 0.3s ease;
+}
+
+.slide-panel-enter-from,
+.slide-panel-leave-to {
+  transform: translateX(100%);
 }
 </style> 
