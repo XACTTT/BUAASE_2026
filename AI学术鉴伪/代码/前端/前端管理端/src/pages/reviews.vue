@@ -465,7 +465,7 @@
                       color="teal" variant="text" prepend-icon="mdi-magnify-scan"
                       @click="viewDetectionResult" :loading="detectionResultLoading" size="small"
                     >
-                      查看完整检测结果
+                      完整检测
                     </v-btn>
                   </div>
                   <div v-if="flaggedCount > 0" class="d-flex flex-column gap-1">
