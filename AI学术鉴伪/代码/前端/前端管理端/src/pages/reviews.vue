@@ -301,8 +301,9 @@
                           <span v-if="pf.file_ext" class="ml-2">{{ pf.file_ext }}</span>
                         </div>
                       </div>
-                      <v-btn v-if="pf.preview_url" size="small" variant="tonal" color="primary"
+                      <v-btn v-if="pf.preview_url" size="small" variant="flat" color="primary"
                         @click="openPreviewPanel(pf.file_id, 'file', pf.file_name)" prepend-icon="mdi-eye"
+                        class="text-white"
                       >
                         预览
                       </v-btn>
@@ -327,8 +328,9 @@
                           <span>{{ rf.sections_count }} 段落</span>
                         </div>
                       </div>
-                      <v-btn v-if="rf.preview_url" size="small" variant="tonal" color="purple"
+                      <v-btn v-if="rf.preview_url" size="small" variant="flat" color="purple"
                         @click="openPreviewPanel(rf.file_id, 'file', rf.file_name)" prepend-icon="mdi-eye"
+                        class="text-white"
                       >
                         预览
                       </v-btn>
@@ -462,8 +464,9 @@
                     </v-chip>
                     <v-spacer></v-spacer>
                     <v-btn v-if="reviewDetails.task_id"
-                      color="teal" variant="tonal" prepend-icon="mdi-magnify-scan"
+                      color="teal" variant="flat" prepend-icon="mdi-magnify-scan"
                       @click="viewDetectionResult" :loading="detectionResultLoading" size="small"
+                      class="text-white"
                     >
                       查看完整检测结果
                     </v-btn>
