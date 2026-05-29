@@ -290,7 +290,7 @@
           <div class="text-body-1 mb-4">{{ textReviewDetail.overall_comment || '暂无说明' }}</div>
           <template v-if="textReviewDetail.template_review_score !== null && textReviewDetail.template_review_score !== undefined">
             <div class="text-subtitle-1 font-weight-bold mb-2">模板化复核</div>
-            <div class="text-body-1 mb-2">评分：{{ textReviewDetail.template_review_score }}</div>
+            <div class="text-body-1 mb-2">评分：{{ Math.round((textReviewDetail.template_review_score ?? 0) * 100) }}</div>
             <div class="text-body-1 mb-4">{{ textReviewDetail.template_review_comment || '暂无说明' }}</div>
           </template>
           <template v-if="Array.isArray(textReviewDetail.paragraph_reviews) && textReviewDetail.paragraph_reviews.length">
@@ -746,7 +746,7 @@ onMounted(async () => {
       fetchDetectionResults()
     } else if (hasTexts) {
       // 纯文本任务
-      taskType.value = 'paper_text' // 默认为论文检测
+      taskType.value = resolvedTaskType
       // 使用 request detail 返回的文本信息构建列表，详细数据在选中时获取
       textResults.value = response.texts.map((t: any) => ({
         result_id: t.text_id,

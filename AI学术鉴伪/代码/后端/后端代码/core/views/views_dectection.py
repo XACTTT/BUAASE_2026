@@ -721,30 +721,86 @@ def get_text_detection_result(request, resource_id):
         tdr = TextDetectionResult.objects.select_related('detection_task').filter(
             text_resource_id=resource_id
         ).order_by('-detection_time').first()
-        if not tdr or not can_access_detection_task(request.user, tdr.detection_task):
-            return Response({"message": "Detection result not found"}, status=404)
 
-        if not tdr:
-            return Response({"message": "Detection result not found"}, status=404)
+        if tdr and can_access_detection_task(request.user, tdr.detection_task):
+            if tdr.status == 'in_progress':
+                return Response({
+                    "resource_id": tdr.text_resource.id,
+                    "status": "正在检测中",
+                    "message": "大模型文本检测正在进行，请稍等"
+                })
 
-        if tdr.status == 'in_progress':
+            # 返回检测已完成的数据
             return Response({
                 "resource_id": tdr.text_resource.id,
-                "status": "正在检测中",
-                "message": "大模型文本检测正在进行，请稍等"
+                "status": "检测已完成",
+                "is_fake": tdr.is_fake,
+                "confidence_score": tdr.confidence_score,
+                "ai_generated_paragraphs": tdr.ai_generated_paragraphs,
+                "factual_fake_reason": tdr.factual_fake_reason,
+                "template_tendency_score": tdr.template_tendency_score,
+                "template_analysis_reason": tdr.template_analysis_reason,
+                "detection_time": timezone.localtime(tdr.detection_time) if tdr.detection_time else None
             })
 
-        # 返回检测已完成的数据
+        # Fallback for structured tasks: no per-resource TextDetectionResult exists,
+        # build a response from StructuredDetectionResult + per_section data
+        try:
+            text_resource = ReviewTextResource.objects.select_related('container').get(id=resource_id)
+        except ReviewTextResource.DoesNotExist:
+            return Response({"message": "Detection result not found"}, status=404)
+
+        # Find the structured result via the container's detection tasks
+        task = DetectionTask.objects.filter(
+            container=text_resource.container,
+            task_type__in=['paper_text', 'review_text', 'multi_material']
+        ).order_by('-created_at').first()
+        if not task or not can_access_detection_task(request.user, task):
+            return Response({"message": "Detection result not found"}, status=404)
+
+        structured_result = StructuredDetectionResult.objects.filter(detection_task=task).first()
+        if not structured_result:
+            return Response({"message": "Detection result not found"}, status=404)
+
+        payload = structured_result.result_payload or {}
+        per_section = payload.get('evidence', {}).get('per_section', [])
+        dimensions = payload.get('dimensions', [])
+
+        # Find sections belonging to this resource
+        # Resource index = position in container's review_texts (ordered by id)
+        container_texts = list(ReviewTextResource.objects.filter(
+            container=text_resource.container
+        ).order_by('id').values_list('id', flat=True))
+        resource_idx = None
+        for idx, rid in enumerate(container_texts):
+            if rid == resource_id:
+                resource_idx = idx
+                break
+
+        if resource_idx is None:
+            return Response({"message": "Detection result not found"}, status=404)
+
+        detect_type = _resolve_task_detect_type(task)
+        # Sections for this review text resource have item_id: {detect_type}_review_text_{idx}
+        matching_sections = [
+            s for s in per_section
+            if s.get('item_id') == f"{detect_type}_review_text_{resource_idx}"
+        ]
+
+        # Build response from structured data
+        section = matching_sections[0] if matching_sections else {}
+        template_dim = next((d for d in dimensions if d.get('name') == 'template_tendency'), None)
+
         return Response({
-            "resource_id": tdr.text_resource.id,
+            "resource_id": resource_id,
             "status": "检测已完成",
-            "is_fake": tdr.is_fake,
-            "confidence_score": tdr.confidence_score,
-            "ai_generated_paragraphs": tdr.ai_generated_paragraphs,
-            "factual_fake_reason": tdr.factual_fake_reason,
-            "template_tendency_score": tdr.template_tendency_score,
-            "template_analysis_reason": tdr.template_analysis_reason,
-            "detection_time": timezone.localtime(tdr.detection_time) if tdr.detection_time else None
+            "is_fake": section.get('is_aigc', False),
+            "confidence_score": section.get('confidence_score', 0),
+            "ai_generated_paragraphs": [],
+            "factual_fake_reason": '',
+            "template_tendency_score": template_dim.get('score', 0) if template_dim else 0,
+            "template_analysis_reason": template_dim.get('summary', '') if template_dim else '',
+            "detection_time": timezone.localtime(task.updated_at) if task.updated_at else None
         })
 
     except Exception as e:

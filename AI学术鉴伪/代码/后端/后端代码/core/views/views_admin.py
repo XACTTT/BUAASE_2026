@@ -1990,6 +1990,7 @@ def get_review_request_detail_admin(request, reviewRequest_id):
         paper_files = []
         review_files = []
         snapshot = None
+        structured_result = None
         if detection_task:
             from core.models import StructuredDetectionResult
             structured_result = StructuredDetectionResult.objects.filter(
@@ -2022,19 +2023,26 @@ def get_review_request_detail_admin(request, reviewRequest_id):
                     if not item_id:
                         return None
                     parts = str(item_id).split('_')
+                    # paper: {detect_type}_paper_{fileIdx}_{secIdx}
                     if len(parts) >= 4 and parts[1] == 'paper':
                         try:
                             file_idx = int(parts[2])
                             return (paper_files[file_idx] or {}).get('file_id')
                         except (IndexError, ValueError, TypeError):
                             return None
+                    # review file: {detect_type}_review_file_{fileIdx}_{secIdx}
                     if len(parts) >= 5 and parts[1] == 'review' and parts[2] == 'file':
                         try:
                             file_idx = int(parts[3])
                             return (review_files[file_idx] or {}).get('file_id')
                         except (IndexError, ValueError, TypeError):
                             return None
+                    # review text: {detect_type}_review_text_{textIdx} -- no source file
                     return None
+
+                # Build review_texts lookup from snapshot for per-text filtering
+                review_texts_list = snapshot.get('review_texts') or [] if snapshot else []
+                review_text_ids = [rt.get('review_text_id') for rt in review_texts_list if rt.get('review_text_id')]
 
                 structured_items = [
                     {
@@ -2058,6 +2066,18 @@ def get_review_request_detail_admin(request, reviewRequest_id):
                         if item.get('item_id') in selected_set
                     ]
 
+        # Extract template_tendency from structured result dimensions (review_text)
+        template_tendency_info = {}
+        if detection_task and detect_type in ('review', 'multi') and structured_result:
+            dims = ((structured_result.result_payload or {}).get('dimensions') or [])
+            for d in dims:
+                if d.get('name') == 'template_tendency':
+                    template_tendency_info = {
+                        'template_tendency_score': d.get('score'),
+                        'template_analysis_reason': d.get('summary', ''),
+                    }
+                    break
+
         # 获取 texts 数据
         texts = []
         for index, text in enumerate(review_request.text_resources.all()):
@@ -2077,7 +2097,9 @@ def get_review_request_detail_admin(request, reviewRequest_id):
             if text_result:
                 items = text_result.ai_generated_paragraphs or []
             elif structured_items:
-                # Filter structured_items for this text resource by selected_section_ids
+                # Filter structured_items for this specific text resource
+                # For review_text items, match by review_text_{textIdx} pattern
+                # For paper/review_file items, match by selected_section_ids
                 selected_ids = review_request.selected_section_ids
                 if selected_ids:
                     selected_set = set(selected_ids)
@@ -2106,6 +2128,15 @@ def get_review_request_detail_admin(request, reviewRequest_id):
                     'is_fake': text_result.is_fake,
                     'confidence_score': text_result.confidence_score,
                     'factual_fake_reason': getattr(text_result, 'factual_fake_reason', ''),
+                    'template_tendency_score': getattr(text_result, 'template_tendency_score', None),
+                    'template_analysis_reason': getattr(text_result, 'template_analysis_reason', ''),
+                }
+            elif template_tendency_info:
+                text_data['ai_detection'] = {
+                    'is_fake': ((structured_result.result_payload or {}).get('overall') or {}).get('is_fake'),
+                    'confidence_score': ((structured_result.result_payload or {}).get('overall') or {}).get('confidence_score'),
+                    'factual_fake_reason': '',
+                    **template_tendency_info,
                 }
 
             texts.append(text_data)
@@ -2301,18 +2332,21 @@ def get_review_request_detail(request, manual_review_id):
                 if not item_id:
                     return None
                 parts = str(item_id).split('_')
+                # paper: {detect_type}_paper_{fileIdx}_{secIdx}
                 if len(parts) >= 4 and parts[1] == 'paper':
                     try:
                         file_idx = int(parts[2])
                         return (paper_files[file_idx] or {}).get('file_id')
                     except (IndexError, ValueError, TypeError):
                         return None
+                # review file: {detect_type}_review_file_{fileIdx}_{secIdx}
                 if len(parts) >= 5 and parts[1] == 'review' and parts[2] == 'file':
                     try:
                         file_idx = int(parts[3])
                         return (review_files[file_idx] or {}).get('file_id')
                     except (IndexError, ValueError, TypeError):
                         return None
+                # review text: {detect_type}_review_text_{textIdx} -- no source file
                 return None
 
             structured_items = [
@@ -2471,6 +2505,9 @@ def handle_review_request(request, reviewRequest_id):
 
     # 更新审核请求的状态和理由
     review_request.check_reason = reason
+    if choice == 1:
+        review_request.status1 = 'in_progress'
+        review_request.review_start_time = timezone.now()
     review_request.save()
 
     return Response({'message': 'ReviewRequest handled successfully'})

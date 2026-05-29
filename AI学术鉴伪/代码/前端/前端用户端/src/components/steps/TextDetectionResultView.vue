@@ -320,6 +320,7 @@ const factualFakeReasons = computed(() => {
 // Review text: aggregated template data
 const reviewTemplateData = computed(() => {
   const data: { score: number; reason: string; resource_id: number }[] = []
+  // For structured tasks, template data comes from textDetails (fetched per resource)
   for (const item of reviewResults.value) {
     const detail = textDetails.value.get(item.resource_id)
     if (detail && detail.template_tendency_score !== undefined) {
@@ -327,6 +328,19 @@ const reviewTemplateData = computed(() => {
         score: detail.template_tendency_score,
         reason: detail.template_analysis_reason || '',
         resource_id: item.resource_id
+      })
+    }
+  }
+  // Fallback: for structured tasks where textDetails is empty,
+  // extract template tendency from dimensions array in taskMeta
+  if (data.length === 0 && reviewResults.value.length > 0) {
+    const dims = props.taskMeta?.result?.dimensions || props.taskMeta?.dimensions || []
+    const templateDim = dims.find((d: any) => d.name === 'template_tendency')
+    if (templateDim && templateDim.score !== undefined) {
+      data.push({
+        score: templateDim.score,
+        reason: templateDim.summary || '',
+        resource_id: reviewResults.value[0]?.resource_id || 0
       })
     }
   }

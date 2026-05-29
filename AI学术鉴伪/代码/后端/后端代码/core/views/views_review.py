@@ -925,6 +925,8 @@ def get_review_detail(request, manual_review_id):
     # 预加载结构化检测结果用于文本AI检测数据
     per_section_list = []
     overall_ai = {}
+    template_tendency_score_from_sdr = None
+    template_analysis_reason_from_sdr = ''
     detection_task_for_text = _resolve_detection_task(review_request)
     if detection_task_for_text:
         try:
@@ -933,6 +935,14 @@ def get_review_detail(request, manual_review_id):
             evidence_for_text = payload_for_text.get('evidence') or {}
             per_section_list = evidence_for_text.get('per_section') or []
             overall_ai = payload_for_text.get('overall') or {}
+            # Extract template tendency from dimensions for review_text tasks
+            if detection_task_for_text.detect_type in ('review', 'multi'):
+                dims = payload_for_text.get('dimensions') or []
+                for d in dims:
+                    if d.get('name') == 'template_tendency':
+                        template_tendency_score_from_sdr = d.get('score')
+                        template_analysis_reason_from_sdr = d.get('summary', '')
+                        break
         except StructuredDetectionResult.DoesNotExist:
             pass
 
@@ -953,25 +963,24 @@ def get_review_detail(request, manual_review_id):
                 'template_analysis_reason': getattr(text_det, 'template_analysis_reason', ''),
             }
         elif per_section_list:
-            # 结构化检测: 聚合所有 per_section 数据为单个 AI 检测结果
+            # 结构化检测: 聚合 per_section 数据为 AI 检测结果
+            # per_section entries have: item_id, is_aigc, confidence_score, text, etc.
             all_high_risk = []
             for sec in per_section_list:
-                paragraphs = sec.get('paragraphs') or []
-                for idx, p in enumerate(paragraphs):
-                    if p.get('ai_probability', 0) > 0.5:
-                        all_high_risk.append({
-                            'paragraph_index': p.get('paragraph_index', p.get('index', idx)),
-                            'ai_probability': p.get('ai_probability', 0),
-                            'text': p.get('text', ''),
-                            'reason': p.get('reason', ''),
-                        })
+                if sec.get('is_aigc'):
+                    all_high_risk.append({
+                        'paragraph_index': 0,
+                        'ai_probability': sec.get('confidence_score', 0),
+                        'text': sec.get('text', ''),
+                        'reason': sec.get('label_name', ''),
+                    })
             ai_detection = {
                 'is_fake': overall_ai.get('is_fake'),
                 'confidence_score': overall_ai.get('confidence_score'),
                 'ai_generated_paragraphs': all_high_risk,
                 'factual_fake_reason': overall_ai.get('reason', ''),
-                'template_tendency_score': None,
-                'template_analysis_reason': '',
+                'template_tendency_score': template_tendency_score_from_sdr,
+                'template_analysis_reason': template_analysis_reason_from_sdr,
             }
         texts.append({
             'text_id': text.id,
