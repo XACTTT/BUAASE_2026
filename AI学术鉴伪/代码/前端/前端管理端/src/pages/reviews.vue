@@ -441,13 +441,6 @@
                     检测详情
                     <v-chip size="small" class="ml-2">{{ reviewDetails.structured_items.length }}</v-chip>
                   </div>
-                  <v-spacer></v-spacer>
-                  <v-btn v-if="reviewDetails.task_id"
-                    color="teal" variant="tonal" prepend-icon="mdi-magnify-scan"
-                    @click="viewDetectionResult" :loading="detectionResultLoading" size="small"
-                  >
-                    查看完整检测结果
-                  </v-btn>
                 </div>
                 <v-card variant="outlined" rounded="lg" class="pa-3">
                   <div class="d-flex align-center gap-3 flex-wrap mb-3">
@@ -467,11 +460,19 @@
                       <v-icon start size="small">mdi-help-circle</v-icon>
                       未判定: {{ totalSections - flaggedCount - humanCount }}
                     </v-chip>
+                    <v-spacer></v-spacer>
+                    <v-btn v-if="reviewDetails.task_id"
+                      color="teal" variant="tonal" prepend-icon="mdi-magnify-scan"
+                      @click="viewDetectionResult" :loading="detectionResultLoading" size="small"
+                    >
+                      查看完整检测结果
+                    </v-btn>
                   </div>
                   <div v-if="flaggedCount > 0" class="d-flex flex-column gap-1">
                     <div class="text-subtitle-2 font-weight-bold mb-1">AI生成段落：</div>
                     <div v-for="item in reviewDetails.structured_items.filter(i => i.is_aigc)" :key="'flagged-' + item.item_id"
-                      class="d-flex align-center pa-2 rounded bg-error-lighten-5"
+                      class="d-flex align-center pa-2 rounded bg-error-lighten-5 paragraph-item-clickable"
+                      @click="openParagraphDetail(item)"
                     >
                       <v-icon size="small" color="error" class="mr-2">mdi-alert</v-icon>
                       <span class="text-caption font-mono mr-2">{{ item.item_id }}</span>
@@ -479,6 +480,7 @@
                       <v-chip size="x-small" color="error" variant="tonal" class="ml-2">
                         {{ item.confidence_score ? (item.confidence_score * 100).toFixed(1) + '%' : '-' }}
                       </v-chip>
+                      <v-icon size="small" color="grey" class="ml-1">mdi-chevron-right</v-icon>
                     </div>
                   </div>
                   <div v-else class="text-body-2 text-grey pa-2">
@@ -687,6 +689,107 @@
             <v-icon size="64" color="grey">mdi-file-question-outline</v-icon>
             <div class="text-h6 mt-4 text-grey">无法预览该资源</div>
           </div>
+        </div>
+      </div>
+    </transition>
+
+    <!-- 段落详情侧边面板 -->
+    <transition name="slide-panel">
+      <div v-if="showParagraphPanel" class="paragraph-side-panel">
+        <div class="preview-panel-header">
+          <span class="text-h6 font-weight-bold">段落详情</span>
+          <v-btn icon variant="text" @click="closeParagraphDetail">
+            <v-icon>mdi-close</v-icon>
+          </v-btn>
+        </div>
+
+        <div class="preview-panel-content" v-if="selectedParagraph">
+          <!-- 段落标题 -->
+          <v-card variant="outlined" rounded="lg" class="mb-4">
+            <div class="d-flex align-center flex-wrap gap-2 pa-4">
+              <v-icon :color="getParagraphConfidenceColor(selectedParagraph.confidence_score)" class="mr-1">
+                {{ (selectedParagraph.confidence_score || 0) > 0.5 ? 'mdi-alert-circle' : 'mdi-check-circle' }}
+              </v-icon>
+              <span class="text-subtitle-1 font-weight-bold">{{ selectedParagraph.item_id }}</span>
+              <v-chip v-if="selectedParagraph.is_aigc" color="error" size="small" variant="tonal">
+                <v-icon start size="x-small">mdi-robot</v-icon>
+                AI生成
+              </v-chip>
+              <v-chip v-else color="success" size="small" variant="tonal">
+                <v-icon start size="x-small">mdi-account</v-icon>
+                人类撰写
+              </v-chip>
+            </div>
+          </v-card>
+
+          <!-- BERT 检测结果 -->
+          <v-card variant="outlined" rounded="lg" class="mb-4">
+            <div class="d-flex align-center pa-4 pb-2">
+              <v-icon color="primary" class="mr-2">mdi-brain</v-icon>
+              <span class="text-subtitle-2 font-weight-bold">BERT 检测结果</span>
+            </div>
+            <div class="px-4 pb-4">
+              <div class="text-caption text-medium-emphasis mb-1">AI生成置信度</div>
+              <v-progress-linear
+                :model-value="(selectedParagraph.confidence_score || 0) * 100"
+                :color="getParagraphConfidenceColor(selectedParagraph.confidence_score)"
+                height="24"
+                rounded
+                class="mb-2"
+              >
+                <template #default="{ value }">
+                  <strong class="text-caption">{{ value.toFixed(1) }}%</strong>
+                </template>
+              </v-progress-linear>
+
+              <div v-if="selectedParagraph.probabilities" class="mt-4">
+                <div class="text-caption text-medium-emphasis mb-2">概率分布</div>
+                <div class="d-flex align-center gap-4">
+                  <div class="flex-grow-1">
+                    <div class="text-caption text-grey mb-1">人类撰写</div>
+                    <v-progress-linear
+                      :model-value="(selectedParagraph.probabilities.human || 0) * 100"
+                      color="success"
+                      height="10"
+                      rounded
+                    />
+                    <div class="text-caption text-right">{{ ((selectedParagraph.probabilities.human || 0) * 100).toFixed(1) }}%</div>
+                  </div>
+                  <div class="flex-grow-1">
+                    <div class="text-caption text-grey mb-1">AI生成</div>
+                    <v-progress-linear
+                      :model-value="(selectedParagraph.probabilities.aigc || 0) * 100"
+                      color="error"
+                      height="10"
+                      rounded
+                    />
+                    <div class="text-caption text-right">{{ ((selectedParagraph.probabilities.aigc || 0) * 100).toFixed(1) }}%</div>
+                  </div>
+                </div>
+              </div>
+
+              <div v-if="selectedParagraph.label_name" class="mt-3">
+                <v-chip :color="selectedParagraph.is_aigc ? 'error' : 'success'" variant="tonal" size="small">
+                  模型判定：{{ selectedParagraph.label_name }}
+                </v-chip>
+              </div>
+            </div>
+          </v-card>
+
+          <!-- 段落内容 -->
+          <v-card variant="outlined" rounded="lg">
+            <div class="d-flex align-center pa-4 pb-2">
+              <v-icon color="info" class="mr-2">mdi-text-box</v-icon>
+              <span class="text-subtitle-2 font-weight-bold">段落内容</span>
+            </div>
+            <div class="px-4 pb-4">
+              <div v-if="selectedParagraph.text" class="paragraph-detail-text">{{ selectedParagraph.text }}</div>
+              <div v-else class="text-center py-4">
+                <v-icon size="40" color="grey">mdi-text-box-remove-outline</v-icon>
+                <div class="text-body-2 text-grey mt-2">该段落文本内容未保存</div>
+              </div>
+            </div>
+          </v-card>
         </div>
       </div>
     </transition>
@@ -929,6 +1032,27 @@ const closePreviewPanel = () => {
     URL.revokeObjectURL(previewBlobUrl.value)
     previewBlobUrl.value = null
   }
+}
+
+// 段落详情侧边面板
+const showParagraphPanel = ref(false)
+const selectedParagraph = ref<StructuredItem | null>(null)
+
+const openParagraphDetail = (item: StructuredItem) => {
+  selectedParagraph.value = item
+  showParagraphPanel.value = true
+}
+
+const closeParagraphDetail = () => {
+  showParagraphPanel.value = false
+}
+
+const getParagraphConfidenceColor = (score: number | null): string => {
+  const s = score || 0
+  if (s > 0.8) return 'error'
+  if (s > 0.5) return 'warning'
+  if (s > 0.3) return 'info'
+  return 'success'
 }
 
 // 查看完整检测结果
@@ -1389,5 +1513,28 @@ onBeforeUnmount(() => {
 .slide-panel-enter-from,
 .slide-panel-leave-to {
   transform: translateX(100%);
+}
+
+/* 段落详情侧边面板 */
+.paragraph-side-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 700px;
+  height: 100vh;
+  background: rgb(var(--v-theme-surface));
+  z-index: 10000;
+  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.15);
+  display: flex;
+  flex-direction: column;
+}
+
+.paragraph-item-clickable {
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.paragraph-item-clickable:hover {
+  background: rgb(var(--v-theme-error), 0.08) !important;
 }
 </style> 
