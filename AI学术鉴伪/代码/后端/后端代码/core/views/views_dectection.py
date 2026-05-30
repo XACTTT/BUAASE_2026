@@ -426,6 +426,7 @@ def submit_detection2(request):
     if resolved_image_ids:
         image_ids = resolved_image_ids
     task_name = request.data.get('task_name', 'New Detection Task')  # 从请求中获取任务名称，默认为 "New Detection Task"
+    container_id = request.data.get('container_id')
 
     # 获取额外的参数
     cmd_block_size = request.data.get('cmd_block_size', 64)  # 默认为64
@@ -454,6 +455,10 @@ def submit_detection2(request):
     if not image_uploads.exists():
         return Response({"message": "No valid images found"}, status=404)
 
+    container = None
+    if container_id:
+        container = ResourceContainer.objects.filter(id=container_id, owner=user).first()
+
     num_images = len(image_uploads)
     quota_error = _check_organization_quota(organization, if_use_llm, num_images)
     if quota_error:
@@ -463,6 +468,7 @@ def submit_detection2(request):
     detection_task = DetectionTask.objects.create(
         organization=user.organization,
         user=request.user,
+        container=container,
         task_name=task_name,  # 使用用户提交的任务名称
         status='pending',  # 初始状态为"排队中"
         detect_type='image',
