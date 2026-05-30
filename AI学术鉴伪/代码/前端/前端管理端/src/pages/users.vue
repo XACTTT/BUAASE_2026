@@ -84,7 +84,7 @@
                   <v-icon :color="getPermissionBit(item.permission, 3) ? 'info' : 'error'" size="small" class="mr-1">
                     {{ getPermissionBit(item.permission, 3) ? 'mdi-check-circle' : 'mdi-close-circle' }}
                   </v-icon>
-                  <span class="text-caption">上传图像</span>
+                  <span class="text-caption">上传材料</span>
                 </div>
                 <div class="d-flex align-center">
                   <v-icon :color="getPermissionBit(item.permission, 2) ? 'success' : 'error'" size="small" class="mr-1">
@@ -150,7 +150,7 @@
           <div class="d-flex flex-column gap-4">
             <!-- 出版社权限 -->
             <template v-if="selectedUser?.role === 'publisher'">
-              <v-switch v-model="editingPermissions.uploadImage" label="上传图像权限" color="info" hide-details></v-switch>
+              <v-switch v-model="editingPermissions.uploadMaterial" label="上传材料权限" color="info" hide-details></v-switch>
               <v-switch v-model="editingPermissions.submitAI" label="提交AI检测权限" color="success" hide-details></v-switch>
               <v-switch v-model="editingPermissions.publishReview" label="发布人工审核权限" color="warning"
                 hide-details></v-switch>
@@ -197,7 +197,7 @@
               <div class="text-subtitle-2">权限筛选</div>
               <v-switch v-model="filters.enablePermissionFilter" label="启用权限筛选" color="info" hide-details></v-switch>
               <template v-if="filters.enablePermissionFilter">
-                <v-switch v-model="filters.permissions.uploadImage" label="上传图像权限" color="info" hide-details></v-switch>
+                <v-switch v-model="filters.permissions.uploadMaterial" label="上传材料权限" color="info" hide-details></v-switch>
                 <v-switch v-model="filters.permissions.submitAI" label="提交AI检测权限" color="success"
                   hide-details></v-switch>
                 <v-switch v-model="filters.permissions.publishReview" label="发布人工审核权限" color="warning"
@@ -404,7 +404,7 @@ const totalPages = ref(1)
 const showPermissionDialog = ref(false)
 const selectedUser = ref<User | null>(null)
 const editingPermissions = ref({
-  uploadImage: false,
+  uploadMaterial: false,
   submitAI: false,
   publishReview: false,
   submitReview: false
@@ -455,7 +455,7 @@ const openPermissionDialog = (user: User) => {
   // 只有非管理员和非根管理员才能修改权限
   if (user.role !== 'admin' && user.email !== ROOT_ADMIN_EMAIL) {
     editingPermissions.value = {
-      uploadImage: getPermissionBit(user.permission, 3),
+      uploadMaterial: getPermissionBit(user.permission, 3),
       submitAI: getPermissionBit(user.permission, 2),
       publishReview: getPermissionBit(user.permission, 1),
       submitReview: getPermissionBit(user.permission, 0)
@@ -471,7 +471,7 @@ const updatePermissions = async () => {
     try {
       // 计算权限值（4位二进制）
       const permissionValue =
-        (editingPermissions.value.uploadImage ? 8 : 0) +  // 第3位：上传图像
+        (editingPermissions.value.uploadMaterial ? 8 : 0) +  // 第3位：上传材料
         (editingPermissions.value.submitAI ? 4 : 0) +     // 第2位：提交AI检测
         (editingPermissions.value.publishReview ? 2 : 0) + // 第1位：发布人工审核
         (editingPermissions.value.submitReview ? 1 : 0)    // 第0位：提交人工审核
@@ -545,7 +545,7 @@ const filters = ref<{
 }>({
   role: null,
   permissions: {
-    uploadImage: null,
+    uploadMaterial: null,
     submitAI: null,
     publishReview: null,
     submitReview: null
@@ -583,7 +583,7 @@ const resetFilters = () => {
   filters.value = {
     role: null,
     permissions: {
-      uploadImage: null,
+      uploadMaterial: null,
       submitAI: null,
       publishReview: null,
       submitReview: null
@@ -611,8 +611,8 @@ const applyFilters = () => {
 
   // 计算权限值
   let permissionValue = 0
-  if (filters.value.permissions.uploadImage !== null) {
-    permissionValue |= (filters.value.permissions.uploadImage ? 8 : 0)
+  if (filters.value.permissions.uploadMaterial !== null) {
+    permissionValue |= (filters.value.permissions.uploadMaterial ? 8 : 0)
   }
   if (filters.value.permissions.submitAI !== null) {
     permissionValue |= (filters.value.permissions.submitAI ? 4 : 0)
@@ -715,10 +715,10 @@ const fetchUsers = async (page: number, pageSize: number) => {
     // 计算权限筛选值（4 位二进制）
     let permissionFilter = ''
     if (filters.value.enablePermissionFilter) {
-      const { uploadImage, submitAI, publishReview, submitReview } = filters.value.permissions
-      if (uploadImage !== null || submitAI !== null || publishReview !== null || submitReview !== null) {
+      const { uploadMaterial, submitAI, publishReview, submitReview } = filters.value.permissions
+      if (uploadMaterial !== null || submitAI !== null || publishReview !== null || submitReview !== null) {
         let value = 0
-        if (uploadImage !== null) { value |= (uploadImage ? 8 : 0) }
+        if (uploadMaterial !== null) { value |= (uploadMaterial ? 8 : 0) }
         if (submitAI !== null) { value |= (submitAI ? 4 : 0) }
         if (publishReview !== null) { value |= (publishReview ? 2 : 0) }
         if (submitReview !== null) { value |= (submitReview ? 1 : 0) }

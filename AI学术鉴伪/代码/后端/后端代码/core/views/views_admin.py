@@ -1117,14 +1117,14 @@ class UserPermissionView(APIView):
             if permission_value is not None:
                 perm_str = str(permission_value).zfill(4)
                 perms_desc = {
-                    'upload': '可上传' if perm_str[0] == '1' else '不可上传',
+                    'upload': '可上传材料' if perm_str[0] == '1' else '不可上传材料',
                     'submit': '可提交' if perm_str[1] == '1' else '不可提交',
                     'publish': '可发布' if perm_str[2] == '1' else '不可发布',
                     'review': '可审核' if perm_str[3] == '1' else '不可审核',
                 }
             else:
                 perms_desc = {
-                    'upload': '不可上传',
+                    'upload': '不可上传材料',
                     'submit': '不可提交',
                     'publish': '不可发布',
                     'review': '不可审核',

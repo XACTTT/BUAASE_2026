@@ -50,6 +50,9 @@ def _serialize_container(container: ResourceContainer, detection_task=None, file
 @permission_classes([IsAuthenticated])
 def resource_container_list_create(request):
     if request.method == 'POST':
+        if not request.user.has_permission('upload'):
+            return _error('FORBIDDEN', 'No material upload permission', status.HTTP_403_FORBIDDEN)
+            
         required_fields = ['container_type', 'title']
         for field in required_fields:
             if not request.data.get(field):
@@ -144,6 +147,9 @@ def resource_container_review_text(request, container_id):
             }
             for entry in entries
         ])
+
+    if not request.user.has_permission('upload'):
+        return _error('FORBIDDEN', 'No material upload permission', status.HTTP_403_FORBIDDEN)
 
     try:
         review_text = ReviewTextService.create_review_text(request.user, container, request.data)
