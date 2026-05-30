@@ -101,22 +101,44 @@ def _serialize_resource(file_obj):
     else:
         detection_type = '未检测'
 
-    # Related resources in the same container
+    # Related resources (files in same container + extracted images)
     related_resources = []
+
+    # 1. 同一容器中的其他文件
     if file_obj.container_id:
         related_fm = FileManagement.objects.filter(
             container_id=file_obj.container_id
         ).exclude(id=file_obj.id).select_related('user', 'organization')
         for fm in related_fm:
             fm_metadata = fm.extra_metadata or {}
+            # 尝试为相关文件寻找任务 ID
+            fm_task = DetectionTask.objects.filter(container_id=file_obj.container_id).order_by('-id').first()
+            fm_task_id = fm_task.id if fm_task else task_id
+            
             related_resources.append({
                 'id': fm.id,
                 'type': _infer_resource_type(fm),
                 'file_name': fm.file_name,
                 'relation_type': fm.resource_role or '',
-                'task_id': task_id,
+                'task_id': fm_task_id,
                 'title': fm_metadata.get('title') or fm.file_name,
             })
+
+    # 2. 从此文件提取出的图片 (ImageUpload 记录)
+    if hasattr(file_obj, 'image_uploads'):
+        extracted_images = file_obj.image_uploads.all()
+    else:
+        extracted_images = ImageUpload.objects.filter(file_management=file_obj)
+
+    for img in extracted_images:
+        related_resources.append({
+            'id': img.id,
+            'type': 'image',
+            'file_name': img.file_name or (os.path.basename(img.image.name) if img.image else f"image_{img.id}"),
+            'relation_type': 'extracted_image',
+            'task_id': img.detection_task_id or task_id,
+            'title': img.file_name or f"提取图片 #{img.id}",
+        })
 
     metadata = file_obj.extra_metadata or {}
 
@@ -151,7 +173,7 @@ def admin_resources(request):
     if page_size <= 0:
         page_size = 10
 
-    resources = FileManagement.objects.select_related('user', 'organization').all().order_by('-upload_time')
+    resources = FileManagement.objects.select_related('user', 'organization').prefetch_related('image_uploads').all().order_by('-upload_time')
 
     user = request.user
     if user.email != 'admin@mail.com':

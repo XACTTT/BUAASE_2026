@@ -1286,8 +1286,10 @@ const previewResource = async (resource: Resource) => {
   previewFileName.value = resource.file_name || resource.title || ''
 
   try {
-    const fileType = resource.type === 'image' ? 'image' : 'file'
-    const response = await resourceApi.previewResource(resource.id, fileType)
+    // 对于主列表中的 FileManagement 资源，统一使用 'file' 类型进行预览
+    // 因为后端 /api/preview/file/{id}/ 对应的是 FileManagement ID，
+    // 而 /api/preview/image/{id}/ 对应的是具体的 ImageUpload ID。
+    const response = await resourceApi.previewResource(resource.id, 'file')
 
     const blob = response.data as any
     const contentType = blob.type || ''
