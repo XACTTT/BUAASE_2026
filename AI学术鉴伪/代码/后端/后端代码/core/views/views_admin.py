@@ -218,7 +218,7 @@ def admin_resources(request):
 
     if detection_result in ('real', 'fake', 'undetected', 'failed', 'detecting'):
         if detection_result == 'undetected':
-            serialized = [item for item in serialized if item['detection_result'] is None and item['detection_status'] == 'pending']
+            serialized = [item for item in serialized if item['detection_result'] is None and item['detection_status'] not in ('detecting', 'failed')]
         elif detection_result == 'failed':
             serialized = [item for item in serialized if item['detection_result'] == 'failed' or item['detection_status'] == 'failed']
         elif detection_result == 'detecting':
