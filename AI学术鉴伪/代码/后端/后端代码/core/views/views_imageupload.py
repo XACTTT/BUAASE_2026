@@ -296,7 +296,7 @@ def get_extracted_images(request, file_id):
                 continue
 
             # 统一回传经 /api 鉴权的预览地址，避免前端环境下 /media 路由404。
-            image_url = request.build_absolute_uri(f"/api/preview/image/{image.id}/")
+            image_url = f"/api/preview/image/{image.id}/"
 
             image_data = {
                 "image_id": image.id,
@@ -572,7 +572,7 @@ def get_extracted_contents(request, file_id):
     can_inline = False
     if file_ext in {'pdf', 'doc', 'docx'}:
         preview_mode = "file"
-        preview_url = request.build_absolute_uri(f"/api/preview/file/{file_id}/")
+        preview_url = f"/api/preview/file/{file_id}/"
         can_inline = file_ext == 'pdf'
 
     response_payload = {
