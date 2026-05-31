@@ -643,30 +643,42 @@ import os
 from django.conf import settings
 from django.http import FileResponse
 @api_view(['GET'])  # 明确指定允许的 HTTP 方法
+@permission_classes([IsAuthenticated])
 def generate_manual_review_report_view(request, review_id):
-    review = ManualReview.objects.get(id=review_id)
-    report_path = generate_manual_review_report(review)
-    # return Response({"report_url": review.report_file.url})
+    review = ManualReview.objects.select_related(
+        'review_request', 'review_request__user', 'reviewer'
+    ).filter(id=review_id).first()
+    if not review:
+        return Response({"detail": "Manual review not found."}, status=404)
 
-    # task = review.review_request.detection_result.image_upload.detection_task
-    #
-    # # 第一个报告
-    # abs_path = os.path.join(settings.MEDIA_ROOT, task.report_file.name)
-    # if not os.path.exists(abs_path):
-    #     return Response({"detail": "Report file missing."}, status=410)
-    #
-    # return FileResponse(open(abs_path, "rb"),
-    #                     as_attachment=True,
-    #                     filename=f"task_{task.id}_report.pdf")
+    user = request.user
+    can_download = (
+        review.review_request.user_id == user.id
+        or review.reviewer_id == user.id
+        or getattr(user, 'role', '') == 'admin'
+        or getattr(user, 'is_staff', False)
+    )
+    if not can_download:
+        return Response({"detail": "Permission denied."}, status=403)
+    if review.status != 'completed':
+        return Response({"detail": "Manual review not completed yet."}, status=400)
 
-    # 第二个报告
+    try:
+        generate_manual_review_report(review)
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception(
+            "Manual review report generation failed for review %s", review_id
+        )
+        return Response({"detail": "Report generation failed."}, status=500)
+
     abs_path = os.path.join(settings.MEDIA_ROOT, review.report_file.name)
     if not os.path.exists(abs_path):
         return Response({"detail": "Report file missing."}, status=410)
 
     return FileResponse(open(abs_path, "rb"),
                         as_attachment=True,
-                        filename=f"manual_report.pdf")
+                        filename=f"manual_review_{review.id}_report.pdf")
 # from io import BytesIO
 # import zipfile
 # @api_view(['GET'])

@@ -633,9 +633,8 @@ const fetchDetectionResults = async () => {
       await fetchStructuredDetectionResults(textResults.value)
     } else {
       if (currentImage.value) {
-        const id = await (await publisher.getDetectionID({ img_id: currentImage.value.img_id })).data.detection_result_id
-        const response = (await publisher.getSingleImageResult(id)).data
-        detection_results.value = response.sub_methods
+        const response = (await publisher.getImageDetectionByImageId(Number(currentImage.value.img_id))).data
+        detection_results.value = response.sub_methods || []
       }
     }
   } catch (error) {
@@ -814,36 +813,34 @@ const handleViewDetail = (review: Review) => {
 
 const handleDownloadReport = async () => {
   try {
-    const response = await publisher.downloadReviewReport({ review_request_id: review_request_id.value })
-    // 打印response.data（Blob对象）的类型和大小
-    console.log('Downloaded data is a Blob. Type:', response.data.type, 'Size:', response.data.size);
+    if (allManualReviews.value.length === 0) {
+      await fetchAllManualReviews()
+    }
+    const manualReview = allManualReviews.value.find(item => item.status === 'completed')
+    if (!manualReview?.manual_review_id) {
+      snackbar.showMessage('暂无已完成的人工审核报告', 'warning')
+      return
+    }
 
-    // 确保response.data是一个Blob对象
+    const response = await publisher.downloadReviewReport({ manual_review_id: manualReview.manual_review_id })
     if (!(response.data instanceof Blob)) {
-      console.error('Expected Blob data, but received:', response.data);
-      snackbar.showMessage('下载失败：未收到文件数据', 'error');
-      return;
+      snackbar.showMessage('下载失败：未收到文件数据', 'error')
+      return
     }
 
     const blob = response.data
-
-    // 检查Blob类型是否为PDF
     if (blob.type !== 'application/pdf') {
-      console.warn('Downloaded Blob type is not application/pdf:', blob.type);
-      snackbar.showMessage('下载的文件不是PDF格式', 'warning');
-      return;
+      snackbar.showMessage('下载的文件不是PDF格式', 'warning')
+      return
     }
 
-    // 创建一个 Blob URL
     const url = window.URL.createObjectURL(blob)
-    // 创建一个下载链接
     const link = document.createElement('a')
     link.href = url
-    link.download = `人工审核报告_${review_request_id.value}.pdf`
-    link.target = '_blank' // 在新标签页打开
+    link.download = `人工审核报告_${review_request_id.value}_${manualReview.manual_review_id}.pdf`
+    link.target = '_blank'
     document.body.appendChild(link)
     link.click()
-    // 清理
     document.body.removeChild(link)
     window.URL.revokeObjectURL(url)
     snackbar.showMessage('报告下载成功', 'success')

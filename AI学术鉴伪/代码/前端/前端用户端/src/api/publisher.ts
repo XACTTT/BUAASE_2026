@@ -86,7 +86,8 @@ export default {
   },
 
   downloadReviewReport(data: any) {
-    return http.get(`/manual-review/${data.review_request_id}/report/`, {
+    const manualReviewId = data.manual_review_id ?? data.review_id ?? data.review_request_id
+    return http.get(`/manual-review/${manualReviewId}/report/`, {
       responseType: 'blob'
     })
   },

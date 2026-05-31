@@ -609,7 +609,7 @@ def dashboard_img_tag(request):
     """
     返回符合对应Tag的ImageUpload数量统计（包含值为0的tag）
     参数: startTime, endTime（ISO 8601格式）
-    示例响应: {"Biology": 1, "Medicine": 5, "Chemistry": 50, "Graphics": 2, "Other": 3, "Math": 0}
+    示例响应: {"Biology": 1, "Medicine": 5, "Chemistry": 50, "Graphics": 2, "Other": 3}
     """
     start_time = request.query_params.get('startTime')
     end_time = request.query_params.get('endTime')
@@ -632,24 +632,28 @@ def dashboard_img_tag(request):
     except ValueError:
         return Response({'error': 'Invalid datetime format'}, status=400)
 
-    # 获取所有预设 tag（从 FileManagement 中提取）
     from core.models import FileManagement
-    TAG_CHOICES = dict(FileManagement.TAG_CHOICES)  # [('Biology', 'Biology'), ...]
+    from django.db.models import Count
 
-    # 初始化所有 tag 的计数为 0
-    tag_counts = {tag: 0 for tag in TAG_CHOICES.keys()}
+    tag_choices = list(FileManagement.TAG_CHOICES)
+    tag_counts = {label: 0 for _, label in tag_choices}
+    tag_aliases = {}
+    for key, label in tag_choices:
+        tag_aliases[key] = label
+        tag_aliases[label] = label
+        tag_aliases[key.lower()] = label
+        tag_aliases[label.lower()] = label
 
-    # 查询在时间范围内的所有 FileManagement 数据并预取 image_uploads
     file_managements = FileManagement.objects.filter(
         upload_time__range=[start_time, end_time]
-    ).prefetch_related('image_uploads')
+    )
+    if request.user.email != 'admin@mail.com':
+        file_managements = file_managements.filter(organization=request.user.organization)
 
-    # 统计每个 tag 下的图片数量
-    for fm in file_managements:
-        count = fm.image_uploads.count()
-        tag = fm.get_tag_display()  # 获取 human-readable tag 名称
-        if tag in tag_counts:
-            tag_counts[tag] += count
+    for row in file_managements.values('tag').annotate(image_count=Count('image_uploads')):
+        raw_tag = row.get('tag') or 'other'
+        normalized_tag = tag_aliases.get(raw_tag) or tag_aliases.get(str(raw_tag).lower()) or tag_aliases['other']
+        tag_counts[normalized_tag] += row['image_count']
 
     return Response(tag_counts)
 

@@ -1439,7 +1439,7 @@ def generate_manual_review_report(review: ManualReview) -> str:
             c.drawImage(ImageReader(image_path), MARGIN, y - 120, width=120, height=120, preserveAspectRatio=True)
 
         # 审核结果
-        c.setFont("SimSun", 12)
+        c.setFont(FONT_REGULAR, 12)
         y -= 140
         result_text = "判定为假图" if img_review.result else "判定为真图"
         c.drawString(MARGIN, y, f"最终判定：{result_text}")
@@ -1448,10 +1448,10 @@ def generate_manual_review_report(review: ManualReview) -> str:
         y -= 20
 
         # 各个评分项与理由
-        c.setFont("SimSun-Bold", 12)
+        c.setFont(FONT_BOLD, 12)
         c.drawString(MARGIN, y, "各维度评分与理由：")
         y -= 20
-        c.setFont("SimSun", 12)
+        c.setFont(FONT_REGULAR, 12)
 
         methods = {
             1: ("Method-1", img_review.score1, img_review.reason1),
@@ -1467,7 +1467,7 @@ def generate_manual_review_report(review: ManualReview) -> str:
             reason_text = reason or '无'
             line_text = f"{method_name}：得分 {score}, 理由：“{reason_text}”"
             y = _draw_multiline(c, MARGIN + 10, y, line_text,
-                                max_chars=80, font='SimSun', size=11)
+                                max_chars=80, font=FONT_REGULAR, size=11)
             y -= 10
             if y < MARGIN + 50:
                 c.showPage()
@@ -1479,12 +1479,12 @@ def generate_manual_review_report(review: ManualReview) -> str:
             points_data = json.loads(img_review.points1) if img_review.points1 else []
         except Exception:
             pass
-        c.setFont("SimSun", 10)
+        c.setFont(FONT_REGULAR, 10)
         y -= 10
         c.drawString(MARGIN, y, "点集数据示例（Method-1）:")
         y -= 20
         sample_points = str(points_data)[:80] + ('...' if len(str(points_data)) > 80 else '')
-        y = _draw_multiline(c, MARGIN + 10, y, sample_points, max_chars=80, font='SimSun', size=10)
+        y = _draw_multiline(c, MARGIN + 10, y, sample_points, max_chars=80, font=FONT_REGULAR, size=10)
         y -= 30
 
         if y < MARGIN + 50:
