@@ -227,6 +227,7 @@
                 <div class="text-subtitle-2 text-medium-emphasis">操作权限</div>
                 <v-switch v-model="filters.permissions.submitAI" label="提交AI检测权限" color="success" hide-details></v-switch>
                 <v-switch v-model="filters.permissions.publishReview" label="发布人工审核权限" color="orange" hide-details></v-switch>
+                <v-switch v-model="filters.permissions.review" label="进行人工审核权限" color="primary" hide-details></v-switch>
               </template>
             </div>
 
@@ -566,6 +567,7 @@ const filters = ref<{
     uploadComprehensive: boolean | null
     submitAI: boolean | null
     publishReview: boolean | null
+    review: boolean | null
   }
   timeRange: string | null
   startDate: string | null
@@ -579,7 +581,8 @@ const filters = ref<{
     uploadReview: null as boolean | null,
     uploadComprehensive: null as boolean | null,
     submitAI: null as boolean | null,
-    publishReview: null as boolean | null
+    publishReview: null as boolean | null,
+    review: null as boolean | null
   },
   timeRange: null,
   startDate: null,
@@ -619,7 +622,8 @@ const resetFilters = () => {
       uploadReview: null,
       uploadComprehensive: null,
       submitAI: null,
-      publishReview: null
+      publishReview: null,
+      review: null
     },
     timeRange: null,
     startDate: null,
@@ -775,6 +779,10 @@ const fetchUsers = async (page: number, pageSize: number) => {
         hasPermFilter = true
         if (perms.publishReview) { permissionHas |= 2 } else { permissionNot |= 2 }
       }
+      if (perms.review !== null) {
+        hasPermFilter = true
+        if (perms.review) { permissionHas |= 1 } else { permissionNot |= 1 }
+      }
     }
 
     // 计算时间筛选
@@ -797,7 +805,17 @@ const fetchUsers = async (page: number, pageSize: number) => {
       endTimeFilter = formatDateFilter(new Date(filters.value.endDate).getTime())
     }
 
-    const params: Record<string, any> = {
+    const params: {
+      page: number
+      page_size: number
+      query?: string
+      role?: string
+      startTime?: string
+      endTime?: string
+      organization?: string
+      permission_has?: string
+      permission_not?: string
+    } = {
       page,
       page_size: pageSize,
       query: searchQuery.value || '',

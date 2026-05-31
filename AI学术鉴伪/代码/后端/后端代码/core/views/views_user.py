@@ -643,14 +643,22 @@ import os
 from django.conf import settings
 from django.http import FileResponse
 @api_view(['GET'])
+@permission_classes([IsAuthenticated])
 def generate_manual_review_report_view(request, review_id):
     """review_id is actually a ReviewRequest.id."""
+    user = request.user
+    if user.role not in ('publisher', 'reviewer', 'organization_admin', 'software_admin'):
+        return Response({"detail": "Permission denied."}, status=403)
+
     try:
         review_request = ReviewRequest.objects.get(id=review_id)
     except ReviewRequest.DoesNotExist:
         return Response({"detail": "Review request not found."}, status=404)
 
-    report_path = generate_manual_review_report(review_request)
+    try:
+        report_path = generate_manual_review_report(review_request)
+    except Exception as e:
+        return Response({"detail": f"Failed to generate report: {str(e)}"}, status=500)
 
     abs_path = os.path.join(settings.MEDIA_ROOT, report_path)
     if not os.path.exists(abs_path):

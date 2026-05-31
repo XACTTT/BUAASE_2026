@@ -1430,7 +1430,10 @@ class LogStatisticsView(APIView):
         from django.db.models import Count
         from django.db.models.functions import TruncDate
 
-        days = int(request.GET.get('days', 30))
+        try:
+            days = int(request.GET.get('days', 30))
+        except (TypeError, ValueError):
+            days = 30
         start_date = timezone.now() - timedelta(days=days)
 
         logs = Log.objects.filter(operation_time__gte=start_date)
