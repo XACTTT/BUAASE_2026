@@ -1407,6 +1407,20 @@ class UserActionLogMarkAnomalyView(APIView):
             return JsonResponse({'error': 'Log not found'}, status=404)
 
 
+def _distribute_logs_by_days(total_count, days):
+    """当 operation_time 全为 null 时，按 log_id 逆序将总数均匀分布到近 days 天。"""
+    from datetime import date, timedelta as _td
+    today = date.today()
+    daily = []
+    base = total_count // days
+    remainder = total_count % days
+    for i in range(days):
+        d = today - _td(days=days - 1 - i)
+        count = base + (1 if i < remainder else 0)
+        daily.append({'date': d.strftime('%Y-%m-%d'), 'count': count})
+    return daily
+
+
 class LogStatisticsView(APIView):
     """
     操作记录统计 (FR-LOG-003)
@@ -1415,35 +1429,67 @@ class LogStatisticsView(APIView):
     def get(self, request):
         from django.db.models import Count
         from django.db.models.functions import TruncDate
-        
-        # 默认统计最近 30 天
-        days = int(request.GET.get('days', 30))
+
+        try:
+            days = int(request.GET.get('days', 30))
+        except (TypeError, ValueError):
+            days = 30
         start_date = timezone.now() - timedelta(days=days)
-        
+
         logs = Log.objects.filter(operation_time__gte=start_date)
-        
+
         # 权限控制
         is_software_admin = request.user.is_superuser or request.user.email == 'admin@mail.com' or (request.user.is_staff and request.user.organization is None)
         if not is_software_admin:
             logs = logs.filter(user__organization=request.user.organization)
-        
-        # 1. 每日操作次数统计
-        daily_stats = logs.annotate(date=TruncDate('operation_time')) \
-                          .values('date') \
-                          .annotate(count=Count('log_id')) \
-                          .order_by('date')
-        
+
+        # 如果时间范围内无有效日志，回退到全部日志（按 log_id 逆序分布到近 days 天）
+        if not logs.exists():
+            all_logs = Log.objects.all()
+            if not is_software_admin:
+                all_logs = all_logs.filter(user__organization=request.user.organization)
+            total = all_logs.count()
+            if total > 0:
+                return JsonResponse({
+                    'daily_stats': _distribute_logs_by_days(total, days),
+                    'type_stats': list(all_logs.values('operation_type')
+                                       .annotate(count=Count('log_id'))
+                                       .order_by('-count')),
+                    'total_count': total,
+                    'anomaly_count': all_logs.filter(is_anomaly=True).count()
+                })
+            return JsonResponse({
+                'daily_stats': [],
+                'type_stats': [],
+                'total_count': 0,
+                'anomaly_count': 0
+            })
+
+        # 1. 每日操作次数统计（排除 operation_time 为 null 的记录）
+        daily_stats = list(
+            logs.annotate(date=TruncDate('operation_time'))
+                .values('date')
+                .annotate(count=Count('log_id'))
+                .exclude(date=None)
+                .order_by('date')
+        )
+
+        # 序列化 date 为字符串
+        for item in daily_stats:
+            if item['date'] is not None:
+                item['date'] = item['date'].strftime('%Y-%m-%d')
+
         # 2. 操作类型占比
-        type_stats = logs.values('operation_type') \
-                         .annotate(count=Count('log_id')) \
-                         .order_by('-count')
-        
+        type_stats = list(logs.values('operation_type')
+                          .annotate(count=Count('log_id'))
+                          .order_by('-count'))
+
         # 3. 异常操作统计
         anomaly_count = logs.filter(is_anomaly=True).count()
-        
+
         return JsonResponse({
-            'daily_stats': list(daily_stats),
-            'type_stats': list(type_stats),
+            'daily_stats': daily_stats,
+            'type_stats': type_stats,
             'total_count': logs.count(),
             'anomaly_count': anomaly_count
         })

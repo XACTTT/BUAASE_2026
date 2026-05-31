@@ -8,16 +8,10 @@
       <v-card-text>
         <p>这里是系统的主页，您可以：</p>
         <v-list>
-          <v-list-item v-if="userStore.role === 'publisher'">
+          <v-list-item v-for="action in homeActions" :key="action.text">
             <v-list-item-title>
-              <v-icon start>mdi-file-upload</v-icon>
-              上传文件进行检测
-            </v-list-item-title>
-          </v-list-item>
-          <v-list-item>
-            <v-list-item-title>
-              <v-icon start>mdi-history</v-icon>
-              查看历史检测记录
+              <v-icon start>{{ action.icon }}</v-icon>
+              {{ action.text }}
             </v-list-item-title>
           </v-list-item>
         </v-list>
@@ -40,7 +34,7 @@
 
       <v-card-text v-else-if="resources.length === 0" class="text-center py-8">
         <v-icon size="48" color="grey" class="mb-2">mdi-folder-open</v-icon>
-        <div class="text-body-2 text-grey">{{ userStore.role === 'publisher' ? '暂无资源，请先上传文件' : '暂无资源' }}</div>
+        <div class="text-body-2 text-grey">{{ emptyResourceText }}</div>
       </v-card-text>
 
       <v-data-table v-else :headers="headers" :items="resources" :items-per-page="10" hide-default-footer>
@@ -98,7 +92,7 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSnackbarStore } from '@/stores/snackbar'
 import { useUserStore } from '@/stores/user'
@@ -123,6 +117,32 @@ interface ResourceContainer {
 
 const resources = ref<ResourceContainer[]>([])
 const loading = ref(false)
+
+const homeActions = computed(() => {
+  if (userStore.role === 'reviewer') {
+    return [
+      { icon: 'mdi-book-open-page-variant', text: '审阅分配给我的人工审核任务' },
+      { icon: 'mdi-account', text: '查看个人主页和通知' },
+    ]
+  }
+
+  if (userStore.role === 'publisher') {
+    return [
+      { icon: 'mdi-history', text: '查看历史检测记录' },
+      { icon: 'mdi-gavel', text: '查看人工审核进度' },
+    ]
+  }
+
+  return [
+    { icon: 'mdi-history', text: '查看历史记录' },
+    { icon: 'mdi-account', text: '查看个人主页和通知' },
+  ]
+})
+
+const emptyResourceText = computed(() => {
+  if (userStore.role === 'reviewer') return '暂无分配给您的资源'
+  return '暂无资源'
+})
 
 const headers = [
   { title: '名称', key: 'title', align: 'center' as const, width: '140px' },

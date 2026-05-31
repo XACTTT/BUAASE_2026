@@ -571,8 +571,9 @@ const submitReview = async () => {
     if (selectedImageIds.length > 0) {
       payload.image_ids = selectedImageIds
     }
-    if (selectedItemIds.value.size > 0) {
-      payload.selected_section_ids = [...selectedItemIds.value]
+    const selectedSectionIds = [...selectedItemIds.value].filter(id => !id.startsWith('image_'))
+    if (selectedSectionIds.length > 0) {
+      payload.selected_section_ids = selectedSectionIds
     }
     await publisher.dispatchAnnual(payload)
     snackbar.showMessage('已提交人工审核任务，请等待审核', 'success')

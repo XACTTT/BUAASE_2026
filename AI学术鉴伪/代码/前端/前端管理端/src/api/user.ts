@@ -40,8 +40,11 @@ export default {
     query?: string;
     role?: string;
     permission?: string;
+    permission_has?: string;
+    permission_not?: string;
     startTime?: string;
     endTime?: string;
+    organization?: string;
   }) {
     return http.get('/get_users/', { params });
   },

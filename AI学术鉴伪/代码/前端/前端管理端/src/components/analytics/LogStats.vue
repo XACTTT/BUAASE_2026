@@ -61,8 +61,8 @@ const fetchData = async () => {
 }
 
 const renderCharts = (data: any) => {
-  renderLineChart(data.daily_stats)
-  renderPieChart(data.type_stats)
+  renderLineChart(data.daily_stats || [])
+  renderPieChart(data.type_stats || [])
 }
 
 const renderLineChart = (dailyStats: any[]) => {
@@ -72,18 +72,22 @@ const renderLineChart = (dailyStats: any[]) => {
 
   const isDark = themeStore.theme === 'dark'
   const textColor = isDark ? '#fff' : '#333'
-  
+
+  const validStats = dailyStats.filter(i => i.date != null && i.count != null)
+  const dates = validStats.map(i => i.date)
+  const counts = validStats.map(i => i.count)
+
   const option: echarts.EChartsOption = {
     title: { text: '每日操作趋势', left: 'center', textStyle: { color: textColor, fontSize: 14 } },
     tooltip: { trigger: 'axis' },
     xAxis: {
       type: 'category',
-      data: dailyStats.map(i => i.date),
+      data: dates,
       axisLabel: { color: textColor }
     },
     yAxis: { type: 'value', axisLabel: { color: textColor } },
     series: [{
-      data: dailyStats.map(i => i.count),
+      data: counts,
       type: 'line',
       smooth: true,
       areaStyle: { opacity: 0.3 },

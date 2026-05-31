@@ -65,9 +65,22 @@
                   <div class="d-flex image-grid">
                     <v-hover v-for="(img, index) in detectionResult.fakeImages" :key="index"
                       v-slot="{ isHovering, props }">
-                      <v-card v-bind="props" class="ma-2 position-relative" width="200" height="200" elevation="2"
+                      <v-card v-bind="props" class="ma-2 position-relative d-flex flex-column" width="200" min-height="240" elevation="2"
                         rounded="lg">
-                        <v-img :src="getImageUrl(img.image_url)" cover height="100%">
+                        <v-img :src="getImageUrl(img.image_url)" cover height="200">
+                          <template v-slot:placeholder>
+                            <v-row class="fill-height ma-0" align="center" justify="center">
+                              <v-progress-circular indeterminate color="primary"></v-progress-circular>
+                            </v-row>
+                          </template>
+                          <template v-slot:error>
+                            <v-row class="fill-height ma-0" align="center" justify="center" style="background: #f5f5f5;">
+                              <div class="text-center pa-2">
+                                <v-icon color="grey" size="32">mdi-image-broken-variant</v-icon>
+                                <div class="text-caption text-grey mt-1">加载失败</div>
+                              </div>
+                            </v-row>
+                          </template>
                           <div class="image-overlay" v-if="isHovering">
                             <div class="d-flex flex-column align-center gap-4">
                               <v-btn icon="mdi-magnify" variant="text" color="white" size="large"
@@ -75,6 +88,14 @@
                             </div>
                           </div>
                         </v-img>
+                        <v-card-text class="pa-2 text-center">
+                          <div class="text-caption text-truncate font-weight-bold" :title="img.file_name">
+                            {{ img.file_name || '未命名图片' }}
+                          </div>
+                          <div class="text-caption text-grey">
+                            ID: {{ img.image_id }} <span v-if="img.page_number"> (P{{ img.page_number }})</span>
+                          </div>
+                        </v-card-text>
                       </v-card>
                     </v-hover>
                   </div>
@@ -94,9 +115,22 @@
                   <div class="d-flex image-grid">
                     <v-hover v-for="(img, index) in detectionResult.realImages" :key="index"
                       v-slot="{ isHovering, props }">
-                      <v-card v-bind="props" class="ma-2 position-relative" width="200" height="200" elevation="2"
+                      <v-card v-bind="props" class="ma-2 position-relative d-flex flex-column" width="200" min-height="240" elevation="2"
                         rounded="lg">
-                        <v-img :src="getImageUrl(img.image_url)" cover height="100%">
+                        <v-img :src="getImageUrl(img.image_url)" cover height="200">
+                          <template v-slot:placeholder>
+                            <v-row class="fill-height ma-0" align="center" justify="center">
+                              <v-progress-circular indeterminate color="primary"></v-progress-circular>
+                            </v-row>
+                          </template>
+                          <template v-slot:error>
+                            <v-row class="fill-height ma-0" align="center" justify="center" style="background: #f5f5f5;">
+                              <div class="text-center pa-2">
+                                <v-icon color="grey" size="32">mdi-image-broken-variant</v-icon>
+                                <div class="text-caption text-grey mt-1">加载失败</div>
+                              </div>
+                            </v-row>
+                          </template>
                           <div class="image-overlay" v-if="isHovering">
                             <div class="d-flex flex-column align-center gap-4">
                               <v-btn icon="mdi-magnify" variant="text" color="white" size="large"
@@ -104,6 +138,14 @@
                             </div>
                           </div>
                         </v-img>
+                        <v-card-text class="pa-2 text-center">
+                          <div class="text-caption text-truncate font-weight-bold" :title="img.file_name">
+                            {{ img.file_name || '未命名图片' }}
+                          </div>
+                          <div class="text-caption text-grey">
+                            ID: {{ img.image_id }} <span v-if="img.page_number"> (P{{ img.page_number }})</span>
+                          </div>
+                        </v-card-text>
                       </v-card>
                     </v-hover>
                   </div>
@@ -130,7 +172,22 @@
             <v-col cols="12" md="6" class="pr-md-6">
               <div class="image-container" ref="imageContainer">
                 <v-img :src="getSelectedImageUrl(selectedImage)" max-height="500" contain class="rounded-lg"
-                  ref="mainImage"></v-img>
+                  ref="mainImage">
+                  <template v-slot:placeholder>
+                    <v-row class="fill-height ma-0" align="center" justify="center">
+                      <v-progress-circular indeterminate color="primary"></v-progress-circular>
+                    </v-row>
+                  </template>
+                  <template v-slot:error>
+                    <v-row class="fill-height ma-0" align="center" justify="center" style="background: #f5f5f5;">
+                      <div class="text-center pa-4">
+                        <v-icon color="grey" size="64">mdi-image-broken-variant</v-icon>
+                        <div class="text-h6 text-grey mt-2">图片加载失败</div>
+                        <div class="text-caption text-grey">请检查网络连接或资源是否存在</div>
+                      </div>
+                    </v-row>
+                  </template>
+                </v-img>
 
                 <!-- 检测覆盖层 -->
                 <transition name="fade">
@@ -141,13 +198,21 @@
 
               <div class="mt-6">
                 <div class="d-flex flex-column gap-2">
+                  <div v-if="selectedImage?.file_name" class="info-item d-flex align-center">
+                    <v-icon color="grey" class="mr-2">mdi-file-outline</v-icon>
+                    <span class="text-body-1">原始文件：{{ selectedImage.file_name }}</span>
+                  </div>
+                  <div v-if="selectedImage?.page_number" class="info-item d-flex align-center">
+                    <v-icon color="grey" class="mr-2">mdi-book-open-page-variant</v-icon>
+                    <span class="text-body-1">所在页码：第 {{ selectedImage.page_number }} 页</span>
+                  </div>
                   <div class="info-item d-flex align-center">
                     <v-icon color="grey" class="mr-2">mdi-clock-outline</v-icon>
                     <span class="text-body-1">检测时间：{{ formatDateTime(detectionResult.detectionTime) }}</span>
                   </div>
                   <div class="info-item d-flex align-center">
                     <v-icon color="grey" class="mr-2">mdi-pound</v-icon>
-                    <span class="text-body-1">检测编号：{{ props.task_id }}</span>
+                    <span class="text-body-1">图片 ID：{{ selectedImage?.image_id }}</span>
                   </div>
                 </div>
               </div>
