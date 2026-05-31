@@ -677,7 +677,7 @@ def get_request_detail(request, reviewRequest_id):
     for img in review_request.imgs.all():
         images.append({
             'img_id': img.id,
-            'img_url': img.image.url,
+            'img_url': request.build_absolute_uri(f"/api/preview/image/{img.id}/"),
         })
 
     # 获取文本信息
@@ -686,7 +686,7 @@ def get_request_detail(request, reviewRequest_id):
         raw = text.raw_text or ''
         texts.append({
             'text_id': text.id,
-            'raw_text': raw[:200] + '...' if len(raw) > 200 else raw,
+            'raw_text': raw,
             'source_type': text.source_type,
         })
 
@@ -701,7 +701,7 @@ def get_request_detail(request, reviewRequest_id):
                     raw = text.raw_text or ''
                     texts.append({
                         'text_id': text.id,
-                        'raw_text': raw[:200] + '...' if len(raw) > 200 else raw,
+                        'raw_text': raw,
                         'source_type': text.source_type,
                     })
     if not texts and detection_task and hasattr(detection_task, 'container') and detection_task.container:
@@ -709,7 +709,7 @@ def get_request_detail(request, reviewRequest_id):
             raw = text.raw_text or ''
             texts.append({
                 'text_id': text.id,
-                'raw_text': raw[:200] + '...' if len(raw) > 200 else raw,
+                'raw_text': raw,
                 'source_type': text.source_type,
             })
 
@@ -840,7 +840,7 @@ def get_reviewer_request_detail(request, reviewRequest_id):
     # 获取文本列表
     text_resources = review_request.text_resources.all()
     text_ids = [text.id for text in text_resources]
-    text_previews = [text.raw_text[:200] + '...' if len(text.raw_text) > 200 else text.raw_text for text in text_resources]
+    text_previews = [text.raw_text for text in text_resources]
 
     # 解析AI检测结果
     ai_detection_result = _resolve_ai_detection_result(review_request)

@@ -1,6 +1,6 @@
 <template>
   <div class="task-detail pa-4">
-    <!-- 返回按钮 -->
+    <!-- Back button -->
     <div class="d-flex align-center mb-6">
       <v-btn icon="mdi-arrow-left" variant="text" @click="router.back()" class="mr-2 return-btn">
         <v-icon>mdi-arrow-left</v-icon>
@@ -12,16 +12,16 @@
     <div v-if="loading" class="d-flex align-center justify-center" style="height: calc(100vh - 80px)">
       <v-progress-circular indeterminate color="primary" size="64"></v-progress-circular>
     </div>
+
     <div v-else class="main-content rounded-lg">
-      <!-- 顶部信息区域 -->
+      <!-- Top info section (shared across all modes) -->
       <div class="info-section pa-6">
         <div class="content-wrapper d-flex justify-center">
           <div class="content-container">
             <div class="info-content d-flex align-center justify-space-between pa-4">
-              <!-- 左侧进度和标签 -->
+              <!-- Left: progress circle + download + AI detection card -->
               <div class="d-flex align-center" style="min-width: 320px">
                 <div class="progress-circle mr-3 elevation-1">
-                  <!-- <span class="text-h5 font-weight-bold primary--text">{{ taskData?.progress }}%</span> -->
                   <span class="text-h5 font-weight-bold primary--text">{{ formatNumber(AI_detection) }}</span>
                   <span class="text-caption">为假</span>
                 </div>
@@ -29,7 +29,6 @@
                   class="ml-4">
                   下载人工审核报告
                 </v-btn>
-                <!-- 添加的v-card文本区域 -->
                 <v-card class="ml-4 pa-2 elevation-1" flat rounded="lg" width="250">
                   <v-card-title class="pa-2 pb-1 text-subtitle-2 font-weight-bold">AI 检测结果</v-card-title>
                   <v-card-text class="pa-2 pt-1">
@@ -53,7 +52,7 @@
                       <div v-for="(dimension, index) in detection_results" :key="index"
                         class="d-flex justify-space-between text-body-2 text-grey">
                         <span class="font-weight-medium">{{ convert(index) }}:</span>
-                        <span class="text-primary">{{ (dimension.probability ?? 0).toFixed(2) }}</span> <!-- 占位符分数 -->
+                        <span class="text-primary">{{ (dimension.probability ?? 0).toFixed(2) }}</span>
                       </div>
                     </template>
                     <template v-else>
@@ -72,8 +71,7 @@
                 </v-card>
               </div>
 
-
-              <!-- 右侧任务信息 -->
+              <!-- Right: task stats -->
               <div class="task-stats d-flex align-center">
                 <div class="stat-item mr-4">
                   <div class="text-subtitle-1 d-flex justify-center">
@@ -99,192 +97,725 @@
         </div>
       </div>
 
-      <!-- 分割线 -->
       <v-divider></v-divider>
 
-      <!-- 主要内容区域 -->
-      <div class="content-wrapper d-flex pa-2 justify-center">
+      <!-- ==================== IMAGE MODE ==================== -->
+      <template v-if="taskType === 'image'">
+        <div class="content-wrapper d-flex pa-2 justify-center">
           <div class="content-container d-flex" style="gap: 12px;">
-          <!-- 动态左侧列表：图片或文本列表 -->
-          <div class="resource-list rounded-lg elevation-1"
-            style="background-color: rgb(var(--v-theme-surface)); padding: 20px;">
-            <div class="text-h6 font-weight-medium text-center mb-4" style="white-space: nowrap;">
-              <!-- multi_material 使用 tabs 切换 -->
-              <template v-if="isMultiMaterial">
-                <v-tabs v-model="activeTab" density="compact" center-active>
-                  <v-tab value="image">图片</v-tab>
-                  <v-tab value="text">文本</v-tab>
-                </v-tabs>
-              </template>
-              <template v-else>
-                {{ isTextTask ? '文本列表' : '图片列表' }}
-              </template>
-            </div>
-            <div class="resource-grid">
-              <!-- multi_material 图片列表 -->
-              <template v-if="isMultiMaterial && activeTab === 'image'">
-                <div v-for="(image, index) in images" :key="'img-' + index" class="resource-grid-item"
-                  :class="{ 'active': currentResourceIndex === index }" @click="handleResourceSelect(index)">
-                  <v-img :src="getImageUrl(image.img_url)" cover width="100%" height="100%" class="rounded-lg"></v-img>
-                </div>
-              </template>
-              <!-- multi_material 文本列表 -->
-              <template v-else-if="isMultiMaterial && activeTab === 'text'">
-                <div v-for="(textRes, index) in textResults" :key="'txt-' + index" class="resource-grid-item text-item pa-2"
-                  :class="{ 'active': currentResourceIndex === index }" @click="handleResourceSelect(index)">
-                  <v-icon :color="textRes.is_fake ? 'error' : 'success'" size="32" class="mb-1">
-                    {{ textRes.is_fake ? 'mdi-file-document-alert' : 'mdi-file-document-check' }}
-                  </v-icon>
-                  <div class="text-caption text-truncate" style="width: 100%;">文本 {{ index + 1 }}</div>
-                </div>
-              </template>
-              <!-- 纯图片列表 -->
-              <template v-else-if="!isTextTask && !isMultiMaterial">
+            <!-- Left: image thumbnails -->
+            <div class="resource-list rounded-lg elevation-1"
+              style="background-color: rgb(var(--v-theme-surface)); padding: 20px;">
+              <div class="text-h6 font-weight-medium text-center mb-4" style="white-space: nowrap;">图片列表</div>
+              <div class="resource-grid">
                 <div v-for="(image, index) in images" :key="index" class="resource-grid-item"
-                  :class="{ 'active': currentResourceIndex === index }" @click="handleResourceSelect(index)">
+                  :class="{ 'active': currentImageIndex === index }" @click="handleImageSelect(index)">
                   <v-img :src="getImageUrl(image.img_url)" cover width="100%" height="100%" class="rounded-lg"></v-img>
                 </div>
-              </template>
-              <!-- 纯文本列表 -->
-              <template v-else-if="isTextTask && !isMultiMaterial">
-                <div v-for="(textRes, index) in textResults" :key="index" class="resource-grid-item text-item pa-2"
-                  :class="{ 'active': currentResourceIndex === index }" @click="handleResourceSelect(index)">
-                  <v-icon :color="textRes.is_fake ? 'error' : 'success'" size="32" class="mb-1">
-                    {{ textRes.is_fake ? 'mdi-file-document-alert' : 'mdi-file-document-check' }}
-                  </v-icon>
-                  <div class="text-caption text-truncate" style="width: 100%;">文本 {{ index + 1 }}</div>
-                </div>
-              </template>
+              </div>
             </div>
-          </div>
 
-          <!-- 动态预览区域：图片预览或文本检测结果展示 -->
-          <div class="preview-section">
-            <div class="preview-box" :class="{'pa-4': isTextTask || (isMultiMaterial && activeTab === 'text'), 'bg-grey-lighten-4': isTextTask || (isMultiMaterial && activeTab === 'text'), 'rounded-lg': isTextTask || (isMultiMaterial && activeTab === 'text')}">
-              <!-- 图片预览 (纯图片 或 multi_material 图片 tab) -->
-              <template v-if="(!isTextTask && !isMultiMaterial) || (isMultiMaterial && activeTab === 'image')">
+            <!-- Center: image preview with prev/next -->
+            <div class="preview-section">
+              <div class="preview-box">
                 <v-img v-if="currentImage" :src="getImageUrl(currentImage.img_url)" contain height="100%"
                   class="rounded-lg"></v-img>
                 <span v-else class="text-h4">PIC</span>
-              </template>
+                <div class="preview-controls">
+                  <v-btn icon="mdi-chevron-left" variant="flat" @click="handlePrevImage"
+                    :disabled="currentImageIndex <= 0" class="control-btn" color="black" size="x-large"></v-btn>
+                  <v-btn icon="mdi-chevron-right" variant="flat" @click="handleNextImage"
+                    :disabled="currentImageIndex >= images.length - 1" class="control-btn" color="black"
+                    size="x-large"></v-btn>
+                </div>
+              </div>
+            </div>
 
-              <!-- 文本检测结果展示 (纯文本 或 multi_material 文本 tab) -->
-              <template v-else-if="isTextTask || (isMultiMaterial && activeTab === 'text')">
-                <v-card v-if="currentTextResult" flat class="w-100 h-100 overflow-y-auto" color="transparent">
-                  <div v-if="currentTextResult.status === 'in_progress'" class="d-flex flex-column align-center justify-center h-100">
-                    <v-progress-circular indeterminate color="primary" size="64" class="mb-4"></v-progress-circular>
-                    <div class="text-h6 text-grey">大模型正在奋力检测中...</div>
-                  </div>
-                  <template v-else>
-                    <div class="d-flex align-center mb-4">
-                      <v-chip :color="currentTextResult.is_fake ? 'error' : 'success'" size="large" class="mr-4 text-subtitle-1 font-weight-bold">
-                        判定: {{ currentTextResult.is_fake ? '疑似AI生成/造假' : '真实文本' }}
-                      </v-chip>
-                      <v-chip color="primary" variant="outlined">
-                        AI置信度: {{ ((currentTextResult.confidence_score ?? 0) * 100).toFixed(1) }}%
-                      </v-chip>
-                    </div>
-
-                    <!-- 事实性造假分析 (论文模式) -->
-                    <div v-if="currentTextResult.factual_fake_reason" class="mb-6">
-                      <div class="text-h6 font-weight-bold mb-2 d-flex align-center text-error">
-                        <v-icon left class="mr-2">mdi-alert-circle</v-icon> 事实性造假分析
+            <!-- Right: reviewer list -->
+            <div class="review-section rounded-lg elevation-1 pa-4">
+              <div class="review-header">
+                <div class="text-h6 font-weight-medium text-center mb-4">人工审核</div>
+                <div class="reviewer-info mt-4">
+                  <template v-if="review_results.length > 0">
+                    <div v-for="(review, index) in review_results" :key="index"
+                      class="reviewer-item d-flex align-center pa-3 mb-4 rounded" style="min-height: 64px;">
+                      <v-avatar size="40" class="mr-3" color="primary">
+                        <v-img v-if="review.avatar" :src="getImageUrl(review.avatar)" cover></v-img>
+                        <span v-else class="text-h6">{{ review.username.charAt(0) }}</span>
+                      </v-avatar>
+                      <div class="flex-grow-1">
+                        <div class="text-body-1 font-weight-medium">{{ review.username }}</div>
+                        <div class="text-caption text-grey mt-1">结果：{{ getResult(review.result) }}</div>
                       </div>
-                      <v-alert border="start" border-color="error" color="error" variant="tonal" class="text-body-1">
-                        {{ currentTextResult.factual_fake_reason }}
-                      </v-alert>
-                    </div>
-
-                    <!-- 模板化倾向分析 (Review模式) -->
-                    <div v-if="currentTextResult.template_analysis_reason" class="mb-6">
-                      <div class="text-h6 font-weight-bold mb-2 d-flex align-center" :class="(currentTextResult.template_tendency_score ?? 0) > 0.6 ? 'text-warning' : 'text-success'">
-                        <v-icon left class="mr-2">mdi-text-box-search-outline</v-icon> 模板化/套话分析 (得分: {{ (currentTextResult.template_tendency_score ?? 0).toFixed(2) }})
-                      </div>
-                      <v-alert border="start" :border-color="(currentTextResult.template_tendency_score ?? 0) > 0.6 ? 'warning' : 'success'" :color="(currentTextResult.template_tendency_score ?? 0) > 0.6 ? 'warning' : 'success'" variant="tonal" class="text-body-1">
-                        {{ currentTextResult.template_analysis_reason }}
-                      </v-alert>
-                    </div>
-
-                    <!-- AI生成的段落标红展示 -->
-                    <div v-if="currentTextResult.ai_generated_paragraphs && currentTextResult.ai_generated_paragraphs.length > 0">
-                      <div class="text-h6 font-weight-bold mb-2 d-flex align-center text-error">
-                        <v-icon left class="mr-2">mdi-format-paragraph</v-icon> 疑似AI生成段落
-                      </div>
-                      <v-card variant="outlined" color="error" class="pa-4 bg-white">
-                        <div v-for="(para, pIdx) in currentTextResult.ai_generated_paragraphs" :key="pIdx" class="mb-3 text-body-1" style="line-height: 1.6;">
-                          <v-icon size="small" color="error" class="mr-1">mdi-close-circle</v-icon>
-                          <span class="text-error bg-red-lighten-5 px-1 rounded">{{ para }}</span>
-                        </div>
-                      </v-card>
+                      <v-btn variant="text" density="comfortable" class="details-btn" color="primary"
+                        @click="handleViewDetail(review)">
+                        查看详情
+                        <v-icon size="16" class="ml-1">mdi-chevron-right</v-icon>
+                      </v-btn>
                     </div>
                   </template>
+                  <template v-else>
+                    <div class="d-flex flex-column align-center justify-center" style="height: 200px;">
+                      <v-icon size="48" color="grey" class="mb-4">mdi-information-outline</v-icon>
+                      <div class="text-body-1 text-grey">暂无人工审核结果</div>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </template>
+
+      <!-- ==================== TEXT MODE ==================== -->
+      <template v-else-if="isTextTask">
+        <div class="pa-6">
+          <v-row>
+            <!-- Left col (md=3): text list + text content + AI detection reference -->
+            <v-col cols="12" md="3">
+              <!-- Text list card -->
+              <v-card elevation="2" rounded="lg" class="text-sidebar mb-4">
+                <v-card-title class="pa-4">
+                  <v-icon class="mr-2">mdi-file-document-multiple</v-icon>
+                  文本列表
+                  <v-spacer></v-spacer>
+                  <v-chip size="small" color="primary">{{ textResults.length }}</v-chip>
+                </v-card-title>
+                <v-divider></v-divider>
+                <v-card-text class="pa-2" style="max-height: calc(50vh - 120px); overflow-y: auto;">
+                  <div v-for="(textRes, index) in textResults" :key="textRes.result_id"
+                    class="text-sidebar-item pa-3 mb-2 rounded-lg cursor-pointer"
+                    :class="{ 'text-sidebar-item-active': currentTextIndex === index }"
+                    @click="handleTextSelect(index)">
+                    <div class="d-flex align-center mb-1">
+                      <v-chip size="x-small" :color="getTextChipColor(textRes)" class="mr-2">
+                        {{ getTextChipLabel(textRes) }}
+                      </v-chip>
+                      <span class="text-caption text-grey">ID: {{ textRes.resource_id }}</span>
+                    </div>
+                    <div class="text-body-2 text-truncate">
+                      {{ getRawTextForTextResult(textRes).substring(0, 60) }}{{ getRawTextForTextResult(textRes).length > 60 ? '...' : '' }}
+                    </div>
+                  </div>
+                </v-card-text>
+              </v-card>
+
+              <!-- Text content card -->
+              <v-card v-if="currentTextResult" elevation="2" rounded="lg" class="mb-4">
+                <v-card-title class="pa-4 d-flex align-center">
+                  <v-icon class="mr-2">mdi-text-box</v-icon>
+                  文本内容
+                  <v-spacer></v-spacer>
+                  <v-btn size="small" variant="text" @click="showFullText = !showFullText">
+                    {{ showFullText ? '收起' : '展开全文' }}
+                  </v-btn>
+                </v-card-title>
+                <v-divider></v-divider>
+                <v-card-text class="pa-4" style="max-height: 200px; overflow-y: auto;">
+                  <div class="text-body-2" style="white-space: pre-wrap; line-height: 1.8;">
+                    {{ displayText }}
+                  </div>
+                </v-card-text>
+              </v-card>
+
+              <!-- AI detection reference card -->
+              <v-card v-if="currentTextResult" elevation="2" rounded="lg">
+                <v-card-title class="pa-4">
+                  <v-icon class="mr-2" color="primary">mdi-robot</v-icon>
+                  AI 检测结果参考
+                </v-card-title>
+                <v-divider></v-divider>
+                <v-card-text class="pa-4" style="max-height: 300px; overflow-y: auto;">
+                  <v-row class="mb-3">
+                    <v-col cols="6">
+                      <div class="text-body-2 text-grey mb-1">AI判定</div>
+                      <v-chip :color="currentTextResult.is_fake ? 'error' : 'success'" size="small">
+                        {{ currentTextResult.is_fake ? '疑似造假' : '可能真实' }}
+                      </v-chip>
+                    </v-col>
+                    <v-col cols="6">
+                      <div class="text-body-2 text-grey mb-1">置信度</div>
+                      <span class="text-h6" :class="currentTextResult.confidence_score > 0.7 ? 'error--text' : 'primary--text'">
+                        {{ ((currentTextResult.confidence_score || 0) * 100).toFixed(1) }}%
+                      </span>
+                    </v-col>
+                  </v-row>
+
+                  <!-- AI generated paragraphs (paper_text mode) -->
+                  <template v-if="(currentTextResult.ai_generated_paragraphs?.length ?? 0) > 0">
+                    <div class="text-subtitle-2 mb-2">AI生成段落标记</div>
+                    <div class="paragraph-review-list">
+                      <div v-for="(para, pIdx) in currentTextResult.ai_generated_paragraphs" :key="pIdx"
+                        class="pa-2 mb-2 rounded"
+                        style="background: rgba(var(--v-theme-error), 0.05); border-left: 3px solid rgb(var(--v-theme-error));">
+                        <template v-if="typeof para === 'object'">
+                          <div class="d-flex align-center mb-1">
+                            <v-chip size="x-small" color="error" class="mr-2">段落 {{ para.paragraph_index ?? pIdx + 1 }}</v-chip>
+                            <span class="text-caption text-grey">AI概率: {{ ((para.ai_probability || 0) * 100).toFixed(1) }}%</span>
+                          </div>
+                          <div class="text-caption" style="max-height: 60px; overflow: hidden;">{{ (para.text || '').substring(0, 150) }}{{ (para.text || '').length > 150 ? '...' : '' }}</div>
+                        </template>
+                        <template v-else>
+                          <div class="text-caption text-error mb-1">段落 {{ pIdx + 1 }}</div>
+                          <div class="text-caption">{{ (String(para)).substring(0, 150) }}{{ String(para).length > 150 ? '...' : '' }}</div>
+                        </template>
+                      </div>
+                    </div>
+                  </template>
+
+                  <!-- Factual fake reason (paper_text) -->
+                  <v-alert v-if="currentTextResult.factual_fake_reason" type="warning" variant="tonal" class="mb-3">
+                    <div class="text-subtitle-2 mb-1">AI检测分析</div>
+                    {{ currentTextResult.factual_fake_reason }}
+                  </v-alert>
+
+                  <!-- Template tendency score (review_text) -->
+                  <template v-if="currentTextResult.template_tendency_score !== null && currentTextResult.template_tendency_score !== undefined">
+                    <div class="text-subtitle-2 mb-2">模板化倾向分析</div>
+                    <v-progress-linear
+                      :model-value="(currentTextResult.template_tendency_score || 0) * 100"
+                      :color="(currentTextResult.template_tendency_score || 0) > 0.7 ? 'error' : (currentTextResult.template_tendency_score || 0) > 0.4 ? 'warning' : 'success'"
+                      height="20"
+                      class="mb-2"
+                    >
+                      <template #default="{ value }">
+                        <span class="text-caption">{{ value.toFixed(0) }}%</span>
+                      </template>
+                    </v-progress-linear>
+                    <div v-if="currentTextResult.template_analysis_reason" class="text-body-2 text-grey mt-2">
+                      {{ currentTextResult.template_analysis_reason }}
+                    </div>
+                  </template>
+                </v-card-text>
+              </v-card>
+            </v-col>
+
+            <!-- Center col (md=6): reviewer detail (read-only) -->
+            <v-col cols="12" md="6">
+              <!-- No reviewer selected placeholder -->
+              <v-card v-if="selectedReviewerIndex === -1" elevation="2" rounded="lg">
+                <v-card-text class="text-center pa-8 text-grey">
+                  <v-icon size="64" color="grey" class="mb-4">mdi-account-search</v-icon>
+                  <div class="text-h6">请从右侧选择审核员查看审核详情</div>
+                </v-card-text>
+              </v-card>
+
+              <!-- Reviewer detail display -->
+              <template v-else-if="textReviewDetail">
+                <!-- Final judgment alert -->
+                <v-alert :color="textReviewDetail.result ? 'error' : 'success'" variant="tonal" class="mb-4">
+                  <div class="d-flex align-center">
+                    <v-icon :icon="textReviewDetail.result ? 'mdi-alert-circle' : 'mdi-check-circle'" class="mr-2"></v-icon>
+                    人工判定：{{ textReviewDetail.result ? '疑似造假/AI生成' : '真实' }}
+                  </div>
+                </v-alert>
+
+                <!-- Paragraph reviews section (paper_text) -->
+                <template v-if="filteredParagraphReviews.length">
+                  <div class="text-subtitle-1 font-weight-bold mb-2">段落复核</div>
+                  <v-card v-for="(item, index) in filteredParagraphReviews" :key="index"
+                    variant="outlined" class="pa-3 mb-3"
+                    :style="item.is_ai_agreed ? 'border-left: 3px solid rgb(var(--v-theme-error))' : item.is_ai_agreed === false ? 'border-left: 3px solid rgb(var(--v-theme-success))' : ''"
+                  >
+                    <div class="d-flex align-center mb-2">
+                      <v-chip size="small" class="mr-2">段落 {{ item.paragraph_index ?? index + 1 }}</v-chip>
+                      <v-chip v-if="item.is_ai_agreed != null"
+                        :color="item.is_ai_agreed ? 'error' : 'success'" size="small" variant="tonal">
+                        <v-icon start size="x-small">{{ item.is_ai_agreed ? 'mdi-check' : 'mdi-close' }}</v-icon>
+                        {{ item.is_ai_agreed ? '同意AI判定' : '不同意AI判定' }}
+                      </v-chip>
+                    </div>
+                    <div class="text-body-1">{{ item.comment || item.reason || '暂无说明' }}</div>
+                  </v-card>
+                </template>
+
+                <!-- Template review section (review_text) -->
+                <template v-if="textReviewDetail.template_review_score != null">
+                  <div class="text-subtitle-1 font-weight-bold mb-2 mt-4">模板化复核</div>
+                  <v-card variant="outlined" class="pa-3 mb-3">
+                    <div class="text-body-2 mb-2">评分</div>
+                    <v-progress-linear
+                      :model-value="Math.round((textReviewDetail.template_review_score ?? 0) * 100)"
+                      :color="(textReviewDetail.template_review_score ?? 0) > 0.7 ? 'error' : (textReviewDetail.template_review_score ?? 0) > 0.4 ? 'warning' : 'success'"
+                      height="20"
+                      class="mb-2"
+                    >
+                      <template #default>
+                        <span class="text-white text-caption">{{ Math.round((textReviewDetail.template_review_score ?? 0) * 100) }}%</span>
+                      </template>
+                    </v-progress-linear>
+                    <div class="text-body-1">{{ textReviewDetail.template_review_comment || '暂无说明' }}</div>
+                  </v-card>
+                </template>
+
+                <!-- Overall comment -->
+                <div class="text-subtitle-1 font-weight-bold mb-2 mt-4">综合审核意见</div>
+                <v-card variant="outlined" class="pa-3">
+                  <div class="text-body-1">{{ textReviewDetail.overall_comment || '暂无说明' }}</div>
                 </v-card>
-                <div v-else class="d-flex align-center justify-center h-100">
-                  <span class="text-h5 text-grey">暂无文本数据</span>
+              </template>
+
+              <!-- Loading reviewer detail -->
+              <v-card v-else-if="selectedReviewerIndex >= 0" elevation="2" rounded="lg">
+                <v-card-text class="text-center pa-8">
+                  <v-progress-circular indeterminate color="primary" size="32"></v-progress-circular>
+                  <div class="text-body-2 text-grey mt-4">加载审核详情...</div>
+                </v-card-text>
+              </v-card>
+            </v-col>
+
+            <!-- Right col (md=3): reviewer list -->
+            <v-col cols="12" md="3">
+              <v-card elevation="2" rounded="lg" class="mb-4">
+                <v-card-title class="pa-4">
+                  <v-icon class="mr-2">mdi-account-group</v-icon>
+                  审核员列表
+                  <v-spacer></v-spacer>
+                  <v-chip size="small" color="primary">{{ review_results.length }}</v-chip>
+                </v-card-title>
+                <v-divider></v-divider>
+                <v-card-text class="pa-2" style="max-height: calc(80vh - 200px); overflow-y: auto;">
+                  <template v-if="review_results.length > 0">
+                    <div v-for="(review, index) in review_results" :key="review.id"
+                      class="reviewer-item d-flex align-center pa-3 mb-2 rounded-lg cursor-pointer"
+                      :class="{ 'text-sidebar-item-active': selectedReviewerIndex === index }"
+                      @click="handleSelectReviewer(index)">
+                      <v-avatar size="36" class="mr-3" color="primary">
+                        <v-img v-if="review.avatar" :src="getImageUrl(review.avatar)" cover></v-img>
+                        <span v-else class="text-body-2">{{ review.username.charAt(0) }}</span>
+                      </v-avatar>
+                      <div class="flex-grow-1">
+                        <div class="text-body-2 font-weight-medium">{{ review.username }}</div>
+                        <v-chip size="x-small" :color="review.result ? 'error' : 'success'" variant="tonal" class="mt-1">
+                          {{ review.result ? '判定为假' : '判定为真' }}
+                        </v-chip>
+                      </div>
+                      <v-icon size="small" :color="selectedReviewerIndex === index ? 'primary' : 'grey'">
+                        {{ selectedReviewerIndex === index ? 'mdi-chevron-left' : 'mdi-chevron-right' }}
+                      </v-icon>
+                    </div>
+                  </template>
+                  <template v-else>
+                    <div class="d-flex flex-column align-center justify-center py-8">
+                      <v-icon size="40" color="grey" class="mb-3">mdi-information-outline</v-icon>
+                      <div class="text-body-2 text-grey">暂无人工审核结果</div>
+                    </div>
+                  </template>
+                </v-card-text>
+              </v-card>
+            </v-col>
+          </v-row>
+        </div>
+      </template>
+
+      <!-- ==================== MULTI MODE ==================== -->
+      <template v-else-if="isMultiMaterial">
+        <div class="pa-6">
+          <v-row>
+            <!-- Left col (md=2): unified sidebar -->
+            <v-col cols="12" md="2">
+              <v-card elevation="2" rounded="lg" style="max-height: calc(100vh - 160px); overflow-y: auto;">
+                <!-- Image group -->
+                <div class="pa-3 d-flex align-center">
+                  <v-icon class="mr-2" size="small">mdi-image-multiple</v-icon>
+                  <span class="text-subtitle-2">图像</span>
+                  <v-spacer />
+                  <v-chip size="x-small" color="primary">{{ images.length }}</v-chip>
+                </div>
+                <v-divider />
+                <div class="pa-2">
+                  <div class="d-flex flex-wrap" style="gap: 6px;">
+                    <div v-for="(image, index) in images" :key="'m-sb-img-' + index"
+                      class="multi-sidebar-thumb"
+                      :class="{ 'active': multiSelectedType === 'image' && currentImageIndex === index }"
+                      @click="handleMultiImageSelect(index)">
+                      <v-img :src="getImageUrl(image.img_url)" cover width="56" height="56" class="rounded">
+                        <template #error>
+                          <div class="d-flex align-center justify-center fill-width fill-height bg-grey-lighten-2 rounded">
+                            <v-icon color="grey" size="16">mdi-image-broken-variant</v-icon>
+                          </div>
+                        </template>
+                      </v-img>
+                    </div>
+                  </div>
+                </div>
+
+                <v-divider />
+
+                <!-- Text group -->
+                <div class="pa-3 d-flex align-center">
+                  <v-icon class="mr-2" size="small">mdi-file-document-multiple</v-icon>
+                  <span class="text-subtitle-2">文本</span>
+                  <v-spacer />
+                  <v-chip size="x-small" color="primary">{{ textResults.length }}</v-chip>
+                </div>
+                <v-divider />
+                <div class="pa-2">
+                  <div v-for="(textRes, index) in textResults" :key="'m-sb-txt-' + textRes.result_id"
+                    class="text-sidebar-item pa-2 mb-1 rounded-lg cursor-pointer"
+                    :class="{ 'text-sidebar-item-active': multiSelectedType === 'text' && currentTextIndex === index }"
+                    @click="handleMultiTextSelect(index)">
+                    <div class="d-flex align-center mb-1">
+                      <v-chip size="x-small" :color="getTextChipColor(textRes)" class="mr-1">
+                        {{ getTextChipLabel(textRes) }}
+                      </v-chip>
+                    </div>
+                    <div class="text-caption text-truncate">{{ getRawTextForTextResult(textRes).substring(0, 40) }}{{ getRawTextForTextResult(textRes).length > 40 ? '...' : '' }}</div>
+                  </div>
+                </div>
+              </v-card>
+            </v-col>
+
+            <!-- Center col (md=7): conditional content -->
+            <v-col cols="12" md="7">
+              <!-- Image content -->
+              <template v-if="multiSelectedType === 'image'">
+                <div class="d-flex" style="gap: 12px;">
+                  <!-- Image preview -->
+                  <div class="preview-section">
+                    <div class="preview-box">
+                      <v-img v-if="currentImage" :src="getImageUrl(currentImage.img_url)" contain height="100%"
+                        class="rounded-lg"></v-img>
+                      <div v-else class="d-flex flex-column align-center justify-center fill-height">
+                        <v-icon color="grey" size="64">mdi-image-off-outline</v-icon>
+                        <span class="text-caption text-grey mt-2">图片不可用</span>
+                      </div>
+                      <div class="preview-controls">
+                        <v-btn icon="mdi-chevron-left" variant="flat" @click="handlePrevImage"
+                          :disabled="currentImageIndex <= 0" class="control-btn" color="black" size="x-large"></v-btn>
+                        <v-btn icon="mdi-chevron-right" variant="flat" @click="handleNextImage"
+                          :disabled="currentImageIndex >= images.length - 1" class="control-btn" color="black"
+                          size="x-large"></v-btn>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Reviewer list for image (inline) -->
+                  <div class="review-section rounded-lg elevation-1 pa-4" style="width: 280px;">
+                    <div class="text-subtitle-2 font-weight-medium mb-3">审核员</div>
+                    <template v-if="review_results.length > 0">
+                      <div v-for="(review, index) in review_results" :key="'img-r-' + index"
+                        class="reviewer-item d-flex align-center pa-2 mb-2 rounded" style="min-height: 48px;">
+                        <v-avatar size="32" class="mr-2" color="primary">
+                          <v-img v-if="review.avatar" :src="getImageUrl(review.avatar)" cover></v-img>
+                          <span v-else class="text-body-2">{{ review.username.charAt(0) }}</span>
+                        </v-avatar>
+                        <div class="flex-grow-1">
+                          <div class="text-caption font-weight-medium">{{ review.username }}</div>
+                          <v-chip size="x-small" :color="review.result ? 'error' : 'success'" variant="tonal">
+                            {{ getResult(review.result) }}
+                          </v-chip>
+                        </div>
+                        <v-btn variant="text" size="small" color="primary"
+                          @click="handleViewDetail(review)">
+                          详情
+                        </v-btn>
+                      </div>
+                    </template>
+                    <template v-else>
+                      <div class="text-caption text-grey text-center py-4">暂无审核结果</div>
+                    </template>
+                  </div>
                 </div>
               </template>
 
-              <div class="preview-controls">
-                <v-btn icon="mdi-chevron-left" variant="flat" @click="handlePrevResource"
-                  :disabled="currentResourceIndex <= 0" class="control-btn" color="black" size="x-large"></v-btn>
-                <v-btn icon="mdi-chevron-right" variant="flat" @click="handleNextResource"
-                  :disabled="currentResourceIndex >= (isTextTask || (isMultiMaterial && activeTab === 'text') ? textResults.length : images.length) - 1" class="control-btn" color="black"
-                  size="x-large"></v-btn>
-              </div>
-            </div>
-          </div>
-
-          <!-- 右侧人工审核区域 -->
-          <div class="review-section rounded-lg elevation-1 pa-4">
-            <div class="review-header">
-              <div class="text-h6 font-weight-medium text-center mb-4">人工审核</div>
-              <div class="reviewer-info mt-4">
-                <template v-if="review_results.length > 0">
-                  <div v-for="(review, index) in review_results" :key="index"
-                    class="reviewer-item d-flex align-center pa-3 mb-4 rounded" style="min-height: 64px;">
-                    <v-avatar size="40" class="mr-3" color="primary">
-                      <v-img v-if="review.avatar" :src="getImageUrl(review.avatar)" cover></v-img>
-                      <span v-else class="text-h6">{{ review.username.charAt(0) }}</span>
-                    </v-avatar>
-                    <div class="flex-grow-1">
-                      <div class="text-body-1 font-weight-medium">{{ review.username }}</div>
-                      <div class="text-caption text-grey mt-1">结果：{{ getResult(review.result) }}</div>
-                    </div>
-                    <v-btn variant="text" density="comfortable" class="details-btn" color="primary"
-                      @click="handleViewDetail(review)">
-                      查看详情
-                      <v-icon size="16" class="ml-1">mdi-chevron-right</v-icon>
+              <!-- Text content -->
+              <template v-else>
+                <!-- Text content card -->
+                <v-card v-if="currentTextResult" elevation="2" rounded="lg" class="mb-4">
+                  <v-card-title class="pa-4 d-flex align-center">
+                    <v-icon class="mr-2">mdi-text-box</v-icon>
+                    文本内容
+                    <v-spacer></v-spacer>
+                    <v-btn size="small" variant="text" @click="showFullText = !showFullText">
+                      {{ showFullText ? '收起' : '展开全文' }}
                     </v-btn>
-                  </div>
-                </template>
-                <template v-else>
-                  <div class="d-flex flex-column align-center justify-center" style="height: 200px;">
-                    <v-icon size="48" color="grey" class="mb-4">mdi-information-outline</v-icon>
-                    <div class="text-body-1 text-grey">暂无人工审核结果</div>
-                  </div>
-                </template>
-              </div>
-            </div>
-          </div>
+                  </v-card-title>
+                  <v-divider></v-divider>
+                  <v-card-text class="pa-4" style="max-height: 200px; overflow-y: auto;">
+                    <div class="text-body-2" style="white-space: pre-wrap; line-height: 1.8;">
+                      {{ displayText }}
+                    </div>
+                  </v-card-text>
+                </v-card>
 
+                <!-- AI detection reference -->
+                <v-card v-if="currentTextResult" elevation="2" rounded="lg" class="mb-4">
+                  <v-card-title class="pa-4">
+                    <v-icon class="mr-2" color="primary">mdi-robot</v-icon>
+                    AI 检测结果参考
+                  </v-card-title>
+                  <v-divider></v-divider>
+                  <v-card-text class="pa-4" style="max-height: 250px; overflow-y: auto;">
+                    <v-row class="mb-3">
+                      <v-col cols="6">
+                        <div class="text-body-2 text-grey mb-1">AI判定</div>
+                        <v-chip :color="currentTextResult.is_fake ? 'error' : 'success'" size="small">
+                          {{ currentTextResult.is_fake ? '疑似造假' : '可能真实' }}
+                        </v-chip>
+                      </v-col>
+                      <v-col cols="6">
+                        <div class="text-body-2 text-grey mb-1">置信度</div>
+                        <span class="text-h6" :class="currentTextResult.confidence_score > 0.7 ? 'error--text' : 'primary--text'">
+                          {{ ((currentTextResult.confidence_score || 0) * 100).toFixed(1) }}%
+                        </span>
+                      </v-col>
+                    </v-row>
 
+                    <template v-if="(currentTextResult.ai_generated_paragraphs?.length ?? 0) > 0">
+                      <div class="text-subtitle-2 mb-2">AI生成段落标记</div>
+                      <div class="paragraph-review-list">
+                        <div v-for="(para, pIdx) in currentTextResult.ai_generated_paragraphs" :key="'m-aip-' + pIdx"
+                          class="pa-2 mb-2 rounded"
+                          style="background: rgba(var(--v-theme-error), 0.05); border-left: 3px solid rgb(var(--v-theme-error));">
+                          <template v-if="typeof para === 'object'">
+                            <div class="d-flex align-center mb-1">
+                              <v-chip size="x-small" color="error" class="mr-2">段落 {{ para.paragraph_index ?? pIdx + 1 }}</v-chip>
+                              <span class="text-caption text-grey">AI概率: {{ ((para.ai_probability || 0) * 100).toFixed(1) }}%</span>
+                            </div>
+                            <div class="text-caption" style="max-height: 60px; overflow: hidden;">{{ (para.text || '').substring(0, 150) }}{{ (para.text || '').length > 150 ? '...' : '' }}</div>
+                          </template>
+                          <template v-else>
+                            <div class="text-caption text-error mb-1">段落 {{ pIdx + 1 }}</div>
+                            <div class="text-caption">{{ (String(para)).substring(0, 150) }}{{ String(para).length > 150 ? '...' : '' }}</div>
+                          </template>
+                        </div>
+                      </div>
+                    </template>
+
+                    <v-alert v-if="currentTextResult.factual_fake_reason" type="warning" variant="tonal" class="mb-3">
+                      <div class="text-subtitle-2 mb-1">AI检测分析</div>
+                      {{ currentTextResult.factual_fake_reason }}
+                    </v-alert>
+
+                    <template v-if="currentTextResult.template_tendency_score !== null && currentTextResult.template_tendency_score !== undefined">
+                      <div class="text-subtitle-2 mb-2">模板化倾向分析</div>
+                      <v-progress-linear
+                        :model-value="(currentTextResult.template_tendency_score || 0) * 100"
+                        :color="(currentTextResult.template_tendency_score || 0) > 0.7 ? 'error' : (currentTextResult.template_tendency_score || 0) > 0.4 ? 'warning' : 'success'"
+                        height="20"
+                        class="mb-2"
+                      >
+                        <template #default="{ value }">
+                          <span class="text-caption">{{ value.toFixed(0) }}%</span>
+                        </template>
+                      </v-progress-linear>
+                      <div v-if="currentTextResult.template_analysis_reason" class="text-body-2 text-grey mt-2">
+                        {{ currentTextResult.template_analysis_reason }}
+                      </div>
+                    </template>
+                  </v-card-text>
+                </v-card>
+
+                <!-- Reviewer detail (read-only, inline for multi text) -->
+                <v-card v-if="selectedReviewerIndex === -1" elevation="2" rounded="lg">
+                  <v-card-text class="text-center pa-6 text-grey">
+                    <v-icon size="48" color="grey" class="mb-3">mdi-account-search</v-icon>
+                    <div class="text-body-1">请从右侧选择审核员查看审核详情</div>
+                  </v-card-text>
+                </v-card>
+
+                <template v-else-if="textReviewDetail">
+                  <!-- Final judgment alert -->
+                  <v-alert :color="textReviewDetail.result ? 'error' : 'success'" variant="tonal" class="mb-4">
+                    <div class="d-flex align-center">
+                      <v-icon :icon="textReviewDetail.result ? 'mdi-alert-circle' : 'mdi-check-circle'" class="mr-2"></v-icon>
+                      人工判定：{{ textReviewDetail.result ? '疑似造假/AI生成' : '真实' }}
+                    </div>
+                  </v-alert>
+
+                  <!-- Paragraph reviews -->
+                  <template v-if="filteredParagraphReviews.length">
+                    <div class="text-subtitle-1 font-weight-bold mb-2">段落复核</div>
+                    <v-card v-for="(item, index) in filteredParagraphReviews" :key="'m-pr-' + index"
+                      variant="outlined" class="pa-3 mb-3"
+                      :style="item.is_ai_agreed ? 'border-left: 3px solid rgb(var(--v-theme-error))' : item.is_ai_agreed === false ? 'border-left: 3px solid rgb(var(--v-theme-success))' : ''"
+                    >
+                      <div class="d-flex align-center mb-2">
+                        <v-chip size="small" class="mr-2">段落 {{ item.paragraph_index ?? index + 1 }}</v-chip>
+                        <v-chip v-if="item.is_ai_agreed != null"
+                          :color="item.is_ai_agreed ? 'error' : 'success'" size="small" variant="tonal">
+                          <v-icon start size="x-small">{{ item.is_ai_agreed ? 'mdi-check' : 'mdi-close' }}</v-icon>
+                          {{ item.is_ai_agreed ? '同意AI判定' : '不同意AI判定' }}
+                        </v-chip>
+                      </div>
+                      <div class="text-body-1">{{ item.comment || item.reason || '暂无说明' }}</div>
+                    </v-card>
+                  </template>
+
+                  <!-- Template review -->
+                  <template v-if="textReviewDetail.template_review_score != null">
+                    <div class="text-subtitle-1 font-weight-bold mb-2 mt-4">模板化复核</div>
+                    <v-card variant="outlined" class="pa-3 mb-3">
+                      <div class="text-body-2 mb-2">评分</div>
+                      <v-progress-linear
+                        :model-value="Math.round((textReviewDetail.template_review_score ?? 0) * 100)"
+                        :color="(textReviewDetail.template_review_score ?? 0) > 0.7 ? 'error' : (textReviewDetail.template_review_score ?? 0) > 0.4 ? 'warning' : 'success'"
+                        height="20"
+                        class="mb-2"
+                      >
+                        <template #default>
+                          <span class="text-white text-caption">{{ Math.round((textReviewDetail.template_review_score ?? 0) * 100) }}%</span>
+                        </template>
+                      </v-progress-linear>
+                      <div class="text-body-1">{{ textReviewDetail.template_review_comment || '暂无说明' }}</div>
+                    </v-card>
+                  </template>
+
+                  <!-- Overall comment -->
+                  <div class="text-subtitle-1 font-weight-bold mb-2 mt-4">综合审核意见</div>
+                  <v-card variant="outlined" class="pa-3">
+                    <div class="text-body-1">{{ textReviewDetail.overall_comment || '暂无说明' }}</div>
+                  </v-card>
+                </template>
+              </template>
+            </v-col>
+
+            <!-- Right col (md=3): reviewer list (for text) + task summary -->
+            <v-col cols="12" md="3">
+              <!-- Reviewer list card (shown when text is selected) -->
+              <v-card v-if="multiSelectedType === 'text'" elevation="2" rounded="lg" class="mb-4">
+                <v-card-title class="pa-4">
+                  <v-icon class="mr-2">mdi-account-group</v-icon>
+                  审核员列表
+                  <v-spacer></v-spacer>
+                  <v-chip size="small" color="primary">{{ review_results.length }}</v-chip>
+                </v-card-title>
+                <v-divider></v-divider>
+                <v-card-text class="pa-2" style="max-height: 400px; overflow-y: auto;">
+                  <template v-if="review_results.length > 0">
+                    <div v-for="(review, index) in review_results" :key="'m-rev-' + review.id"
+                      class="reviewer-item d-flex align-center pa-3 mb-2 rounded-lg cursor-pointer"
+                      :class="{ 'text-sidebar-item-active': selectedReviewerIndex === index }"
+                      @click="handleSelectReviewer(index)">
+                      <v-avatar size="36" class="mr-3" color="primary">
+                        <v-img v-if="review.avatar" :src="getImageUrl(review.avatar)" cover></v-img>
+                        <span v-else class="text-body-2">{{ review.username.charAt(0) }}</span>
+                      </v-avatar>
+                      <div class="flex-grow-1">
+                        <div class="text-body-2 font-weight-medium">{{ review.username }}</div>
+                        <v-chip size="x-small" :color="review.result ? 'error' : 'success'" variant="tonal" class="mt-1">
+                          {{ review.result ? '判定为假' : '判定为真' }}
+                        </v-chip>
+                      </div>
+                    </div>
+                  </template>
+                  <template v-else>
+                    <div class="text-caption text-grey text-center py-4">暂无审核结果</div>
+                  </template>
+                </v-card-text>
+              </v-card>
+
+              <!-- Task summary card -->
+              <v-card elevation="2" rounded="lg">
+                <v-card-title class="pa-4">
+                  <v-icon class="mr-2">mdi-clipboard-list</v-icon>
+                  任务摘要
+                </v-card-title>
+                <v-divider></v-divider>
+                <v-card-text class="pa-4">
+                  <div class="d-flex justify-space-between mb-3">
+                    <span class="text-body-2 text-grey">图片数量</span>
+                    <span class="text-body-2 font-weight-bold">{{ images.length }} 张</span>
+                  </div>
+                  <div class="d-flex justify-space-between mb-3">
+                    <span class="text-body-2 text-grey">文本数量</span>
+                    <span class="text-body-2 font-weight-bold">{{ textResults.length }} 份</span>
+                  </div>
+                  <v-divider class="my-3"></v-divider>
+                  <div class="d-flex justify-space-between mb-2">
+                    <span class="text-body-2 text-grey">已处理</span>
+                    <span class="text-body-2 font-weight-bold text-success">{{ done }}份</span>
+                  </div>
+                  <div class="d-flex justify-space-between">
+                    <span class="text-body-2 text-grey">未处理</span>
+                    <span class="text-body-2 font-weight-bold text-error">{{ process }}份</span>
+                  </div>
+                </v-card-text>
+              </v-card>
+            </v-col>
+          </v-row>
         </div>
-      </div>
+      </template>
     </div>
 
-    <!-- 添加详情弹窗 -->
-    <v-dialog v-model="showDetailDialog" fullscreen :scrim="false" transition="dialog-bottom-transition">
+    <!-- Image detail dialog (image mode and multi image mode) -->
+    <v-dialog v-model="showDetailDialog" max-width="90vw" scrollable>
       <v-card>
-        <v-toolbar dark color="primary">
+        <v-toolbar dark color="primary" density="compact">
           <v-btn icon dark @click="showDetailDialog = false">
             <v-icon>mdi-close</v-icon>
           </v-btn>
-          <v-toolbar-title>检测详情</v-toolbar-title>
+          <v-toolbar-title>图像审核详情</v-toolbar-title>
           <v-spacer></v-spacer>
         </v-toolbar>
-        <result-component v-if="showDetailDialog && currentImage && !(isMultiMaterial && activeTab === 'text')" :task-id="taskData?.id"
-          :imageUrl="getImageUrl(currentImage.img_url)" :reasons="reasons" :result="result"
-          :scores="scores" :ai_detection="AI_detection" :annotations="annotations" />
+        <v-card-text v-if="showDetailDialog && currentImage && !isTextTask" class="pa-0">
+          <v-row no-gutters>
+            <!-- Left: Image preview with annotation overlay -->
+            <v-col cols="12" md="7" class="pa-4">
+              <div style="position: relative; background: #f5f5f5; border-radius: 8px; overflow: hidden;">
+                <v-img :src="getImageUrl(currentImage.img_url)" contain
+                  :max-height="'70vh'" class="rounded-lg">
+                  <template #placeholder>
+                    <div class="d-flex align-center justify-center fill-height">
+                      <v-progress-circular indeterminate color="primary" />
+                    </div>
+                  </template>
+                </v-img>
+                <!-- Annotation overlay SVG -->
+                <div style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none;">
+                  <svg width="100%" height="100%">
+                    <g v-for="(dimAnnotations, dimIdx) in annotations" :key="dimIdx">
+                      <g v-for="(obj, objIdx) in dimAnnotations" :key="objIdx">
+                        <polyline :points="obj.points.map(p => `${p.x},${p.y}`).join(' ')"
+                          :stroke="obj.color" stroke-width="3" fill="none" opacity="0.7"
+                          stroke-linecap="round" stroke-linejoin="round" />
+                        <circle v-for="(pt, ptIdx) in obj.points" :key="ptIdx"
+                          :cx="pt.x" :cy="pt.y" r="3" :fill="obj.color" opacity="0.7" />
+                      </g>
+                    </g>
+                  </svg>
+                </div>
+              </div>
+              <div class="d-flex align-center justify-center mt-3">
+                <v-chip :color="result ? 'success' : 'error'" variant="tonal" size="small">
+                  <v-icon start size="x-small">{{ result ? 'mdi-check-circle' : 'mdi-alert-circle' }}</v-icon>
+                  AI检测置信度：{{ Math.round(AI_detection * 100) }}%
+                </v-chip>
+              </div>
+            </v-col>
+            <!-- Right: Scoring dimensions + judgment -->
+            <v-col cols="12" md="5" class="pa-4" style="max-height: 80vh; overflow-y: auto;">
+              <div class="text-h6 font-weight-medium mb-4">人工审查结果</div>
+              <div v-for="(dim, idx) in imageReviewDimensions" :key="idx" class="mb-4"
+                style="border-bottom: 1px solid rgba(0,0,0,0.08); padding-bottom: 12px;">
+                <div class="d-flex align-center justify-space-between mb-1">
+                  <span class="text-subtitle-2">{{ dim.name }}</span>
+                  <v-btn v-if="annotations[idx]?.length > 0" size="x-small" variant="text" color="primary"
+                    @click="toggleAnnotation(idx)">
+                    <v-icon start size="x-small">{{ showAnnotations[idx] ? 'mdi-eye-off' : 'mdi-eye' }}</v-icon>
+                    {{ showAnnotations[idx] ? '隐藏标注' : '显示标注' }}
+                  </v-btn>
+                </div>
+                <div class="d-flex align-center mb-1">
+                  <v-icon :color="getDegreeColor(scores[idx])" size="small" class="mr-1">
+                    {{ getDegreeIcon(scores[idx]) }}
+                  </v-icon>
+                  <span class="text-body-2">{{ getDegreeLabel(scores[idx]) }}</span>
+                </div>
+                <div class="text-caption text-grey">理由：{{ reasons[idx] || '暂无理由' }}</div>
+              </div>
+              <v-divider class="my-3" />
+              <div class="text-subtitle-1 font-weight-bold mb-3">造假判定</div>
+              <v-alert :color="result ? 'success' : 'error'" variant="tonal" density="compact">
+                <div class="d-flex align-center">
+                  <v-icon :icon="result ? 'mdi-check-circle' : 'mdi-alert-circle'" class="mr-2" />
+                  {{ result ? '真实图片' : '造假图片' }}
+                </div>
+              </v-alert>
+            </v-col>
+          </v-row>
+        </v-card-text>
         <v-card-text v-else-if="showDetailDialog && textReviewDetail" class="pa-4">
           <v-row>
             <!-- Left: AI Detection Reference -->
@@ -308,8 +839,14 @@
                     <div v-for="(para, idx) in currentTextResult.ai_generated_paragraphs" :key="idx"
                       class="mb-2 pa-2"
                       style="border-left: 3px solid rgb(var(--v-theme-error)); background: rgba(var(--v-theme-error), 0.05); border-radius: 4px;">
-                      <div class="text-caption text-error mb-1">段落 {{ idx + 1 }}</div>
-                      <div class="text-body-2">{{ typeof para === 'string' ? para.substring(0, 150) + (para.length > 150 ? '...' : '') : '' }}</div>
+                      <template v-if="typeof para === 'object'">
+                        <div class="text-caption text-error mb-1">段落 {{ para.paragraph_index ?? idx + 1 }}</div>
+                        <div class="text-body-2">{{ (para.text || '').substring(0, 150) }}{{ (para.text || '').length > 150 ? '...' : '' }}</div>
+                      </template>
+                      <template v-else>
+                        <div class="text-caption text-error mb-1">段落 {{ idx + 1 }}</div>
+                        <div class="text-body-2">{{ (String(para)).substring(0, 150) }}{{ String(para).length > 150 ? '...' : '' }}</div>
+                      </template>
                     </div>
                   </template>
                   <template v-if="currentTextResult?.factual_fake_reason">
@@ -321,13 +858,13 @@
                   <template v-if="currentTextResult?.template_tendency_score != null">
                     <div class="text-subtitle-2 mt-3 mb-1">模板化倾向分析</div>
                     <v-progress-linear
-                      :model-value="Math.round(currentTextResult.template_tendency_score * 100)"
-                      :color="currentTextResult.template_tendency_score > 0.7 ? 'error' : currentTextResult.template_tendency_score > 0.4 ? 'warning' : 'success'"
+                      :model-value="Math.round((currentTextResult.template_tendency_score ?? 0) * 100)"
+                      :color="(currentTextResult.template_tendency_score ?? 0) > 0.7 ? 'error' : (currentTextResult.template_tendency_score ?? 0) > 0.4 ? 'warning' : 'success'"
                       height="20"
                       class="mb-1"
                     >
-                      <template v-slot:default>
-                        <span class="text-white text-caption">{{ Math.round(currentTextResult.template_tendency_score * 100) }}%</span>
+                      <template #default>
+                        <span class="text-white text-caption">{{ Math.round((currentTextResult.template_tendency_score ?? 0) * 100) }}%</span>
                       </template>
                     </v-progress-linear>
                     <div v-if="currentTextResult?.template_analysis_reason" class="text-body-2 text-grey mt-1">
@@ -345,9 +882,9 @@
                   人工判定：{{ textReviewDetail.result ? '疑似造假/AI生成' : '真实' }}
                 </div>
               </v-alert>
-              <template v-if="textReviewDetail.paragraph_reviews?.length">
+              <template v-if="filteredParagraphReviews.length">
                 <div class="text-subtitle-1 font-weight-bold mb-2">段落复核</div>
-                <v-card v-for="(item, index) in textReviewDetail.paragraph_reviews" :key="index"
+                <v-card v-for="(item, index) in filteredParagraphReviews" :key="index"
                   variant="outlined" class="pa-3 mb-3"
                   :style="item.is_ai_agreed ? 'border-left: 3px solid rgb(var(--v-theme-error))' : item.is_ai_agreed === false ? 'border-left: 3px solid rgb(var(--v-theme-success))' : ''"
                 >
@@ -372,7 +909,7 @@
                     height="20"
                     class="mb-2"
                   >
-                    <template v-slot:default>
+                    <template #default>
                       <span class="text-white text-caption">{{ Math.round((textReviewDetail.template_review_score ?? 0) * 100) }}%</span>
                     </template>
                   </v-progress-linear>
@@ -410,9 +947,9 @@
                       {{ textReviewDetail.result ? '疑似造假' : '真实' }}
                     </v-chip>
                   </div>
-                  <div v-if="textReviewDetail.paragraph_reviews?.length" class="d-flex justify-space-between mb-2">
+                  <div v-if="filteredParagraphReviews.length" class="d-flex justify-space-between mb-2">
                     <span class="text-body-2">段落复核数</span>
-                    <span class="text-body-2 font-weight-bold">{{ textReviewDetail.paragraph_reviews.length }}</span>
+                    <span class="text-body-2 font-weight-bold">{{ filteredParagraphReviews.length }}</span>
                   </div>
                   <div v-if="textReviewDetail.template_review_score != null" class="d-flex justify-space-between mb-2">
                     <span class="text-body-2">模板化评分</span>
@@ -441,7 +978,6 @@ import { useRouter, useRoute } from 'vue-router'
 import { useTheme } from 'vuetify'
 import { useUserStore } from '@/stores/user'
 import { useSnackbarStore } from '@/stores/snackbar'
-import ResultComponent from '@/components/result.vue'
 import publisher from '@/api/publisher'
 import { resolveImageUrl } from '@/utils/preview-url'
 
@@ -453,6 +989,7 @@ const snackbar = useSnackbarStore()
 
 const review_request_id = computed(() => (route.params as RouteParams & { review_request_id: number }).review_request_id)
 
+// ==================== Interfaces ====================
 interface Task {
   id: string
   publishTime: string
@@ -470,9 +1007,9 @@ interface Image {
 }
 
 interface Review {
-  id: number,
-  username: string,
-  avatar: string,
+  id: number
+  username: string
+  avatar: string
   result: boolean
 }
 
@@ -484,13 +1021,12 @@ interface TextReviewDetail {
   result: boolean
 }
 
-// 定义路由参数的类型
 interface RouteParams {
   id: string
 }
 
 interface dimension {
-  method: string,
+  method: string
   probability: number
 }
 
@@ -501,12 +1037,14 @@ interface TextResult {
   status: string
   is_fake: boolean
   confidence_score: number
-  ai_generated_paragraphs?: string[]
+  ai_generated_paragraphs?: any[]
   factual_fake_reason?: string
   template_tendency_score?: number
   template_analysis_reason?: string
+  raw_text?: string
 }
 
+// ==================== State ====================
 const taskData = ref<Task | null>(null)
 const images = ref<Image[]>([])
 const textResults = ref<TextResult[]>([])
@@ -514,8 +1052,6 @@ const taskType = ref<string>('image')
 const structuredTaskId = ref<number | null>(null)
 const isTextTask = computed(() => ['paper_text', 'review_text'].includes(taskType.value))
 const isMultiMaterial = computed(() => taskType.value === 'multi_material')
-const activeTab = ref<'image' | 'text'>('image')
-const currentResourceIndex = ref(0)
 const done = ref(0)
 const process = ref(0)
 const AI_detection = ref(0)
@@ -528,34 +1064,158 @@ const scores = ref<number[]>([])
 const annotations = ref<Array<Array<{ points: { x: number; y: number; }[]; color: string; }>>>([])
 const detection_results = ref<dimension[]>([])
 
+// New refs
+const currentImageIndex = ref(0)
+const currentTextIndex = ref(0)
+const selectedReviewerIndex = ref(-1)
+const showFullText = ref(false)
+const multiSelectedType = ref<'image' | 'text'>('image')
+const rawTexts = ref<Record<number, string>>({})
+const showDetailDialog = ref(false)
+
+// ==================== Computed ====================
 const currentImage = computed(() => {
-  if (isMultiMaterial.value && activeTab.value !== 'image') return undefined
-  return images.value[currentResourceIndex.value]
-})
-const currentTextResult = computed(() => {
-  if (isMultiMaterial.value && activeTab.value !== 'text') return undefined
-  return textResults.value[currentResourceIndex.value]
+  if (currentImageIndex.value >= 0 && currentImageIndex.value < images.value.length) {
+    return images.value[currentImageIndex.value]
+  }
+  return undefined
 })
 
+const currentTextResult = computed(() => {
+  if (currentTextIndex.value >= 0 && currentTextIndex.value < textResults.value.length) {
+    return textResults.value[currentTextIndex.value]
+  }
+  return undefined
+})
+
+const displayText = computed(() => {
+  const raw = currentTextResult.value?.raw_text || getRawTextForTextResult(currentTextResult.value) || ''
+  if (!raw) return ''
+  if (showFullText.value) return raw
+  return raw.substring(0, 500) + (raw.length > 500 ? '...' : '')
+})
+
+const selectedReviewer = computed(() => {
+  if (selectedReviewerIndex.value >= 0 && selectedReviewerIndex.value < review_results.value.length) {
+    return review_results.value[selectedReviewerIndex.value]
+  }
+  return null
+})
+
+const filteredParagraphReviews = computed(() => {
+  return textReviewDetail.value?.paragraph_reviews || []
+})
+
+// ==================== Utility functions ====================
 const convert = (index: number) => {
   switch (index) {
-    case 0:
-      return '高斯模糊'
-    case 1:
-      return '亮度/对比度调节'
-    case 2:
-      return '智能修复'
-    case 3:
-      return '暴力覆盖'
-    case 4:
-      return '同图复制'
-    case 5:
-      return '重叠切割'
-    case 6:
-      return '跨图拼接'
+    case 0: return '高斯模糊'
+    case 1: return '亮度/对比度调节'
+    case 2: return '智能修复'
+    case 3: return '暴力覆盖'
+    case 4: return '同图复制'
+    case 5: return '重叠切割'
+    case 6: return '跨图拼接'
+    default: return '未知'
   }
 }
 
+const formatNumber = (val: number) => {
+  return `${((val ?? 0) * 100).toFixed(2)}%`
+}
+
+const getImageUrl = (url: string) => {
+  return resolveImageUrl(url)
+}
+
+const getResult = (res: boolean) => {
+  return res === true ? '疑似造假/AI生成' : '真实'
+}
+
+// Image review detail helpers
+const imageReviewDimensions = [
+  { name: '高斯模糊' },
+  { name: '亮度/对比度调节' },
+  { name: '智能修复' },
+  { name: '暴力覆盖' },
+  { name: '同图复制' },
+  { name: '重叠切割' },
+  { name: '跨图拼接' },
+]
+
+const showAnnotations = ref<boolean[]>(Array(7).fill(false))
+const toggleAnnotation = (idx: number) => { showAnnotations.value[idx] = !showAnnotations.value[idx] }
+
+const getDegreeColor = (val: number | null | undefined) => {
+  if (val == null) return 'grey'
+  switch (val) {
+    case 1: return 'success'
+    case 2: return 'info'
+    case 3: return 'yellow'
+    case 4: return 'warning'
+    case 5: return 'error'
+    default: return 'grey'
+  }
+}
+
+const getDegreeIcon = (val: number | null | undefined) => {
+  if (val == null) return 'mdi-emoticon-neutral'
+  switch (val) {
+    case 1: return 'mdi-emoticon-happy'
+    case 2: return 'mdi-emoticon-smile'
+    case 3: return 'mdi-emoticon-neutral'
+    case 4: return 'mdi-emoticon-sad'
+    case 5: return 'mdi-emoticon-frown'
+    default: return 'mdi-emoticon-neutral'
+  }
+}
+
+const getDegreeLabel = (val: number | null | undefined) => {
+  if (val == null) return '未评分'
+  switch (val) {
+    case 1: return '基本没有'
+    case 2: return '轻微'
+    case 3: return '不明显'
+    case 4: return '较严重'
+    case 5: return '严重'
+    default: return '未评分'
+  }
+}
+
+const isPaperTextRes = (textRes: TextResult | undefined) => {
+  if (!textRes) return false
+  if (textRes.factual_fake_reason != null) return true
+  if ((textRes.ai_generated_paragraphs?.length ?? 0) > 0) return true
+  return false
+}
+
+const isReviewTextRes = (textRes: TextResult | undefined) => {
+  if (!textRes) return false
+  if (textRes.template_tendency_score != null) return true
+  return false
+}
+
+const getTextChipColor = (textRes: TextResult | undefined) => {
+  if (!textRes) return 'grey'
+  if (taskType.value === 'paper_text' || isPaperTextRes(textRes)) return 'green'
+  if (taskType.value === 'review_text' || isReviewTextRes(textRes)) return 'orange'
+  return 'grey'
+}
+
+const getTextChipLabel = (textRes: TextResult | undefined) => {
+  if (!textRes) return '文本'
+  if (taskType.value === 'paper_text' || isPaperTextRes(textRes)) return '论文'
+  if (taskType.value === 'review_text' || isReviewTextRes(textRes)) return '评审'
+  return '文本'
+}
+
+const getRawTextForTextResult = (textRes: TextResult | undefined) => {
+  if (!textRes) return ''
+  if (textRes.raw_text) return textRes.raw_text
+  return rawTexts.value[textRes.resource_id] || ''
+}
+
+// ==================== Task type resolution ====================
 const resolveTaskType = (response: any) => {
   const detectType = response?.detect_type
   const responseTaskType = response?.task_type
@@ -572,76 +1232,144 @@ const resolveTaskType = (response: any) => {
   return responseTaskType
 }
 
+// ==================== Build text results ====================
+
+// Extract resource key from item_id for grouping sections by text resource.
+// Patterns: {detectType}_paper_{fileIdx}_{secIdx}, {detectType}_review_file_{fileIdx}_{secIdx},
+//           {detectType}_review_text_{textIdx}
+const extractResourceKey = (itemId: string): string => {
+  const parts = itemId.split('_')
+  const reviewFilePos = parts.findIndex((p: string, i: number) => p === 'review' && parts[i + 1] === 'file')
+  if (reviewFilePos >= 0) return `review_file_${parts[reviewFilePos + 2]}`
+  const reviewTextPos = parts.findIndex((p: string, i: number) => p === 'review' && parts[i + 1] === 'text')
+  if (reviewTextPos >= 0) return `review_text_${parts[reviewTextPos + 2]}`
+  const paperPos = parts.lastIndexOf('paper')
+  if (paperPos >= 0) return `paper_${parts[paperPos + 1]}`
+  return itemId
+}
+
 const buildTextResultsFromStructuredResult = (structured: any, fallbackTexts: any[] = []) => {
   const overall = structured?.overall || structured?.result?.overall || {}
   const sections = structured?.sections || structured?.result?.evidence?.per_section || []
   const summary = structured?.summary || structured?.result?.summary || ''
   const detectType = structured?.detect_type
-  const resolveTextResourceId = (section: any, index: number) => {
-    const itemId = String(section?.item_id || '')
-    const parts = itemId.split('_')
+
+  if (!Array.isArray(sections) || sections.length === 0) {
+    return fallbackTexts.map((text: any, index: number) => ({
+      result_id: text.text_id || index + 1,
+      resource_id: text.text_id || index + 1,
+      text_type: text.source_type || detectType || 'structured',
+      status: structured?.status || 'completed',
+      is_fake: Boolean(overall?.is_fake ?? structured?.overall_is_fake),
+      confidence_score: Number(overall?.confidence_score ?? structured?.confidence_score ?? 0),
+      ai_generated_paragraphs: [],
+      factual_fake_reason: detectType === 'paper' ? summary : undefined,
+      template_tendency_score: detectType === 'review' ? Number(overall?.confidence_score ?? structured?.confidence_score ?? 0) : undefined,
+      template_analysis_reason: detectType === 'review' ? summary : undefined,
+      raw_text: text.raw_text || '',
+    }))
+  }
+
+  // Group sections by resource key
+  const groups = new Map<string, any[]>()
+  sections.forEach((section: any) => {
+    const key = extractResourceKey(String(section?.item_id || ''))
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key)!.push(section)
+  })
+
+  // Build a lookup: resourceKey → resourceIndex → fallbackText
+  const groupKeys = Array.from(groups.keys())
+
+  return groupKeys.map((key: string, groupIndex: number) => {
+    const groupSections = groups.get(key)!
+    const isPaper = detectType === 'paper' || key.startsWith('paper')
+    const isReview = detectType === 'review' || key.startsWith('review')
+
+    // Aggregate: any section flagged as AIGC → whole resource is fake
+    const anyFake = groupSections.some((s: any) => Boolean(s?.is_aigc))
+    const maxConfidence = Math.max(...groupSections.map((s: any) =>
+      Number(s?.probabilities?.aigc ?? s?.confidence_score ?? 0)
+    ))
+    const avgConfidence = groupSections.reduce((sum: number, s: any) =>
+      sum + Number(s?.probabilities?.aigc ?? s?.confidence_score ?? 0), 0
+    ) / groupSections.length
+
+    // Collect AI-generated paragraphs
+    const aiParagraphs = groupSections
+      .filter((s: any) => Boolean(s?.is_aigc))
+      .map((s: any, idx: number) => ({
+        paragraph_index: idx,
+        ai_probability: Number(s?.probabilities?.aigc ?? s?.confidence_score ?? 0),
+        text: s?.text || '',
+        reason: s?.label_name || '',
+      }))
+
+    // Determine resource_id from fallback texts
     let resourceIndex = -1
+    const parts = key.split('_')
+    if (key.startsWith('review_file')) resourceIndex = Number(parts[2])
+    else if (key.startsWith('review_text')) resourceIndex = Number(parts[2])
+    else if (key.startsWith('paper')) resourceIndex = Number(parts[1])
 
-    const reviewFilePos = parts.findIndex((part, idx) => part === 'review' && parts[idx + 1] === 'file')
-    const reviewTextPos = parts.findIndex((part, idx) => part === 'review' && parts[idx + 1] === 'text')
-    const paperPos = parts.lastIndexOf('paper')
-    if (reviewFilePos >= 0) resourceIndex = Number(parts[reviewFilePos + 2])
-    else if (reviewTextPos >= 0) resourceIndex = Number(parts[reviewTextPos + 2])
-    else if (paperPos >= 0) resourceIndex = Number(parts[paperPos + 1])
+    const fallbackText = fallbackTexts[resourceIndex >= 0 ? resourceIndex : groupIndex]
+    const resourceId = fallbackText?.text_id || (groupIndex + 1)
 
-    const fallback = Number(fallbackTexts[resourceIndex]?.text_id ?? fallbackTexts[index]?.text_id ?? fallbackTexts[0]?.text_id)
-    return Number.isFinite(fallback) && fallback > 0 ? fallback : index + 1
-  }
-
-  if (Array.isArray(sections) && sections.length > 0) {
-    return sections.map((section: any, index: number) => {
-      const probability = section?.probabilities?.aigc ?? section?.confidence_score ?? overall?.confidence_score ?? 0
-      return {
-        result_id: index + 1,
-        resource_id: resolveTextResourceId(section, index),
-        text_type: section?.source_file || section?.title || detectType || 'structured',
-        status: structured?.status || 'completed',
-        is_fake: Boolean(section?.is_aigc),
-        confidence_score: Number(probability || 0),
-        ai_generated_paragraphs: section?.is_aigc && section?.text ? [section.text] : [],
-        factual_fake_reason: detectType === 'paper' ? (section?.text || summary) : undefined,
-        template_tendency_score: detectType === 'review' ? Number(probability || 0) : undefined,
-        template_analysis_reason: detectType === 'review' ? (section?.text || summary) : undefined,
-      }
-    })
-  }
-
-  return fallbackTexts.map((text: any, index: number) => ({
-    result_id: text.text_id || index + 1,
-    resource_id: text.text_id || index + 1,
-    text_type: text.source_type || detectType || 'structured',
-    status: structured?.status || 'completed',
-    is_fake: Boolean(overall?.is_fake ?? structured?.overall_is_fake),
-    confidence_score: Number(overall?.confidence_score ?? structured?.confidence_score ?? 0),
-    ai_generated_paragraphs: [],
-    factual_fake_reason: detectType === 'paper' ? summary : undefined,
-    template_tendency_score: detectType === 'review' ? Number(overall?.confidence_score ?? structured?.confidence_score ?? 0) : undefined,
-    template_analysis_reason: detectType === 'review' ? summary : undefined,
-  }))
+    return {
+      result_id: groupIndex + 1,
+      resource_id: Number(resourceId),
+      text_type: isPaper ? 'paper' : isReview ? 'review' : (detectType || 'structured'),
+      status: structured?.status || 'completed',
+      is_fake: anyFake,
+      confidence_score: Number(maxConfidence || avgConfidence || overall?.confidence_score ?? 0),
+      ai_generated_paragraphs: aiParagraphs,
+      factual_fake_reason: isPaper ? summary : undefined,
+      template_tendency_score: isReview ? Number(maxConfidence || avgConfidence || overall?.confidence_score ?? 0) : undefined,
+      template_analysis_reason: isReview ? summary : undefined,
+      raw_text: fallbackText?.raw_text || '',
+    }
+  })
 }
 
+// ==================== Data fetching ====================
 const fetchStructuredDetectionResults = async (fallbackTexts: any[] = []) => {
-  if (!structuredTaskId.value) return
-  const structured = (await publisher.getStructuredTaskResult(structuredTaskId.value)).data
-  const overall = structured?.overall || structured?.result?.overall || {}
-  taskType.value = structured?.task_type || resolveTaskType(structured)
-  AI_detection.value = Number(overall?.confidence_score ?? structured?.confidence_score ?? 0)
-  textResults.value = buildTextResultsFromStructuredResult(structured, fallbackTexts)
-  done.value = textResults.value.filter(t => t.status === 'completed').length
-  process.value = Math.max(textResults.value.length - done.value, 0)
+  if (!structuredTaskId.value) {
+    // No linked detection task — use fallback text data without error
+    if (fallbackTexts.length > 0 && textResults.value.length === 0) {
+      textResults.value = fallbackTexts.map((t: any, index: number) => ({
+        result_id: t.text_id || index + 1,
+        resource_id: t.text_id || index + 1,
+        text_type: t.source_type || 'structured',
+        status: 'completed',
+        is_fake: false,
+        confidence_score: 0,
+        raw_text: t.raw_text || '',
+      }))
+    }
+    return
+  }
+  try {
+    const structured = (await publisher.getStructuredTaskResult(structuredTaskId.value)).data
+    const overall = structured?.overall || structured?.result?.overall || {}
+    taskType.value = structured?.task_type || resolveTaskType(structured)
+    AI_detection.value = Number(overall?.confidence_score ?? structured?.confidence_score ?? 0)
+    textResults.value = buildTextResultsFromStructuredResult(structured, fallbackTexts)
+    done.value = textResults.value.filter(t => t.status === 'completed').length
+    process.value = Math.max(textResults.value.length - done.value, 0)
+    // Populate rawTexts ref
+    textResults.value.forEach(tr => {
+      if (tr.raw_text) rawTexts.value[tr.resource_id] = tr.raw_text
+    })
+  } catch (error) {
+    // Don't show error — structured results are optional, fallback data already populated
+  }
 }
 
-
-// 获取检测结果
 const fetchDetectionResults = async () => {
   try {
-    const isTextMode = isTextTask.value || (isMultiMaterial.value && activeTab.value === 'text')
-    if (isTextMode) {
+    if (isTextTask.value) {
+      await fetchStructuredDetectionResults(textResults.value)
+    } else if (isMultiMaterial.value && multiSelectedType.value === 'text') {
       await fetchStructuredDetectionResults(textResults.value)
     } else {
       if (currentImage.value) {
@@ -652,21 +1380,16 @@ const fetchDetectionResults = async () => {
       }
     }
   } catch (error) {
-    snackbar.showMessage('获取检测结果失败', 'error')
+    // Detection results are supplementary — don't block the page
   }
 }
 
-// 当 multi_material 模式下切换 tab 时重置索引
-watch(activeTab, () => {
-  if (isMultiMaterial.value) {
-    currentResourceIndex.value = 0
-    handleResourceSelect(0)
-  }
-})
-
 const fetchReview = async (img?: Image) => {
   try {
-    if (isTextTask.value || (isMultiMaterial.value && activeTab.value === 'text')) {
+    selectedReviewerIndex.value = -1
+    textReviewDetail.value = null
+
+    if (isTextTask.value || (isMultiMaterial.value && multiSelectedType.value === 'text')) {
       if (!currentTextResult.value?.resource_id) {
         review_results.value = []
         return
@@ -681,7 +1404,10 @@ const fetchReview = async (img?: Image) => {
       review_results.value = []
       return
     }
-    review_results.value = (await publisher.getImageReviewAll({ review_request_id: review_request_id.value, img_id: img.img_id })).data.reviewers_results || []
+    review_results.value = (await publisher.getImageReviewAll({
+      review_request_id: review_request_id.value,
+      img_id: img.img_id
+    })).data.reviewers_results || []
   } catch (error) {
     snackbar.showMessage('获取人工审核结果失败', 'error')
   }
@@ -689,7 +1415,7 @@ const fetchReview = async (img?: Image) => {
 
 const fetchReviewDetail = async (review: Review) => {
   try {
-    if (isTextTask.value || (isMultiMaterial.value && activeTab.value === 'text')) {
+    if (isTextTask.value || (isMultiMaterial.value && multiSelectedType.value === 'text')) {
       if (!currentTextResult.value?.resource_id) return
       textReviewDetail.value = (await publisher.getTextReviewDetail({
         review_request_id: review_request_id.value,
@@ -700,70 +1426,86 @@ const fetchReviewDetail = async (review: Review) => {
     }
     if (!currentImage.value) return
     textReviewDetail.value = null
-    const response = (await publisher.getImageReviewDetail({ review_request_id: review_request_id.value, img_id: currentImage.value.img_id, reviewer_id: review.id })).data
+    const response = (await publisher.getImageReviewDetail({
+      review_request_id: review_request_id.value,
+      img_id: currentImage.value.img_id,
+      reviewer_id: review.id
+    })).data
     reasons.value = response.reasons
     result.value = response.result
     scores.value = response.scores
     annotations.value = response.points
-    console.log(annotations.value)
   } catch (error) {
     snackbar.showMessage('获取人工审核详情失败', 'error')
   }
 }
 
-const handleResourceSelect = (index: number) => {
-  currentResourceIndex.value = index
-  if (isMultiMaterial.value) {
-    if (activeTab.value === 'image' && currentImage.value) {
-      fetchReview(currentImage.value)
-    } else if (activeTab.value === 'text') {
-      fetchReview()
-    }
-  } else if (isTextTask.value) {
-    fetchReview()
-  } else if (!isTextTask.value && currentImage.value) {
-    fetchReview(currentImage.value)
-  }
+// ==================== Event handlers ====================
+const handleImageSelect = (index: number) => {
+  currentImageIndex.value = index
+  selectedReviewerIndex.value = -1
+  textReviewDetail.value = null
+  fetchReview(currentImage.value)
   fetchDetectionResults()
 }
 
-const getResult = (result: boolean) => {
-  return result === true ? '疑似造假/AI生成' : '真实'
+const handleTextSelect = (index: number) => {
+  currentTextIndex.value = index
+  selectedReviewerIndex.value = -1
+  textReviewDetail.value = null
+  showFullText.value = false
+  fetchReview()
 }
 
-const handlePrevResource = () => {
-  if (currentResourceIndex.value > 0) {
-    currentResourceIndex.value--
-    handleResourceSelect(currentResourceIndex.value)
+const handleSelectReviewer = (index: number) => {
+  selectedReviewerIndex.value = index
+  const reviewer = review_results.value[index]
+  if (reviewer) {
+    fetchReviewDetail(reviewer)
   }
 }
 
-const handleNextResource = () => {
-  let maxLen: number
-  if (isMultiMaterial.value) {
-    maxLen = activeTab.value === 'text' ? textResults.value.length : images.value.length
-  } else {
-    maxLen = isTextTask.value ? textResults.value.length : images.value.length
+const handleMultiImageSelect = (index: number) => {
+  multiSelectedType.value = 'image'
+  currentImageIndex.value = index
+  selectedReviewerIndex.value = -1
+  textReviewDetail.value = null
+  fetchReview(currentImage.value)
+}
+
+const handleMultiTextSelect = (index: number) => {
+  multiSelectedType.value = 'text'
+  currentTextIndex.value = index
+  selectedReviewerIndex.value = -1
+  textReviewDetail.value = null
+  showFullText.value = false
+  fetchReview()
+}
+
+const handlePrevImage = () => {
+  if (currentImageIndex.value > 0) {
+    currentImageIndex.value--
+    if (isMultiMaterial.value) {
+      fetchReview(currentImage.value)
+    } else {
+      fetchReview(currentImage.value)
+      fetchDetectionResults()
+    }
   }
-  if (currentResourceIndex.value < maxLen - 1) {
-    currentResourceIndex.value++
-    handleResourceSelect(currentResourceIndex.value)
+}
+
+const handleNextImage = () => {
+  if (currentImageIndex.value < images.value.length - 1) {
+    currentImageIndex.value++
+    if (isMultiMaterial.value) {
+      fetchReview(currentImage.value)
+    } else {
+      fetchReview(currentImage.value)
+      fetchDetectionResults()
+    }
   }
 }
 
-const getImageUrl = (url: string) => {
-  return resolveImageUrl(url)
-}
-
-
-// 添加弹窗控制变量
-const showDetailDialog = ref(false)
-
-const formatNumber = (result: number) => {
-  return `${((result ?? 0) * 100).toFixed(2)}%`
-}
-
-// 修改查看详情按钮的点击事件
 const handleViewDetail = (review: Review) => {
   textReviewDetail.value = null
   showDetailDialog.value = true
@@ -773,10 +1515,8 @@ const handleViewDetail = (review: Review) => {
 const handleDownloadReport = async () => {
   try {
     const response = await publisher.downloadReviewReport({ review_request_id: review_request_id.value })
-    // 打印response.data（Blob对象）的类型和大小
     console.log('Downloaded data is a Blob. Type:', response.data.type, 'Size:', response.data.size);
 
-    // 确保response.data是一个Blob对象
     if (!(response.data instanceof Blob)) {
       console.error('Expected Blob data, but received:', response.data);
       snackbar.showMessage('下载失败：未收到文件数据', 'error');
@@ -785,23 +1525,19 @@ const handleDownloadReport = async () => {
 
     const blob = response.data
 
-    // 检查Blob类型是否为PDF
     if (blob.type !== 'application/pdf') {
       console.warn('Downloaded Blob type is not application/pdf:', blob.type);
       snackbar.showMessage('下载的文件不是PDF格式', 'warning');
       return;
     }
 
-    // 创建一个 Blob URL
     const url = window.URL.createObjectURL(blob)
-    // 创建一个下载链接
     const link = document.createElement('a')
     link.href = url
     link.download = `人工审核报告_${review_request_id.value}.pdf`
-    link.target = '_blank' // 在新标签页打开
+    link.target = '_blank'
     document.body.appendChild(link)
     link.click()
-    // 清理
     document.body.removeChild(link)
     window.URL.revokeObjectURL(url)
     snackbar.showMessage('报告下载成功', 'success')
@@ -810,11 +1546,11 @@ const handleDownloadReport = async () => {
   }
 }
 
+// ==================== onMounted ====================
 onMounted(async () => {
   const hasPermission = true
   if (!hasPermission) return
   try {
-    // 使用 getRequestDetail 获取审核请求详情，该接口同时返回 images 和 texts 数组
     const response = (await publisher.getRequestDetail({ review_request_id: review_request_id.value })).data
     const hasImages = response.images && response.images.length > 0
     const hasTexts = response.texts && response.texts.length > 0
@@ -826,21 +1562,38 @@ onMounted(async () => {
     process.value = response.status?.process ?? 0
     AI_detection.value = response.ai_detection_result?.confidence_score ?? 0
 
+    // Store raw texts mapping
+    if (response.texts) {
+      response.texts.forEach((t: any) => {
+        if (t.text_id && t.raw_text) {
+          rawTexts.value[t.text_id] = t.raw_text
+        }
+      })
+    }
+
     if (isStructuredTask) {
       taskType.value = resolvedTaskType
       images.value = resolvedTaskType === 'multi_material' ? response.images : []
-      activeTab.value = resolvedTaskType === 'multi_material' ? 'image' : 'text'
-      textResults.value = (response.texts || []).map((t: any) => ({
+      multiSelectedType.value = resolvedTaskType === 'multi_material' ? 'image' : 'text'
+
+      // Build initial text results from response.texts
+      const initialTexts = (response.texts || []).map((t: any) => ({
         result_id: t.text_id,
         resource_id: t.text_id,
         text_type: t.source_type,
         status: 'completed',
         is_fake: false,
         confidence_score: 0,
+        raw_text: t.raw_text || '',
       }))
-      currentResourceIndex.value = 0
+
+      textResults.value = initialTexts
+      currentTextIndex.value = 0
+
+      // Fetch structured detection results (will overwrite with real data)
       await fetchStructuredDetectionResults(response.texts || [])
-      // If structured detection didn't populate text results well, build from material_cards
+
+      // If structured detection didn't populate text results, fallback
       if (textResults.value.length === 0 && (response.texts || []).length > 0) {
         textResults.value = (response.texts || []).map((t: any, index: number) => ({
           result_id: t.text_id || index + 1,
@@ -849,20 +1602,27 @@ onMounted(async () => {
           status: 'completed',
           is_fake: false,
           confidence_score: 0,
+          raw_text: t.raw_text || '',
         }))
       }
+
+      // Fetch initial reviewers
       if (resolvedTaskType === 'multi_material' && images.value.length > 0) {
-        review_results.value = (await publisher.getImageReviewAll({ review_request_id: review_request_id.value, img_id: images.value[0].img_id })).data.reviewers_results
+        currentImageIndex.value = 0
+        review_results.value = (await publisher.getImageReviewAll({
+          review_request_id: review_request_id.value,
+          img_id: images.value[0].img_id
+        })).data.reviewers_results || []
       } else {
+        currentTextIndex.value = 0
         await fetchReview()
       }
     } else if (hasImages && hasTexts) {
-      // multi_material: 既有图片又有文本
+      // multi_material: both images and texts
       taskType.value = 'multi_material'
       images.value = response.images
-      activeTab.value = 'image'
+      multiSelectedType.value = 'image'
 
-      // 使用 request detail 返回的文本信息构建列表
       textResults.value = response.texts.map((t: any) => ({
         result_id: t.text_id,
         resource_id: t.text_id,
@@ -870,28 +1630,32 @@ onMounted(async () => {
         status: 'completed',
         is_fake: false,
         confidence_score: 0,
+        raw_text: t.raw_text || '',
       }))
 
-      // 获取第一张图片的审核结果
       if (images.value.length > 0) {
-        review_results.value = (await publisher.getImageReviewAll({ review_request_id: review_request_id.value, img_id: images.value[0].img_id })).data.reviewers_results
+        currentImageIndex.value = 0
+        review_results.value = (await publisher.getImageReviewAll({
+          review_request_id: review_request_id.value,
+          img_id: images.value[0].img_id
+        })).data.reviewers_results || []
       }
-      currentResourceIndex.value = 0
       fetchDetectionResults()
     } else if (hasImages) {
-      // 纯图片任务
+      // Pure image task
       taskType.value = 'image'
       images.value = response.images
+      currentImageIndex.value = 0
       if (images.value.length > 0) {
-        review_results.value = (await publisher.getImageReviewAll({ review_request_id: review_request_id.value, img_id: images.value[0].img_id })).data.reviewers_results
+        review_results.value = (await publisher.getImageReviewAll({
+          review_request_id: review_request_id.value,
+          img_id: images.value[0].img_id
+        })).data.reviewers_results || []
       }
-      currentResourceIndex.value = 0
       fetchDetectionResults()
     } else if (hasTexts) {
-      // 纯文本任务
+      // Pure text task
       taskType.value = resolvedTaskType
-      activeTab.value = 'text'
-      // 使用 request detail 返回的文本信息构建列表，详细数据在选中时获取
       textResults.value = response.texts.map((t: any) => ({
         result_id: t.text_id,
         resource_id: t.text_id,
@@ -899,13 +1663,14 @@ onMounted(async () => {
         status: 'completed',
         is_fake: false,
         confidence_score: 0,
+        raw_text: t.raw_text || '',
       }))
+      currentTextIndex.value = 0
       done.value = textResults.value.filter(t => t.status === 'completed').length
       process.value = textResults.value.length - done.value
       if (textResults.value.length > 0) {
         AI_detection.value = textResults.value[0].confidence_score || 0
       }
-      currentResourceIndex.value = 0
       fetchDetectionResults()
       fetchReview()
     } else {
@@ -931,7 +1696,7 @@ onMounted(async () => {
 
 .main-content {
   height: calc(100vh - 80px);
-  overflow: hidden;
+  overflow: auto;
   background-color: rgb(var(--v-theme-surface));
 }
 
@@ -969,25 +1734,35 @@ onMounted(async () => {
   margin-top: 4px;
 }
 
-.task-list {
-  width: clamp(360px, 30vw, 420px);
-  padding: 0 12px;
-}
-
-.task-item {
+.content-wrapper {
   width: 100%;
-  margin-bottom: 12px;
+  display: flex;
+  justify-content: center;
 }
 
-.task-item .v-progress-linear {
-  width: clamp(260px, 25vw, 340px) !important;
-  height: 10px !important;
+.content-container {
+  width: 100%;
+  max-width: min(1200px, 95vw);
+  display: flex;
+  justify-content: center;
 }
 
-.task-item .text-h6 {
-  white-space: nowrap;
+.task-stats {
+  min-width: 320px;
+  justify-content: center;
 }
 
+.stat-item {
+  min-width: 120px;
+}
+
+.stat-item .text-h6 {
+  font-size: 1.8rem !important;
+  text-align: center;
+  margin-top: 8px;
+}
+
+/* Image mode styles */
 .resource-list {
   width: clamp(100px, 8vw, 120px);
   height: calc(100vh - 380px);
@@ -1017,33 +1792,12 @@ onMounted(async () => {
   flex-shrink: 0;
 }
 
-.resource-grid-item.text-item {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  background-color: rgba(var(--v-theme-primary), 0.05);
-}
-
 .resource-grid-item:hover {
   border-color: rgba(var(--v-theme-primary), 0.5);
 }
 
 .resource-grid-item.active {
   border-color: rgb(var(--v-theme-primary));
-}
-
-.content-wrapper {
-  width: 100%;
-  display: flex;
-  justify-content: center;
-}
-
-.content-container {
-  width: 100%;
-  max-width: min(1200px, 95vw);
-  display: flex;
-  justify-content: center;
 }
 
 .preview-section {
@@ -1143,7 +1897,53 @@ onMounted(async () => {
   color: rgb(76, 175, 80) !important;
 }
 
-/* 滚动条样式 */
+/* Text mode styles */
+.text-sidebar {
+  position: sticky;
+  top: 0;
+}
+
+.text-sidebar-item {
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: 1px solid transparent;
+}
+
+.text-sidebar-item:hover {
+  border-color: rgba(var(--v-theme-primary), 0.3);
+  background-color: rgba(var(--v-theme-primary), 0.05);
+}
+
+.text-sidebar-item-active {
+  border-color: rgb(var(--v-theme-primary) ) !important;
+  background-color: rgba(var(--v-theme-primary), 0.1) !important;
+}
+
+.cursor-pointer {
+  cursor: pointer;
+}
+
+/* Multi mode styles */
+.multi-sidebar-thumb {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  cursor: pointer;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 2px solid transparent;
+  transition: border-color 0.2s ease;
+}
+
+.multi-sidebar-thumb:hover {
+  border-color: rgba(var(--v-theme-primary), 0.5);
+}
+
+.multi-sidebar-thumb.active {
+  border-color: rgb(var(--v-theme-primary));
+}
+
+/* Scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
 }
@@ -1161,21 +1961,18 @@ onMounted(async () => {
   background: rgba(var(--v-theme-primary), 0.4);
 }
 
-.task-stats {
-  min-width: 320px;
-  justify-content: center;
+/* Dialog transition */
+.dialog-bottom-transition-enter-active,
+.dialog-bottom-transition-leave-active {
+  transition: transform 0.2s ease-in-out;
 }
 
-.stat-item {
-  min-width: 120px;
+.dialog-bottom-transition-enter-from,
+.dialog-bottom-transition-leave-to {
+  transform: translateY(100%);
 }
 
-.stat-item .text-h6 {
-  font-size: 1.8rem !important;
-  text-align: center;
-  margin-top: 8px;
-}
-
+/* Responsive */
 @media (max-width: 1280px) {
   .task-stats {
     min-width: clamp(280px, 25vw, 320px);
@@ -1206,16 +2003,5 @@ onMounted(async () => {
     height: auto;
     min-height: 300px;
   }
-}
-
-/* 添加弹窗过渡动画样式 */
-.dialog-bottom-transition-enter-active,
-.dialog-bottom-transition-leave-active {
-  transition: transform 0.2s ease-in-out;
-}
-
-.dialog-bottom-transition-enter-from,
-.dialog-bottom-transition-leave-to {
-  transform: translateY(100%);
 }
 </style>

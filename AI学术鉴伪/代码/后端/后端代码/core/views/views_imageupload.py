@@ -398,6 +398,18 @@ def preview_resource(request, resource_type, resource_id):
                 except ImageUpload.DoesNotExist:
                     pass
 
+        # Publisher access: allow publishers to view images from their review requests
+        if image is None and getattr(auth_user, 'role', None) == 'publisher':
+            from core.models import ReviewRequest
+            if ReviewRequest.objects.filter(
+                user=auth_user,
+                imgs__id=resource_id,
+            ).exists():
+                try:
+                    image = ImageUpload.objects.select_related('file_management').get(id=resource_id)
+                except ImageUpload.DoesNotExist:
+                    pass
+
         if image is None:
             return Response({"message": "Image not found"}, status=404)
 
