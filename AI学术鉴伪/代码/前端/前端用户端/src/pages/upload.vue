@@ -830,6 +830,10 @@ const formatFileSize = (bytes: number): string => {
 }
 
 const createUploadContainerIfNeeded = async (): Promise<number | null> => {
+  if (selectedModule.value !== 'paper' && selectedModule.value !== 'review' && selectedModule.value !== 'multi') {
+    return null
+  }
+
   const safeTime = new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14)
   const title = currentTaskName.value?.trim() || `${selectedModule.value}-${safeTime}`
   const containerType = selectedModule.value === 'multi' ? 'multi_material' : selectedModule.value
