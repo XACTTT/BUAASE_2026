@@ -1,4 +1,5 @@
 import csv
+import os
 from django.db import models as db_models
 from rest_framework_simplejwt.tokens import RefreshToken
 from core.models import PublisherReviewerRelationship, ImageReview, Organization
@@ -104,22 +105,44 @@ def _serialize_resource(file_obj):
     else:
         detection_type = '未检测'
 
-    # Related resources in the same container
+    # Related resources (files in same container + extracted images)
     related_resources = []
+
+    # 1. 同一容器中的其他文件
     if file_obj.container_id:
         related_fm = FileManagement.objects.filter(
             container_id=file_obj.container_id
         ).exclude(id=file_obj.id).select_related('user', 'organization')
         for fm in related_fm:
             fm_metadata = fm.extra_metadata or {}
+            # 尝试为相关文件寻找任务 ID
+            fm_task = DetectionTask.objects.filter(container_id=file_obj.container_id).order_by('-id').first()
+            fm_task_id = fm_task.id if fm_task else task_id
+
             related_resources.append({
                 'id': fm.id,
                 'type': _infer_resource_type(fm),
                 'file_name': fm.file_name,
                 'relation_type': fm.resource_role or '',
-                'task_id': task_id,
+                'task_id': fm_task_id,
                 'title': fm_metadata.get('title') or fm.file_name,
             })
+
+    # 2. 从此文件提取出的图片 (ImageUpload 记录)
+    if hasattr(file_obj, 'image_uploads'):
+        extracted_images = file_obj.image_uploads.all()
+    else:
+        extracted_images = ImageUpload.objects.filter(file_management=file_obj)
+
+    for img in extracted_images:
+        related_resources.append({
+            'id': img.id,
+            'type': 'image',
+            'file_name': img.file_name or (os.path.basename(img.image.name) if img.image else f"image_{img.id}"),
+            'relation_type': 'extracted_image',
+            'task_id': img.detection_task_id or task_id,
+            'title': img.file_name or f"提取图片 #{img.id}",
+        })
 
     metadata = file_obj.extra_metadata or {}
 
@@ -154,7 +177,7 @@ def admin_resources(request):
     if page_size <= 0:
         page_size = 10
 
-    resources = FileManagement.objects.select_related('user', 'organization').all().order_by('-upload_time')
+    resources = FileManagement.objects.select_related('user', 'organization').prefetch_related('image_uploads').all().order_by('-upload_time')
 
     user = request.user
     if user.email != 'admin@mail.com':
@@ -199,7 +222,7 @@ def admin_resources(request):
 
     if detection_result in ('real', 'fake', 'undetected', 'failed', 'detecting'):
         if detection_result == 'undetected':
-            serialized = [item for item in serialized if item['detection_result'] is None and item['detection_status'] == 'pending']
+            serialized = [item for item in serialized if item['detection_result'] is None and item['detection_status'] not in ('detecting', 'failed')]
         elif detection_result == 'failed':
             serialized = [item for item in serialized if item['detection_result'] == 'failed' or item['detection_status'] == 'failed']
         elif detection_result == 'detecting':
@@ -372,6 +395,8 @@ class LogDetailView(APIView):
             detail_data = {
                 "log_id": log.log_id,
                 "operation_type": operation_type,
+                "target_id": log.target_id,
+                "target_type": log.target_type,
                 "operation_time": log.operation_time.strftime('%Y-%m-%d %H:%M:%S'),
                 "user": log.user.username,
                 "user_role": log.user_role,
@@ -434,7 +459,7 @@ class LogDetailView(APIView):
                 try:
                     task_id = target_id
                     task = DetectionTask.objects.get(id=task_id)
-                    results = DetectionResult.objects.filter(detection_task=task)
+                    results = DetectionResult.objects.filter(detection_task=task).select_related('image_upload')
                     
                     # 汇总检测结果
                     total_images = results.count()
@@ -443,6 +468,7 @@ class LogDetailView(APIView):
                     detail_data.update({
                         "display_type": "ai_result",
                         "title": "AI 检测任务详情",
+                        "log_id": log.log_id, # 添加 log_id 以便前端反查
                         "fields": [
                             {"label": "任务名称", "value": task.task_name},
                             {"label": "任务状态", "value": task.get_status_display()},
@@ -456,7 +482,8 @@ class LogDetailView(APIView):
                             "results": [
                                 {
                                     "image_id": r.image_upload.id,
-                                    "image_url": r.image_upload.image.url if r.image_upload.image else None,
+                                    "image_url": f"/api/preview/image/{r.image_upload.id}/",
+                                    "file_name": r.image_upload.file_name or (os.path.basename(r.image_upload.image.name) if r.image_upload.image else f"image_{r.image_upload.id}"),
                                     "is_fake": r.is_fake,
                                     "confidence": f"{round(r.confidence_score * 100, 2)}%" if r.confidence_score else "N/A",
                                     "llm_judgment": r.llm_judgment
@@ -2488,8 +2515,8 @@ def get_review_request_detail(request, manual_review_id):
             )
             group["file_ext"] = file_material.get("file_ext")
             group["file_name"] = file_material.get("file_name")
-            group["preview_url"] = request.build_absolute_uri(f"/api/preview/file/{source_file_id}/")
-            group["preview_pdf_url"] = request.build_absolute_uri(f"/api/preview/file/{source_file_id}/?as_pdf=1")
+            group["preview_url"] = f"/api/preview/file/{source_file_id}/"
+            group["preview_pdf_url"] = f"/api/preview/file/{source_file_id}/?as_pdf=1"
         if not group["raw_text"]:
             group["raw_text"] = "\n\n".join(item.get("text") or "" for item in group["items"])
         texts.append(group)

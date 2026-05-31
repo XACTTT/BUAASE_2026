@@ -252,7 +252,7 @@ def _submit_structured_detection(request, user, mode, task_name, cmd_block_size,
     log_action(
         user=user,
         operation_type='create_detection_task',
-        target_type='detection_task',
+        target_type='DetectionTask',
         target_id=detection_task.id,
         ip=get_client_ip(request),
         detail={
@@ -426,6 +426,7 @@ def submit_detection2(request):
     if resolved_image_ids:
         image_ids = resolved_image_ids
     task_name = request.data.get('task_name', 'New Detection Task')  # 从请求中获取任务名称，默认为 "New Detection Task"
+    container_id = request.data.get('container_id')
 
     # 获取额外的参数
     cmd_block_size = request.data.get('cmd_block_size', 64)  # 默认为64
@@ -454,6 +455,10 @@ def submit_detection2(request):
     if not image_uploads.exists():
         return Response({"message": "No valid images found"}, status=404)
 
+    container = None
+    if container_id:
+        container = ResourceContainer.objects.filter(id=container_id, owner=user).first()
+
     num_images = len(image_uploads)
     quota_error = _check_organization_quota(organization, if_use_llm, num_images)
     if quota_error:
@@ -463,6 +468,7 @@ def submit_detection2(request):
     detection_task = DetectionTask.objects.create(
         organization=user.organization,
         user=request.user,
+        container=container,
         task_name=task_name,  # 使用用户提交的任务名称
         status='pending',  # 初始状态为"排队中"
         detect_type='image',
@@ -522,7 +528,7 @@ def submit_detection2(request):
     log_action(
         user=request.user,
         operation_type='create_detection_task',
-        target_type='detection_task',
+        target_type='DetectionTask',
         target_id=detection_task.id,
         ip=get_client_ip(request),
         detail={
@@ -1083,9 +1089,15 @@ def list_fake_task_results(request, task_id):
 
     for dr in task.detection_results.select_related("image_upload"):
         if dr.status == "completed" and dr.is_fake is True:
-            item = {"result_id": dr.id, "image_id": dr.image_upload.id, "timestamp": dr.detection_time}
+            item = {
+                "result_id": dr.id,
+                "image_id": dr.image_upload.id,
+                "file_name": dr.image_upload.file_name or (os.path.basename(dr.image_upload.image.name) if dr.image_upload.image else f"image_{dr.image_upload.id}"),
+                "page_number": dr.image_upload.page_number,
+                "timestamp": dr.detection_time
+            }
             if include_img:
-                item["image_url"] = request.build_absolute_uri(f"/api/preview/image/{dr.image_upload.id}/")
+                item["image_url"] = f"/api/preview/image/{dr.image_upload.id}/"
             result_list.append(item)
 
     return Response({
@@ -1110,9 +1122,15 @@ def list_normal_task_results(request, task_id):
 
     for dr in task.detection_results.select_related("image_upload"):
         if dr.status == "completed" and dr.is_fake is False:
-            item = {"result_id": dr.id, "image_id": dr.image_upload.id, "timestamp": dr.detection_time}
+            item = {
+                "result_id": dr.id,
+                "image_id": dr.image_upload.id,
+                "file_name": dr.image_upload.file_name or (os.path.basename(dr.image_upload.image.name) if dr.image_upload.image else f"image_{dr.image_upload.id}"),
+                "page_number": dr.image_upload.page_number,
+                "timestamp": dr.detection_time
+            }
             if include_img:
-                item["image_url"] = request.build_absolute_uri(f"/api/preview/image/{dr.image_upload.id}/")
+                item["image_url"] = f"/api/preview/image/{dr.image_upload.id}/"
             result_list.append(item)
 
     return Response({
@@ -1193,7 +1211,7 @@ def detection_result_detail(request, result_id):
         "time_modified":     dr.exif_time_modified,
     })
     add("timestamps",   timezone.localtime(dr.detection_time))
-    add("image",        request.build_absolute_uri(f"/api/preview/image/{dr.image_upload.id}/"))
+    add("image",        f"/api/preview/image/{dr.image_upload.id}/")
 
     # -------- 子方法 -----------------------------------------------------
     if "sub_methods" in requested:
@@ -1247,7 +1265,7 @@ def detection_result_by_image(request, image_id):
         "time_modified": dr.exif_time_modified,
     })
     add("timestamps", dr.detection_time)
-    add("image", request.build_absolute_uri(f"/api/preview/image/{dr.image_upload.id}/"))
+    add("image", f"/api/preview/image/{dr.image_upload.id}/")
 
     # -------- 子方法 -----------------------------------------------------
     if "sub_methods" in requested:
@@ -1316,7 +1334,7 @@ def _serialize_structured_materials(task, request):
             'resource_role': item.resource_role,
             'parse_status': item.parse_status,
             'parse_error': item.parse_error,
-            'preview_url': request.build_absolute_uri(f'/api/preview/file/{item.id}/'),
+            'preview_url': f'/api/preview/file/{item.id}/',
             'upload_time': timezone.localtime(item.upload_time) if item.upload_time else None,
         }
         for item in file_queryset
@@ -1326,8 +1344,8 @@ def _serialize_structured_materials(task, request):
         {
             'id': item.id,
             'file_management_id': item.file_management_id,
-            'image_url': request.build_absolute_uri(f'/api/preview/image/{item.id}/'),
-            'preview_url': request.build_absolute_uri(f'/api/preview/image/{item.id}/'),
+            'image_url': f'/api/preview/image/{item.id}/',
+            'preview_url': f'/api/preview/image/{item.id}/',
             'image_role': item.image_role,
             'source_kind': item.source_kind,
             'page_number': item.page_number,
@@ -1498,10 +1516,12 @@ def structured_task_result(request, task_id):
             entry = {
                 'result_id': dr.id,
                 'image_id': dr.image_upload.id,
+                'file_name': dr.image_upload.file_name or (os.path.basename(dr.image_upload.image.name) if dr.image_upload.image else f"image_{dr.image_upload.id}"),
+                'page_number': dr.image_upload.page_number,
                 'timestamp': dr.detection_time,
             }
             if request:
-                entry['image_url'] = request.build_absolute_uri(f'/api/preview/image/{dr.image_upload.id}/')
+                entry['image_url'] = f'/api/preview/image/{dr.image_upload.id}/'
             if dr.is_fake is True:
                 fake_images.append(entry)
             else:

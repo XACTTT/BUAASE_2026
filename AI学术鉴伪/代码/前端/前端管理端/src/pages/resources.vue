@@ -205,6 +205,7 @@
                 color="primary"
                 clearable
                 hide-details
+                @update:model-value="loadResources"
               >
                 <template v-slot:selection="{ item }">
                   <div class="d-flex align-center">
@@ -887,7 +888,7 @@ const filteredResources = computed(() => {
   if (filters.value.detectionResult) {
     const dr = filters.value.detectionResult
     if (dr === 'undetected') {
-      filtered = filtered.filter(r => r.detection_result === null && !r.task_id)
+      filtered = filtered.filter(r => r.detection_result === null && !r.task_id && r.detection_status !== 'detecting' && r.detection_status !== 'failed')
     } else if (dr === 'detecting') {
       filtered = filtered.filter(r => r.detection_status === 'detecting')
     } else if (dr === 'failed') {
@@ -911,6 +912,7 @@ const filteredResources = computed(() => {
 // 选择资源类型
 const selectType = (type: string | null) => {
   selectedType.value = type
+  loadResources()
 }
 
 // 获取学科颜色
@@ -1050,7 +1052,17 @@ const formatTime = (time: string | null) => {
 const loadResources = async () => {
   loading.value = true
   try {
-    const response = await resourceApi.getResources({ page: 1, page_size: 200 })
+    const params: any = {
+      page: 1,
+      page_size: 200,
+      query: searchQuery.value || undefined,
+      type: selectedType.value || undefined,
+      classification: filters.value.subject && filters.value.subject !== 'all' ? filters.value.subject : undefined,
+      detection_result: filters.value.detectionResult || undefined,
+      start_time: filters.value.startTime || undefined,
+      end_time: filters.value.endTime || undefined
+    }
+    const response = await resourceApi.getResources(params)
     resources.value = response.data.resources || []
   } catch (error) {
     console.error('加载资源失败:', error)
@@ -1107,12 +1119,12 @@ const loadResources = async () => {
 
 // 搜索处理
 const handleSearch = () => {
-  console.log('搜索执行')
+  loadResources()
 }
 
 // 筛选条件改变
 const handleFilterChange = () => {
-  console.log('筛选条件改变')
+  loadResources()
 }
 
 // 清除所有筛选条件
@@ -1125,6 +1137,7 @@ const clearAllFilters = () => {
     endTime: null
   }
   selectedType.value = null
+  loadResources()
 }
 
 // 关联资源操作
@@ -1250,7 +1263,7 @@ const getDetectionResultText = (item: Resource) => {
 }
 
 const getDetectionResultCount = (result: string) => {
-  if (result === 'undetected') return filteredResources.value.filter(r => r.detection_result === null && !r.task_id).length
+  if (result === 'undetected') return filteredResources.value.filter(r => r.detection_result === null && !r.task_id && r.detection_status !== 'detecting' && r.detection_status !== 'failed').length
   if (result === 'detecting') return filteredResources.value.filter(r => r.detection_status === 'detecting').length
   if (result === 'failed') return filteredResources.value.filter(r => r.detection_result === 'failed' || r.detection_status === 'failed').length
   return filteredResources.value.filter(r => r.detection_result === result).length
@@ -1286,8 +1299,10 @@ const previewResource = async (resource: Resource) => {
   previewFileName.value = resource.file_name || resource.title || ''
 
   try {
-    const fileType = resource.type === 'image' ? 'image' : 'file'
-    const response = await resourceApi.previewResource(resource.id, fileType)
+    // 对于主列表中的 FileManagement 资源，统一使用 'file' 类型进行预览
+    // 因为后端 /api/preview/file/{id}/ 对应的是 FileManagement ID，
+    // 而 /api/preview/image/{id}/ 对应的是具体的 ImageUpload ID。
+    const response = await resourceApi.previewResource(resource.id, 'file')
 
     const blob = response.data as any
     const contentType = blob.type || ''

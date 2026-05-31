@@ -304,7 +304,7 @@ def get_extracted_images(request, file_id):
                 continue
 
             # 统一回传经 /api 鉴权的预览地址，避免前端环境下 /media 路由404。
-            image_url = request.build_absolute_uri(f"/api/preview/image/{image.id}/")
+            image_url = f"/api/preview/image/{image.id}/"
 
             image_data = {
                 "image_id": image.id,
@@ -349,7 +349,8 @@ def _can_preview_resource(auth_user, owner):
     """检查 auth_user 是否有权限预览 owner 拥有的资源。"""
     if auth_user == owner:
         return True
-    if getattr(auth_user, 'is_superuser', False):
+    # 允许超级管理员或全局软件管理员 (admin@mail.com) 访问所有资源
+    if getattr(auth_user, 'is_superuser', False) or getattr(auth_user, 'email', '') == 'admin@mail.com':
         return True
     if getattr(auth_user, 'is_staff', False) and owner and owner.organization_id == auth_user.organization_id:
         return True
@@ -383,7 +384,9 @@ def preview_resource(request, resource_type, resource_id):
                 pass
             if image:
                 owner = getattr(image.file_management, 'user', None)
-                if owner and owner.organization_id != auth_user.organization_id and not getattr(auth_user, 'is_superuser', False):
+                # 检查权限：非超级管理员且非全局管理员只能访问本组织资源
+                is_global_admin = getattr(auth_user, 'email', '') == 'admin@mail.com'
+                if owner and owner.organization_id != auth_user.organization_id and not getattr(auth_user, 'is_superuser', False) and not is_global_admin:
                     image = None
 
         # Reviewer access: allow reviewers to view images assigned to their reviews
@@ -433,7 +436,8 @@ def preview_resource(request, resource_type, resource_id):
 
             is_admin = getattr(auth_user, 'is_staff', False)
             if is_admin:
-                if candidate.organization_id != auth_user.organization_id and not getattr(auth_user, 'is_superuser', False):
+                is_global_admin = getattr(auth_user, 'email', '') == 'admin@mail.com'
+                if candidate.organization_id != auth_user.organization_id and not getattr(auth_user, 'is_superuser', False) and not is_global_admin:
                     return Response({"message": "File not found"}, status=404)
                 file_management = candidate
             else:
@@ -588,7 +592,7 @@ def get_extracted_contents(request, file_id):
     can_inline = False
     if file_ext in {'pdf', 'doc', 'docx'}:
         preview_mode = "file"
-        preview_url = request.build_absolute_uri(f"/api/preview/file/{file_id}/")
+        preview_url = f"/api/preview/file/{file_id}/"
         can_inline = file_ext == 'pdf'
 
     response_payload = {
