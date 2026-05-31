@@ -644,40 +644,21 @@ from django.conf import settings
 from django.http import FileResponse
 @api_view(['GET'])
 def generate_manual_review_report_view(request, review_id):
-    # review_id here comes from URL but is actually a ReviewRequest.id
-    # Look up the ManualReview for this ReviewRequest
+    """review_id is actually a ReviewRequest.id."""
     try:
-        review = ManualReview.objects.filter(review_request_id=review_id).first()
-    except Exception:
-        review = None
-    if not review:
-        # Fallback: try as ManualReview.id directly
-        try:
-            review = ManualReview.objects.get(id=review_id)
-        except ManualReview.DoesNotExist:
-            return Response({"detail": "Manual review not found."}, status=404)
-    report_path = generate_manual_review_report(review)
-    # return Response({"report_url": review.report_file.url})
+        review_request = ReviewRequest.objects.get(id=review_id)
+    except ReviewRequest.DoesNotExist:
+        return Response({"detail": "Review request not found."}, status=404)
 
-    # task = review.review_request.detection_result.image_upload.detection_task
-    #
-    # # 第一个报告
-    # abs_path = os.path.join(settings.MEDIA_ROOT, task.report_file.name)
-    # if not os.path.exists(abs_path):
-    #     return Response({"detail": "Report file missing."}, status=410)
-    #
-    # return FileResponse(open(abs_path, "rb"),
-    #                     as_attachment=True,
-    #                     filename=f"task_{task.id}_report.pdf")
+    report_path = generate_manual_review_report(review_request)
 
-    # 第二个报告
-    abs_path = os.path.join(settings.MEDIA_ROOT, review.report_file.name)
+    abs_path = os.path.join(settings.MEDIA_ROOT, report_path)
     if not os.path.exists(abs_path):
         return Response({"detail": "Report file missing."}, status=410)
 
     return FileResponse(open(abs_path, "rb"),
                         as_attachment=True,
-                        filename=f"manual_report.pdf")
+                        filename=f"manual_review_report_{review_id}.pdf")
 # from io import BytesIO
 # import zipfile
 # @api_view(['GET'])

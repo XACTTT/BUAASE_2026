@@ -5,7 +5,7 @@
       <v-btn icon="mdi-arrow-left" variant="text" @click="router.back()" class="mr-2 return-btn">
         <v-icon>mdi-arrow-left</v-icon>
       </v-btn>
-      <span class="text-h6 font-weight-medium">返回检测历史</span>
+      <span class="text-h6 font-weight-medium">返回审核结果列表</span>
     </div>
 
     <!-- Loading state -->
@@ -1321,10 +1321,10 @@ const buildTextResultsFromStructuredResult = (structured: any, fallbackTexts: an
       text_type: isPaper ? 'paper' : isReview ? 'review' : (detectType || 'structured'),
       status: structured?.status || 'completed',
       is_fake: anyFake,
-      confidence_score: Number(maxConfidence || avgConfidence || overall?.confidence_score ?? 0),
+      confidence_score: Number(maxConfidence || avgConfidence || (overall?.confidence_score ?? 0)),
       ai_generated_paragraphs: aiParagraphs,
       factual_fake_reason: isPaper ? summary : undefined,
-      template_tendency_score: isReview ? Number(maxConfidence || avgConfidence || overall?.confidence_score ?? 0) : undefined,
+      template_tendency_score: isReview ? Number(maxConfidence || avgConfidence || (overall?.confidence_score ?? 0)) : undefined,
       template_analysis_reason: isReview ? summary : undefined,
       raw_text: fallbackText?.raw_text || '',
     }

@@ -1368,156 +1368,547 @@ def generate_structured_detection_report(task: DetectionTask) -> str:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Manual Review Report (kept intact from original)
+# Manual Review Report
 # ══════════════════════════════════════════════════════════════════════════════
 
-from ..models import ManualReview, ImageReview
+from ..models import (
+    ManualReview, ImageReview, TextReview,
+    ReviewRequest, TextDetectionResult, StructuredDetectionResult,
+)
+
+DIMENSION_NAMES = {
+    1: '高斯模糊', 2: '亮度/对比度调节', 3: '智能修复',
+    4: '暴力覆盖', 5: '同图复制', 6: '重叠切割', 7: '跨图拼接',
+}
+SCORE_LABELS = {1: '轻微', 2: '一般', 3: '中等', 4: '明显', 5: '严重'}
+METHOD_LABELS = {
+    'splicing': '拼接检测', 'blurring': '模糊检测',
+    'bruteforce': '暴力篡改检测', 'contrast': '对比度检测',
+    'inpainting': '修复检测', 'method6': '同图复制检测', 'method7': '跨图拼接检测',
+}
+TASK_TYPE_LABELS = {
+    'image': '图像检测', 'paper_text': '论文文本检测',
+    'review_text': '审稿文本检测', 'multi_material': '综合材料检测',
+    'paper': '论文文本检测', 'review': '审稿文本检测', 'multi': '综合材料检测',
+}
 
 
-def generate_manual_review_report(review: ManualReview) -> str:
-    """
-    生成人工审核 PDF 报告，返回相对路径，并写入 review.report_file
-    """
-    # 生成路径
-    rel_path = f"reports/manual_review_{review.id}_report.pdf"
+def _resolve_detection_task_rr(rr):
+    """Resolve the DetectionTask from a ReviewRequest (same logic as views_review)."""
+    dt = getattr(rr, 'detection_task', None)
+    if dt:
+        return dt
+    if rr.detection_result and hasattr(rr.detection_result, 'detection_task'):
+        return rr.detection_result.detection_task
+    if rr.text_detection_result and hasattr(rr.text_detection_result, 'detection_task'):
+        return rr.text_detection_result.detection_task
+    return None
+
+
+def _resolve_task_type_rr(rr):
+    """Resolve task_type string from a ReviewRequest."""
+    dt = _resolve_detection_task_rr(rr)
+    if dt:
+        return dt.task_type or dt.detect_type or 'unknown'
+    return 'unknown'
+
+
+def _normalize_task_type(raw):
+    """Normalize detect_type values to standard task_type names."""
+    mapping = {'multi': 'multi_material', 'paper': 'paper_text', 'review': 'review_text'}
+    return mapping.get(raw, raw)
+
+
+def _manual_report_path(review_request):
+    rel_path = f"reports/manual_review_rr_{review_request.id}_report.pdf"
     abs_path = os.path.join(settings.MEDIA_ROOT, rel_path)
     os.makedirs(os.path.dirname(abs_path), exist_ok=True)
+    return rel_path, abs_path
 
-    c = canvas.Canvas(abs_path, pagesize=A4)
-    W, H = A4
-    MARGIN = 40
 
-    # ─────────────────────── 封面页 ──────────────────────────
-    c.bookmarkPage("cover")
-    c.addOutlineEntry("人工审核概览", "cover", level=0)
+# ─── Cover page for manual review report ─────────────────────────────────────
 
-    y = H - MARGIN - 20
-    c.setFont(FONT_BOLD, 30)
-    c.drawCentredString(W / 2, y, '"听泉鉴图"人工审核报告')
-    y -= 60
+def _draw_manual_cover_page(c, W, H, review_request, task_type, manual_reviews, detection_task):
+    gen_time = timezone.localtime(timezone.now()).strftime("%Y-%m-%d %H:%M:%S")
 
-    c.setFont(FONT_REGULAR, 18)
-    c.drawString(MARGIN, y, f"审核编号：{review.id}")
-    y -= 30
-    # 获取关联的任务名称（通过 DetectionTask）
-    task_name = "无"
-    if review.review_request and review.review_request.detection_result:
-        detection_task = review.review_request.detection_result.detection_task
-        if detection_task and detection_task.task_name:
-            task_name = detection_task.task_name
+    cover_bg_h = 220
+    c.setFillColor(COLOR_HEADER_BG)
+    c.rect(0, H - cover_bg_h, W, cover_bg_h, fill=1, stroke=0)
+    c.setStrokeColor(COLOR_ACCENT)
+    c.setLineWidth(3)
+    c.line(0, H - cover_bg_h, W, H - cover_bg_h)
 
-    c.drawString(MARGIN, y, f"关联任务名称：{task_name}")
+    c.setFillColor(COLOR_WHITE)
+    c.setFont(FONT_BOLD, 38)
+    c.drawCentredString(W / 2, H - 90, "听泉鉴图")
+    c.setFont(FONT_REGULAR, 14)
+    c.drawCentredString(W / 2, H - 120, "AI-Powered Academic Integrity Analysis Platform")
 
-    y -= 30
-    c.drawString(MARGIN, y, f"提交用户：{review.reviewer.username}")
-    y -= 30
+    title_map = {
+        'image': '图像造假人工审核报告',
+        'paper_text': '论文文本人工审核报告',
+        'review_text': '审稿文本人工审核报告',
+        'multi_material': '综合材料人工审核报告',
+    }
+    title = title_map.get(task_type, '人工审核报告')
+    c.setFont(FONT_BOLD, 18)
+    c.drawCentredString(W / 2, H - 170, title)
 
-    start_time = timezone.localtime(review.review_time).strftime("%Y-%m-%d %H:%M")
-    end_time = review.review_request and review.review_request.review_end_time
-    finish_time = end_time and timezone.localtime(end_time).strftime("%Y-%m-%d %H:%M") or '尚未完成'
+    c.setFillColor(COLOR_BODY_TEXT)
+    y = H - cover_bg_h - 50
+    reviewer_names = ', '.join(
+        mr.reviewer.username for mr in manual_reviews if mr.reviewer
+    ) or '未指定'
+    task_name = detection_task.task_name if detection_task and detection_task.task_name else "无"
+    type_label = TASK_TYPE_LABELS.get(task_type, task_type)
+    info_items = [
+        ("审核请求编号", str(review_request.id)),
+        ("任务类型", type_label),
+        ("提交用户", review_request.user.username if review_request.user else ""),
+        ("审核员", reviewer_names),
+        ("申请时间", timezone.localtime(review_request.request_time).strftime("%Y-%m-%d %H:%M") if review_request.request_time else "-"),
+        ("关联检测任务", task_name),
+    ]
+    for label, value in info_items:
+        c.setFont(FONT_BOLD, 11)
+        c.drawString(MARGIN, y, label)
+        c.setFont(FONT_REGULAR, 11)
+        c.drawString(MARGIN + 100, y, f"：{value}")
+        y -= 22
 
-    c.drawString(MARGIN, y, f"开始时间：{start_time}")
-    y -= 30
-    c.drawString(MARGIN, y, f"结束时间：{finish_time}")
-    y -= 30
+    c.setFillColor(COLOR_FOOTER_TEXT)
+    c.setFont(FONT_REGULAR, 8)
+    c.drawCentredString(W / 2, 50, f"报告生成时间：{gen_time}")
+    c.setFillColor(COLOR_BODY_TEXT)
+    return gen_time
 
-    # 审核者列表
-    # 因为 ManualReview 只有一个 reviewer 字段
-    if review.reviewer:
-        reviewer_names = review.reviewer.username
-    else:
-        reviewer_names = "未指定"
 
-    c.drawString(MARGIN, y, f"审核人员：{reviewer_names}")
-    y -= 50
+# ─── Image review page ───────────────────────────────────────────────────────
 
-    # 审核图片列表
-    image_ids = ", ".join(str(img.id) for img in review.imgs.all())
-    c.setFont(FONT_BOLD, 14)
-    c.drawString(MARGIN, y, "审核图像列表：")
-    y -= 20
-    c.setFont(FONT_REGULAR, 12)
-    for img in review.imgs.all():
-        y = _draw_multiline(c, MARGIN + 10, y, f"图片 {img.id} —— 路径：{img.image.name}", max_chars=90)
-        y -= 10
-        if y < MARGIN + 50:
-            c.showPage()
-            y = H - MARGIN
-    y -= 20
+def _draw_image_review_pages(c, y, W, H, page_num, header_title, gen_time,
+                              img_upload, image_reviews_list, ai_dr):
+    """Draw all reviewer results for one image. Returns (y, page_num)."""
+    c.showPage()
+    page_num += 1
+    _draw_header(c, (W, H), header_title)
+    _draw_footer(c, (W, H), page_num, gen_time)
+    y = H - HEADER_BAR_HEIGHT - 16
 
-    # ─────────────────────── 每张图片审核详情 ──────────────────────────
-    for img_review in review.img_reviews.all():
-        image_upload = img_review.img
-        page_label = f"图片 {image_upload.id} 的人工审核"
-        c.bookmarkPage(f"manual_img_{image_upload.id}")
-        c.addOutlineEntry(page_label, f"manual_img_{image_upload.id}", level=1)
+    y = _draw_section_title(c, y, W, f"图片审核 (ID: {img_upload.id})")
 
-        c.setFont(FONT_BOLD, 14)
-        c.drawString(MARGIN, y, page_label)
-        y -= 20
-
-        # 图像预览
-        image_path = image_upload.image.path
-        if os.path.exists(image_path):
-            c.drawImage(ImageReader(image_path), MARGIN, y - 120, width=120, height=120, preserveAspectRatio=True)
-
-        # 审核结果
-        c.setFont(FONT_REGULAR, 12)
-        y -= 140
-        result_text = "判定为假图" if img_review.result else "判定为真图"
-        c.drawString(MARGIN, y, f"最终判定：{result_text}")
-        y -= 20
-        c.drawString(MARGIN, y, f"审核时间：{timezone.localtime(img_review.review_time):%Y-%m-%d %H:%M}")
-        y -= 20
-
-        # 各个评分项与理由
-        c.setFont(FONT_BOLD, 12)
-        c.drawString(MARGIN, y, "各维度评分与理由：")
-        y -= 20
-        c.setFont(FONT_REGULAR, 12)
-
-        methods = {
-            1: ("Method-1", img_review.score1, img_review.reason1),
-            2: ("Method-2", img_review.score2, img_review.reason2),
-            3: ("Method-3", img_review.score3, img_review.reason3),
-            4: ("Method-4", img_review.score4, img_review.reason4),
-            5: ("Method-5", img_review.score5, img_review.reason5),
-            6: ("Method-6", img_review.score6, img_review.reason6),
-            7: ("Method-7", img_review.score7, img_review.reason7),
-        }
-
-        for method_id, (method_name, score, reason) in methods.items():
-            reason_text = reason or '无'
-            line_text = f"{method_name}：得分 {score}, 理由：“{reason_text}”"
-            y = _draw_multiline(c, MARGIN + 10, y, line_text,
-                                max_chars=80, font=FONT_REGULAR, size=11)
-            y -= 10
-            if y < MARGIN + 50:
-                c.showPage()
-                y = H - MARGIN
-
-        # JSON 格式的点集
-        points_data = {}
+    # thumbnail
+    img_path = img_upload.image.path if img_upload.image else None
+    if img_path and os.path.exists(img_path):
         try:
-            points_data = json.loads(img_review.points1) if img_review.points1 else []
+            reader = ImageReader(img_path)
+            iw, ih = reader.getSize()
+            scale = min(120.0 / iw, 120.0 / ih, 1.0)
+            dw, dh = int(iw * scale), int(ih * scale)
+            c.drawImage(reader, MARGIN + 8, y - dh, width=dw, height=dh, preserveAspectRatio=True)
+            y -= dh + 8
         except Exception:
             pass
-        c.setFont(FONT_REGULAR, 10)
-        y -= 10
-        c.drawString(MARGIN, y, "点集数据示例（Method-1）:")
-        y -= 20
-        sample_points = str(points_data)[:80] + ('...' if len(str(points_data)) > 80 else '')
-        y = _draw_multiline(c, MARGIN + 10, y, sample_points, max_chars=80, font=FONT_REGULAR, size=10)
-        y -= 30
 
-        if y < MARGIN + 50:
-            c.showPage()
-            y = H - MARGIN
+    # aggregate verdict
+    any_fake = any(ir.result for ir in image_reviews_list if ir.result is not None)
+    y = _draw_verdict_badge(c, MARGIN + 8, y, any_fake)
+    y -= 4
 
-        c.showPage()
+    # per-reviewer
+    for ir in image_reviews_list:
+        reviewer_name = ir.manual_review.reviewer.username if ir.manual_review and ir.manual_review.reviewer else "未知"
+        review_time_str = timezone.localtime(ir.review_time).strftime("%Y-%m-%d %H:%M") if ir.review_time else "-"
 
-    # ─────────────────────── 保存文件 ──────────────────────────
+        y, page_num = _ensure_space(c, y, W, H, 200, page_num, header_title, gen_time)
+        y = _draw_section_title(c, y, W, f"审核员：{reviewer_name}（{review_time_str}）", level=2)
+
+        y = _draw_verdict_badge(c, MARGIN + 8, y, bool(ir.result))
+        y -= 4
+
+        # 7-dimension scores table
+        score_rows = []
+        for dim_id in range(1, 8):
+            score_val = getattr(ir, f'score{dim_id}', None)
+            label = SCORE_LABELS.get(score_val, '-') if score_val else '-'
+            score_rows.append((DIMENSION_NAMES[dim_id], f"{score_val or '-'} ({label})"))
+        y, page_num = _ensure_space(c, y, W, H, len(score_rows) * 20 + 30, page_num, header_title, gen_time)
+        y = _draw_info_box(c, y, W, score_rows, col_widths=120)
+        y -= 6
+
+        # reasons
+        y = _draw_section_title(c, y, W, "各维度审核理由", level=3)
+        for dim_id in range(1, 8):
+            reason = getattr(ir, f'reason{dim_id}', None)
+            if reason:
+                y, page_num = _ensure_space(c, y, W, H, 30, page_num, header_title, gen_time)
+                c.setFont(FONT_BOLD, 9)
+                c.drawString(MARGIN + 8, y, f"{DIMENSION_NAMES[dim_id]}：")
+                y -= 14
+                y = _draw_multiline(c, MARGIN + 16, y, reason, max_chars=70)
+                y -= 4
+
+    # AI detection reference
+    if ai_dr:
+        y, page_num = _ensure_space(c, y, W, H, 120, page_num, header_title, gen_time)
+        y = _draw_section_title(c, y, W, "AI 检测参考", level=2)
+        ai_rows = [
+            ("AI 判定", "造假" if ai_dr.is_fake else "真实"),
+            ("AI 置信度", f"{ai_dr.confidence_score:.4f}" if ai_dr.confidence_score else "-"),
+            ("Photoshop 痕迹", "有" if ai_dr.exif_photoshop else "无"),
+            ("时间修改痕迹", "有" if ai_dr.exif_time_modified else "无"),
+        ]
+        if ai_dr.detection_time:
+            ai_rows.append(("AI 检测时间", timezone.localtime(ai_dr.detection_time).strftime("%Y-%m-%d %H:%M")))
+        y, page_num = _ensure_space(c, y, W, H, len(ai_rows) * 20 + 30, page_num, header_title, gen_time)
+        y = _draw_info_box(c, y, W, ai_rows, col_widths=110)
+        y -= 4
+
+        # sub-method probabilities
+        sub_results = list(ai_dr.sub_results.all())
+        if sub_results:
+            sub_rows = []
+            for sub in sub_results:
+                method_label = METHOD_LABELS.get(sub.method, sub.method)
+                prob = sub.probability if sub.probability is not None else 0.0
+                sub_rows.append((method_label, f"{prob:.4f}"))
+            y, page_num = _ensure_space(c, y, W, H, len(sub_rows) * 20 + 30, page_num, header_title, gen_time)
+            y = _draw_info_box(c, y, W, sub_rows, col_widths=120)
+
+    return y, page_num
+
+
+# ─── Text review page ────────────────────────────────────────────────────────
+
+def _draw_text_review_pages(c, y, W, H, page_num, header_title, gen_time,
+                             text_resource, text_reviews_list, ai_text_det,
+                             task_type, structured_result):
+    """Draw all reviewer results for one text resource. Returns (y, page_num)."""
+    c.showPage()
+    page_num += 1
+    _draw_header(c, (W, H), header_title)
+    _draw_footer(c, (W, H), page_num, gen_time)
+    y = H - HEADER_BAR_HEIGHT - 16
+
+    is_paper = task_type in ('paper_text', 'paper')
+    is_review = task_type in ('review_text', 'review')
+    type_tag = "论文" if is_paper else "审稿" if is_review else "文本"
+
+    y = _draw_section_title(c, y, W, f"{type_tag}文本审核 (ID: {text_resource.id})")
+
+    # aggregate verdict
+    any_fake = any(tr.result for tr in text_reviews_list if tr.result is not None)
+    y = _draw_verdict_badge(c, MARGIN + 8, y, any_fake)
+    y -= 4
+
+    # text summary
+    if text_resource.raw_text:
+        y, page_num = _ensure_space(c, y, W, H, 60, page_num, header_title, gen_time)
+        y = _draw_section_title(c, y, W, "文本摘要", level=2)
+        summary_text = text_resource.raw_text[:500] + ('...' if len(text_resource.raw_text) > 500 else '')
+        y = _draw_multiline(c, MARGIN + 8, y, summary_text, max_chars=72)
+        y -= 6
+
+    # per-reviewer
+    for tr in text_reviews_list:
+        reviewer_name = tr.manual_review.reviewer.username if tr.manual_review and tr.manual_review.reviewer else "未知"
+        review_time_str = timezone.localtime(tr.review_time).strftime("%Y-%m-%d %H:%M") if tr.review_time else "-"
+
+        y, page_num = _ensure_space(c, y, W, H, 100, page_num, header_title, gen_time)
+        y = _draw_section_title(c, y, W, f"审核员：{reviewer_name}（{review_time_str}）", level=2)
+
+        y = _draw_verdict_badge(c, MARGIN + 8, y, bool(tr.result))
+        y -= 4
+
+        # template review (review_text)
+        if is_review and tr.template_review_score is not None:
+            template_rows = [
+                ("模板化倾向评分", f"{tr.template_review_score:.1%}"),
+            ]
+            if tr.template_review_comment:
+                template_rows.append(("模板化倾向评论", tr.template_review_comment[:80]))
+            y, page_num = _ensure_space(c, y, W, H, len(template_rows) * 20 + 30, page_num, header_title, gen_time)
+            y = _draw_info_box(c, y, W, template_rows, col_widths=120)
+            y -= 4
+
+        # paragraph reviews
+        if tr.paragraph_reviews:
+            try:
+                paragraphs = tr.paragraph_reviews if isinstance(tr.paragraph_reviews, list) else json.loads(tr.paragraph_reviews)
+            except Exception:
+                paragraphs = []
+            if paragraphs:
+                y, page_num = _ensure_space(c, y, W, H, 40, page_num, header_title, gen_time)
+                y = _draw_section_title(c, y, W, "段落 AI 生成复核", level=3)
+                for pr in paragraphs[:10]:
+                    idx = pr.get('paragraph_index', '?')
+                    agreed = "同意AI判定" if pr.get('is_ai_agreed') else "不同意AI判定"
+                    comment = pr.get('comment', '')
+                    y, page_num = _ensure_space(c, y, W, H, 30, page_num, header_title, gen_time)
+                    c.setFont(FONT_REGULAR, 9)
+                    c.drawString(MARGIN + 8, y, f"段落 {idx}：[{agreed}]")
+                    y -= 14
+                    if comment:
+                        y = _draw_multiline(c, MARGIN + 16, y, f"意见：{comment}", max_chars=68)
+                        y -= 4
+
+        # overall comment
+        if tr.overall_comment:
+            y, page_num = _ensure_space(c, y, W, H, 40, page_num, header_title, gen_time)
+            y = _draw_section_title(c, y, W, "综合审核意见", level=3)
+            y = _draw_multiline(c, MARGIN + 8, y, tr.overall_comment, max_chars=72)
+            y -= 6
+
+    # AI detection reference
+    y, page_num = _ensure_space(c, y, W, H, 80, page_num, header_title, gen_time)
+    y = _draw_section_title(c, y, W, "AI 检测参考", level=2)
+
+    if ai_text_det:
+        ai_rows = [
+            ("AI 判定", "造假" if ai_text_det.is_fake else "真实"),
+            ("AI 置信度", f"{ai_text_det.confidence_score:.4f}" if ai_text_det.confidence_score else "-"),
+        ]
+        if ai_text_det.detection_time:
+            ai_rows.append(("AI 检测时间", timezone.localtime(ai_text_det.detection_time).strftime("%Y-%m-%d %H:%M")))
+        y, page_num = _ensure_space(c, y, W, H, len(ai_rows) * 20 + 30, page_num, header_title, gen_time)
+        y = _draw_info_box(c, y, W, ai_rows, col_widths=110)
+        y -= 4
+
+        # paper-specific: factual fake reason
+        if is_paper and ai_text_det.factual_fake_reason:
+            y, page_num = _ensure_space(c, y, W, H, 40, page_num, header_title, gen_time)
+            c.setFont(FONT_BOLD, 9)
+            c.drawString(MARGIN + 8, y, "事实性鉴伪分析：")
+            y -= 14
+            y = _draw_multiline(c, MARGIN + 16, y, ai_text_det.factual_fake_reason[:300], max_chars=70)
+            y -= 4
+
+        # review-specific: template tendency
+        if is_review and ai_text_det.template_tendency_score is not None:
+            template_ai_rows = [
+                ("AI 模板化倾向评分", f"{ai_text_det.template_tendency_score:.1%}"),
+            ]
+            if ai_text_det.template_analysis_reason:
+                template_ai_rows.append(("AI 模板化分析", ai_text_det.template_analysis_reason[:80]))
+            y, page_num = _ensure_space(c, y, W, H, len(template_ai_rows) * 20 + 30, page_num, header_title, gen_time)
+            y = _draw_info_box(c, y, W, template_ai_rows, col_widths=130)
+            y -= 4
+
+        # AI generated paragraphs
+        if ai_text_det.ai_generated_paragraphs:
+            try:
+                paragraphs = ai_text_det.ai_generated_paragraphs if isinstance(ai_text_det.ai_generated_paragraphs, list) else json.loads(ai_text_det.ai_generated_paragraphs)
+            except Exception:
+                paragraphs = []
+            if paragraphs:
+                y, page_num = _ensure_space(c, y, W, H, 40, page_num, header_title, gen_time)
+                y = _draw_section_title(c, y, W, "AI 生成段落标记", level=3)
+                for para in paragraphs[:8]:
+                    pidx = para.get('paragraph_index', '?')
+                    prob = para.get('ai_probability', 0)
+                    reason = para.get('reason', '')
+                    text_preview = para.get('text', '')[:50]
+                    y, page_num = _ensure_space(c, y, W, H, 40, page_num, header_title, gen_time)
+                    c.setFont(FONT_BOLD, 9)
+                    c.drawString(MARGIN + 8, y, f"段落 {pidx} [AI生成] 概率：{prob:.1%}")
+                    y -= 14
+                    if text_preview:
+                        y = _draw_multiline(c, MARGIN + 16, y, text_preview, max_chars=68)
+                    if reason:
+                        y = _draw_multiline(c, MARGIN + 16, y, f"原因：{reason}", max_chars=68)
+                    y -= 4
+    elif structured_result:
+        # fallback to structured result for AI reference
+        payload = {}
+        if structured_result.result_payload:
+            try:
+                payload = structured_result.result_payload if isinstance(structured_result.result_payload, dict) else json.loads(structured_result.result_payload)
+            except Exception:
+                pass
+        overall = payload.get('overall', {})
+        sdr_rows = [
+            ("AI 综合判定", "造假" if overall.get('is_fake') else "真实"),
+            ("AI 综合置信度", f"{overall.get('confidence_score', 0):.1%}"),
+            ("风险等级", str(overall.get('risk_level', '-'))),
+        ]
+        y, page_num = _ensure_space(c, y, W, H, len(sdr_rows) * 20 + 30, page_num, header_title, gen_time)
+        y = _draw_info_box(c, y, W, sdr_rows, col_widths=110)
+
+    return y, page_num
+
+
+# ─── Main function ───────────────────────────────────────────────────────────
+
+def generate_manual_review_report(review_request):
+    """
+    Generate a comprehensive manual review PDF report for a ReviewRequest.
+    Covers all reviewers, all material types (image/paper_text/review_text/multi_material).
+    """
+    rel_path, abs_path = _manual_report_path(review_request)
+    c = canvas.Canvas(abs_path, pagesize=A4)
+    W, H = A4
+
+    # ── 1. Data preloading ──
+    manual_reviews = list(
+        ManualReview.objects.filter(review_request=review_request)
+        .select_related('reviewer')
+        .prefetch_related('image_reviews', 'text_reviews')
+    )
+
+    task_type = _normalize_task_type(_resolve_task_type_rr(review_request))
+    detection_task = _resolve_detection_task_rr(review_request)
+
+    # index image reviews: {img_id: [ImageReview, ...]}
+    img_reviews_by_img = {}
+    for mr in manual_reviews:
+        for ir in mr.image_reviews.all():
+            img_reviews_by_img.setdefault(ir.img_id, []).append(ir)
+
+    # index text reviews: {text_resource_id: [TextReview, ...]}
+    text_reviews_by_res = {}
+    for mr in manual_reviews:
+        for tr in mr.text_reviews.all():
+            text_reviews_by_res.setdefault(tr.text_resource_id, []).append(tr)
+
+    # AI detection data
+    ai_image_results = {}
+    ai_text_results = {}
+    structured_result = None
+    if detection_task:
+        for dr in detection_task.detection_results.select_related('image_upload').prefetch_related('sub_results'):
+            ai_image_results[dr.image_upload_id] = dr
+        for tdr in detection_task.text_detection_results.select_related('text_resource'):
+            ai_text_results[tdr.text_resource_id] = tdr
+        try:
+            structured_result = detection_task.structured_result
+        except Exception:
+            pass
+
+    # ── 2. Cover page ──
+    gen_time = _draw_manual_cover_page(c, W, H, review_request, task_type, manual_reviews, detection_task)
+
+    page_num = 1
+    header_title = "听泉鉴图 - 人工审核报告"
+
+    # ── 3. Summary page ──
+    c.showPage()
+    page_num += 1
+    _draw_header(c, (W, H), header_title)
+    _draw_footer(c, (W, H), page_num, gen_time)
+    y = H - HEADER_BAR_HEIGHT - 16
+
+    y = _draw_section_title(c, y, W, "审核结果汇总")
+
+    # overall verdict
+    all_reviewer_results = []
+    for mr in manual_reviews:
+        for ir in mr.image_reviews.all():
+            if ir.result is not None:
+                all_reviewer_results.append(ir.result)
+        for tr in mr.text_reviews.all():
+            if tr.result is not None:
+                all_reviewer_results.append(tr.result)
+    overall_fake = any(all_reviewer_results)
+    y = _draw_verdict_badge(c, MARGIN + 8, y, overall_fake)
+    y -= 4
+
+    images = list(review_request.imgs.all())
+    texts = list(review_request.text_resources.all())
+    # fallback texts from manual reviews
+    if not texts:
+        for mr in manual_reviews:
+            for tr in mr.text_reviews.all():
+                if tr.text_resource and tr.text_resource not in texts:
+                    texts.append(tr.text_resource)
+
+    fake_count = sum(1 for r in all_reviewer_results if r)
+    real_count = sum(1 for r in all_reviewer_results if not r)
+
+    summary_rows = [
+        ("审核员数量", str(len(manual_reviews))),
+        ("审核材料数量", f"{len(images)} 张图片, {len(texts)} 份文本"),
+        ("判定为假", str(fake_count)),
+        ("判定为真", str(real_count)),
+    ]
+    y, page_num = _ensure_space(c, y, W, H, len(summary_rows) * 20 + 30, page_num, header_title, gen_time)
+    y = _draw_info_box(c, y, W, summary_rows, col_widths=110)
+    y -= 8
+
+    # per-reviewer summary
+    y, page_num = _ensure_space(c, y, W, H, 40, page_num, header_title, gen_time)
+    y = _draw_section_title(c, y, W, "各审核员判定", level=2)
+    for mr in manual_reviews:
+        name = mr.reviewer.username if mr.reviewer else "未知"
+        status_str = "已完成" if mr.status == 'completed' else "未审核"
+        time_str = timezone.localtime(mr.review_time).strftime("%Y-%m-%d %H:%M") if mr.review_time and mr.status == 'completed' else "-"
+        mr_fake = False
+        for ir in mr.image_reviews.all():
+            if ir.result:
+                mr_fake = True
+        for tr in mr.text_reviews.all():
+            if tr.result:
+                mr_fake = True
+        verdict = "造假" if mr_fake else "真实"
+        y = _draw_metric_row(c, y, f"{name}（{status_str}）", verdict, is_fake=mr_fake if mr.status == 'completed' else None)
+        y -= 2
+    y -= 4
+
+    # AI detection summary
+    if detection_task:
+        y, page_num = _ensure_space(c, y, W, H, 60, page_num, header_title, gen_time)
+        y = _draw_section_title(c, y, W, "AI 检测参考摘要", level=2)
+        if structured_result:
+            overall = {}
+            if structured_result.result_payload:
+                try:
+                    payload = structured_result.result_payload if isinstance(structured_result.result_payload, dict) else json.loads(structured_result.result_payload)
+                    overall = payload.get('overall', {})
+                except Exception:
+                    pass
+            ai_sum_rows = [
+                ("AI 综合判定", "造假" if overall.get('is_fake') else "真实"),
+                ("AI 综合置信度", f"{overall.get('confidence_score', 0):.1%}"),
+            ]
+            y, page_num = _ensure_space(c, y, W, H, len(ai_sum_rows) * 20 + 30, page_num, header_title, gen_time)
+            y = _draw_info_box(c, y, W, ai_sum_rows, col_widths=110)
+        elif ai_image_results:
+            for img_id, dr in ai_image_results.items():
+                ai_sum_rows = [
+                    ("图片 AI 判定", "造假" if dr.is_fake else "真实"),
+                    ("AI 置信度", f"{dr.confidence_score:.4f}" if dr.confidence_score else "-"),
+                ]
+                y, page_num = _ensure_space(c, y, W, H, len(ai_sum_rows) * 20 + 30, page_num, header_title, gen_time)
+                y = _draw_info_box(c, y, W, ai_sum_rows, col_widths=110)
+                y -= 4
+
+    # ── 4. Content pages by type ──
+    is_image = task_type == 'image'
+    is_text = task_type in ('paper_text', 'review_text')
+    is_multi = task_type == 'multi_material'
+
+    if is_image or is_multi:
+        for img in images:
+            ir_list = img_reviews_by_img.get(img.id, [])
+            ai_dr = ai_image_results.get(img.id)
+            y, page_num = _draw_image_review_pages(
+                c, y, W, H, page_num, header_title, gen_time,
+                img, ir_list, ai_dr,
+            )
+
+    if is_text or is_multi:
+        for txt in texts:
+            tr_list = text_reviews_by_res.get(txt.id, [])
+            ai_td = ai_text_results.get(txt.id)
+            y, page_num = _draw_text_review_pages(
+                c, y, W, H, page_num, header_title, gen_time,
+                txt, tr_list, ai_td, task_type, structured_result,
+            )
+
+    # ── 5. Save ──
     c.save()
-    review.report_file = rel_path
-    review.save(update_fields=["report_file"])
+    # write report_file to the first completed ManualReview
+    for mr in manual_reviews:
+        if mr.status == 'completed':
+            mr.report_file = rel_path
+            mr.save(update_fields=["report_file"])
+            break
     return rel_path

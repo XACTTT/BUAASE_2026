@@ -1,4 +1,5 @@
 from django.db import connection
+from django.utils import timezone
 from core.models import Log
 
 
@@ -39,5 +40,6 @@ def audit_log(user, operation_type: str, related_model: str, related_id: int) ->
             'operation_type': operation_type,
             'target_type': related_model,
             'target_id': related_id,
+            'operation_time': timezone.now(),
         }
     )
