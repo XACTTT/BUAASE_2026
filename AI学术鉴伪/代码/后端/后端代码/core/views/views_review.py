@@ -10,6 +10,7 @@ from ..models import (
     ReviewRequest, ManualReview, DetectionResult, User, DetectionTask,
     PublisherReviewerRelationship, ImageReview, TextReview, ReviewTextResource,
     ImageUpload, Log, StructuredDetectionResult, TextDetectionResult,
+    FileManagement, ResourceContainer,
 )
 from django.utils import timezone
 from rest_framework.decorators import api_view, permission_classes
@@ -102,6 +103,85 @@ def _resolve_ai_detection_result(review_request):
             pass
 
     return result
+
+
+def _container_type_for_task(task):
+    task_type = task.task_type or task.detect_type
+    if task_type in ('review_text', 'review'):
+        return 'review'
+    if task_type in ('multi_material', 'multi'):
+        return 'multi_material'
+    return 'paper'
+
+
+def _payload_int_ids(payload, key):
+    raw_value = (payload or {}).get(key) or []
+    if isinstance(raw_value, (int, str)):
+        raw_value = [raw_value]
+
+    ids = []
+    for item in raw_value:
+        try:
+            ids.append(int(item))
+        except (TypeError, ValueError):
+            continue
+    return ids
+
+
+def _ensure_task_container_for_section_review(task, user, file_ids=None, text_ids=None):
+    if not task:
+        return None
+    if task.container_id:
+        return task.container
+
+    file_ids = list(dict.fromkeys((file_ids or []) + _payload_int_ids(task.extra_payload, 'file_ids')))
+    text_ids = list(dict.fromkeys((text_ids or []) + _payload_int_ids(task.extra_payload, 'review_text_ids')))
+
+    container = None
+    if text_ids:
+        text_resource = (
+            ReviewTextResource.objects
+            .filter(id__in=text_ids, container__owner=user)
+            .select_related('container')
+            .first()
+        )
+        if text_resource:
+            container = text_resource.container
+
+    file_queryset = FileManagement.objects.none()
+    if file_ids:
+        file_queryset = FileManagement.objects.filter(id__in=file_ids, user=user).order_by('id')
+        if container is None:
+            file_record = file_queryset.filter(container__isnull=False).select_related('container').first()
+            if file_record:
+                container = file_record.container
+
+    if container is None:
+        container = ResourceContainer.objects.create(
+            organization=user.organization,
+            owner=user,
+            container_type=_container_type_for_task(task),
+            title=task.task_name or f'Task {task.id} review sections',
+            status='uploaded',
+            progress_status='ready',
+            submitted_at=timezone.localtime(),
+            metadata={'created_for': 'selected_section_review', 'detection_task_id': task.id},
+        )
+
+    task.container = container
+    extra_payload = dict(task.extra_payload or {})
+    extra_payload['container_id'] = container.id
+    task.extra_payload = extra_payload
+    task.save(update_fields=['container', 'extra_payload'])
+
+    if file_ids:
+        file_queryset.filter(container__isnull=True).update(container=container)
+        ImageUpload.objects.filter(
+            file_management_id__in=file_ids,
+            container__isnull=True,
+        ).update(container=container)
+
+    return container
 
 
 @api_view(['GET'])
@@ -279,7 +359,11 @@ def create_review_task_with_admin_check(request):
         except (DetectionTask.DoesNotExist, ValueError, TypeError):
             task_obj = None
 
-    reviewers = request.data.get('reviewers', [])
+    reviewers = []
+    if hasattr(request.data, 'getlist'):
+        reviewers.extend(_to_int_list(request.data.getlist('reviewers')))
+    reviewers.extend(_to_int_list(request.data.get('reviewers', [])))
+    reviewers = sorted(set(reviewers))
     reason = request.data.get('reason', 'No reason provided')
 
     try:
@@ -365,7 +449,15 @@ def create_review_task_with_admin_check(request):
                 return Response({'error': 'Some text IDs do not exist'}, status=404)
 
         if allow_texts and selected_section_ids:
-            if not task_obj or not task_obj.container_id:
+            if not task_obj:
+                return Response({'error': 'Detection task is required for selected section review'}, status=400)
+            review_container = _ensure_task_container_for_section_review(
+                task_obj,
+                user,
+                file_ids=file_ids,
+                text_ids=text_ids,
+            )
+            if not review_container:
                 return Response({'error': 'Detection task is required for selected section review'}, status=400)
             structured = StructuredDetectionResult.objects.filter(detection_task=task_obj).first()
             if not structured:
@@ -406,7 +498,7 @@ def create_review_task_with_admin_check(request):
                 if not raw_text:
                     continue
                 texts.append(ReviewTextResource.objects.create(
-                    container=task_obj.container,
+                    container=review_container,
                     source_type='paste',
                     raw_text=str(raw_text),
                     normalized_text=str(item_id),
