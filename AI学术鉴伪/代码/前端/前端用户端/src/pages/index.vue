@@ -8,10 +8,10 @@
       <v-card-text>
         <p>这里是系统的主页，您可以：</p>
         <v-list>
-          <v-list-item>
+          <v-list-item v-if="userStore.role === 'publisher'">
             <v-list-item-title>
               <v-icon start>mdi-file-upload</v-icon>
-              上传文件进行查重
+              上传文件进行检测
             </v-list-item-title>
           </v-list-item>
           <v-list-item>
@@ -25,7 +25,7 @@
     </v-card>
 
     <!-- 资源列表 -->
-    <v-card>
+    <v-card v-if="userStore.role !== 'reviewer'">
       <v-card-title class="d-flex align-center">
         <h2 class="text-h6 font-weight-bold">我的资源</h2>
         <v-spacer></v-spacer>
@@ -40,7 +40,7 @@
 
       <v-card-text v-else-if="resources.length === 0" class="text-center py-8">
         <v-icon size="48" color="grey" class="mb-2">mdi-folder-open</v-icon>
-        <div class="text-body-2 text-grey">暂无资源，请先上传文件</div>
+        <div class="text-body-2 text-grey">{{ userStore.role === 'publisher' ? '暂无资源，请先上传文件' : '暂无资源' }}</div>
       </v-card-text>
 
       <v-data-table v-else :headers="headers" :items="resources" :items-per-page="10" hide-default-footer>
@@ -101,10 +101,12 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSnackbarStore } from '@/stores/snackbar'
+import { useUserStore } from '@/stores/user'
 import publisher from '@/api/publisher'
 
 const router = useRouter()
 const snackbar = useSnackbarStore()
+const userStore = useUserStore()
 
 interface ResourceContainer {
   id: number

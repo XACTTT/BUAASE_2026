@@ -13,12 +13,12 @@ export default {
 
   /** Legacy endpoint (admin) - returns imgs/texts with embedded ai_detection per text */
   getReviewTaskDetail(data: any) {
-    return http.get(`/get_review_request_detail/${data.manual_review_id}/`)
+    return http.get(`/get_review_request_detail/${data.manual_review_id}/`, { timeout: 30000 })
   },
 
   /** New endpoint - returns task_type, review_config, structured_result, image/text reviews */
   getReviewDetail(data: any) {
-    return http.get(`/get_review_detail/${data.manual_review_id}/`)
+    return http.get(`/get_review_detail/${data.manual_review_id}/`, { timeout: 30000 })
   },
 
   /** Get review config for a specific task type */

@@ -155,12 +155,12 @@ def get_reviewers_for_publisher(request, publisher_id):
         is_active=True
     )
 
-    # 序列化数据返回
+    # 序列化数据返回，过滤掉没有 review 权限的审核员
     reviewer_list = [{
         'id': user.id,
         'username': user.username,
         'avatar': _safe_avatar_url(user),
-    } for user in reviewers]
+    } for user in reviewers if user.has_permission('review')]
 
     return Response({
         'publisher_id': publisher_id,
@@ -178,7 +178,7 @@ def create_review_task_with_admin_check(request):
         return Response({'error': 'User not found'}, status=404)
 
     if not user.has_permission('publish'):
-        return Response({"错误": "该用户没有发布的权限"}, status=403)
+        return Response({"message": "该用户没有发布的权限"}, status=403)
 
     if user.role != 'publisher':
         return Response({'error': 'Only publishers can create review tasks'}, status=403)
@@ -229,9 +229,24 @@ def create_review_task_with_admin_check(request):
                     if det_task.container:
                         image_ids = list(det_task.container.images.values_list('id', flat=True))
                         text_ids = list(det_task.container.review_texts.values_list('id', flat=True))
+                    else:
+                        # 尝试通过 file_ids 找到 FileManagement 的 container 来获取资源
+                        file_ids = (det_task.extra_payload or {}).get('file_ids') or []
+                        if file_ids:
+                            from core.models import FileManagement
+                            for fm in FileManagement.objects.filter(id__in=file_ids).select_related('container'):
+                                if fm.container:
+                                    if not image_ids:
+                                        image_ids = list(fm.container.images.values_list('id', flat=True))
+                                    if not text_ids:
+                                        text_ids = list(fm.container.review_texts.values_list('id', flat=True))
+                                    break
 
-        # 验证参数
-        if not image_ids and not text_ids:
+        # 验证参数：结构化检测任务有 SDR 数据，不强制要求 image_ids/text_ids
+        has_sdr = False
+        if task_id:
+            has_sdr = StructuredDetectionResult.objects.filter(detection_task_id=task_id).exists()
+        if not image_ids and not text_ids and not has_sdr:
             return Response({'error': 'image_ids or text_ids is required'}, status=400)
         if not reviewers:
             return Response({'error': 'reviewers is required'}, status=400)
@@ -256,6 +271,9 @@ def create_review_task_with_admin_check(request):
         reviewer_users = User.objects.filter(organization=user.organization, id__in=reviewers, role='reviewer')
         if len(reviewer_users) != len(reviewers):
             return Response({'error': 'Some reviewer IDs do not exist or are not reviewers'}, status=404)
+        for rv in reviewer_users:
+            if not rv.has_permission('review'):
+                return Response({'message': f'审核员 {rv.username} 没有审核权限'}, status=403)
 
         detection_result = None
         text_detection_result = None
@@ -665,11 +683,35 @@ def get_request_detail(request, reviewRequest_id):
     # 获取文本信息
     texts = []
     for text in review_request.text_resources.all():
+        raw = text.raw_text or ''
         texts.append({
             'text_id': text.id,
-            'raw_text': text.raw_text[:200] + '...' if len(text.raw_text) > 200 else text.raw_text,
+            'raw_text': raw[:200] + '...' if len(raw) > 200 else raw,
             'source_type': text.source_type,
         })
+
+    # Fallback: ManualReview 和 container 可能持有文本
+    if not texts:
+        _seen_ids = set()
+        _mr_qs = ManualReview.objects.filter(review_request=review_request)
+        for _mr in _mr_qs:
+            for text in _mr.text_resources.all():
+                if text.id not in _seen_ids:
+                    _seen_ids.add(text.id)
+                    raw = text.raw_text or ''
+                    texts.append({
+                        'text_id': text.id,
+                        'raw_text': raw[:200] + '...' if len(raw) > 200 else raw,
+                        'source_type': text.source_type,
+                    })
+    if not texts and detection_task and hasattr(detection_task, 'container') and detection_task.container:
+        for text in detection_task.container.review_texts.all():
+            raw = text.raw_text or ''
+            texts.append({
+                'text_id': text.id,
+                'raw_text': raw[:200] + '...' if len(raw) > 200 else raw,
+                'source_type': text.source_type,
+            })
 
     # 解析AI检测结果
     ai_detection_result = _resolve_ai_detection_result(review_request)
@@ -696,6 +738,7 @@ def get_request_detail(request, reviewRequest_id):
         'task_type': task_type,
         'task_type_label': get_task_type_label(task_type),
         'task_id': detection_task.id if detection_task else None,
+        'detect_type': detection_task.detect_type if detection_task else None,
         'review_config': review_config,
     })
 
@@ -792,7 +835,7 @@ def get_reviewer_request_detail(request, reviewRequest_id):
     # 获取图片列表
     image_uploads = review_request.imgs.all()
     image_ids = [img.id for img in image_uploads]
-    image_urls = [img.image.url for img in image_uploads]
+    image_urls = [request.build_absolute_uri(f"/api/preview/image/{img.id}/") for img in image_uploads]
 
     # 获取文本列表
     text_resources = review_request.text_resources.all()
@@ -912,158 +955,257 @@ def get_review_detail(request, manual_review_id):
     # 获取关联的ReviewRequest
     review_request = manual_review.review_request
 
-    # 解析 task_type 和审核配置
-    task_type = _resolve_task_type(review_request)
-    review_config = get_review_config(task_type)
-
-    # 获取图片列表
-    image_ids = [img.id for img in manual_review.imgs.all()]
-    image_urls = [img.image.url for img in manual_review.imgs.all()]
-
-    # 获取文本列表(返回完整内容供审核使用)
+    # 初始化变量，确保异常时也可安全引用
+    image_ids = []
+    image_urls = []
     texts = []
-    # 预加载结构化检测结果用于文本AI检测数据
-    per_section_list = []
-    overall_ai = {}
-    template_tendency_score_from_sdr = None
-    template_analysis_reason_from_sdr = ''
-    detection_task_for_text = _resolve_detection_task(review_request)
-    if detection_task_for_text:
-        try:
-            sdr_for_text = StructuredDetectionResult.objects.get(detection_task=detection_task_for_text)
-            payload_for_text = sdr_for_text.result_payload or {}
-            evidence_for_text = payload_for_text.get('evidence') or {}
-            per_section_list = evidence_for_text.get('per_section') or []
-            overall_ai = payload_for_text.get('overall') or {}
-            # Extract template tendency from dimensions for review_text tasks
-            if detection_task_for_text.detect_type in ('review', 'multi'):
-                dims = payload_for_text.get('dimensions') or []
-                for d in dims:
-                    if d.get('name') == 'template_tendency':
-                        template_tendency_score_from_sdr = d.get('score')
-                        template_analysis_reason_from_sdr = d.get('summary', '')
-                        break
-        except StructuredDetectionResult.DoesNotExist:
-            pass
-
-    for text in manual_review.text_resources.all():
-        ai_detection = None
-        # 尝试从 TextDetectionResult 获取 AI 检测数据
-        text_det = TextDetectionResult.objects.filter(
-            detection_task=detection_task_for_text,
-            text_resource_id=text.id,
-        ).first() if detection_task_for_text else None
-        if text_det:
-            ai_detection = {
-                'is_fake': text_det.is_fake,
-                'confidence_score': text_det.confidence_score,
-                'ai_generated_paragraphs': text_det.ai_generated_paragraphs or [],
-                'factual_fake_reason': getattr(text_det, 'factual_fake_reason', ''),
-                'template_tendency_score': getattr(text_det, 'template_tendency_score', None),
-                'template_analysis_reason': getattr(text_det, 'template_analysis_reason', ''),
-            }
-        elif per_section_list:
-            # 结构化检测: 聚合 per_section 数据为 AI 检测结果
-            # per_section entries have: item_id, is_aigc, confidence_score, text, etc.
-            all_high_risk = []
-            for sec in per_section_list:
-                if sec.get('is_aigc'):
-                    all_high_risk.append({
-                        'paragraph_index': 0,
-                        'ai_probability': sec.get('confidence_score', 0),
-                        'text': sec.get('text', ''),
-                        'reason': sec.get('label_name', ''),
-                    })
-            ai_detection = {
-                'is_fake': overall_ai.get('is_fake'),
-                'confidence_score': overall_ai.get('confidence_score'),
-                'ai_generated_paragraphs': all_high_risk,
-                'factual_fake_reason': overall_ai.get('reason', ''),
-                'template_tendency_score': template_tendency_score_from_sdr,
-                'template_analysis_reason': template_analysis_reason_from_sdr,
-            }
-        texts.append({
-            'text_id': text.id,
-            'raw_text': text.raw_text,
-            'source_type': text.source_type,
-            'ai_detection': ai_detection,
-        })
-
-    # 解析AI检测结果
-    ai_detection_result = _resolve_ai_detection_result(review_request)
-
-    # 获取已有图片审核结果
+    ai_detection_result = {}
     image_review_results = []
-    for image_review in manual_review.img_reviews.all():
-        scores = [
-            image_review.score1, image_review.score2, image_review.score3,
-            image_review.score4, image_review.score5, image_review.score6,
-            image_review.score7
-        ]
-        reasons = [
-            image_review.reason1, image_review.reason2, image_review.reason3,
-            image_review.reason4, image_review.reason5, image_review.reason6,
-            image_review.reason7
-        ]
-        points = [
-            image_review.points1, image_review.points2, image_review.points3,
-            image_review.points4, image_review.points5, image_review.points6,
-            image_review.points7
-        ]
-        image_review_results.append({
-            'image_id': image_review.img.id,
-            'scores': scores,
-            'reasons': reasons,
-            'points': points,
-            'result': image_review.result
-        })
-
-    # 获取已有文本审核结果
     text_review_results = []
-    for text_review in manual_review.text_reviews.all():
-        text_review_results.append({
-            'text_id': text_review.text_resource.id,
-            'paragraph_reviews': text_review.paragraph_reviews,
-            'template_review_score': text_review.template_review_score,
-            'template_review_comment': text_review.template_review_comment,
-            'overall_comment': text_review.overall_comment,
-            'result': text_review.result
-        })
-
-    # 获取结构化检测结果(文本AI详细数据)
     structured_result = {}
-    detection_task = _resolve_detection_task(review_request)
-    if detection_task:
-        try:
-            sdr = StructuredDetectionResult.objects.get(detection_task=detection_task)
-            structured_result = sdr.result_payload or {}
-        except StructuredDetectionResult.DoesNotExist:
-            pass
-
-    # 获取图像子检测结果(7维度)
     sub_detection_results = {}
-    if review_request.detection_result:
-        for sub in review_request.detection_result.sub_results.all():
-            sub_detection_results[sub.image_id] = {
-                'method': sub.method_name,
-                'probability': float(sub.probability) if sub.probability else 0,
-                'mask_url': sub.mask_image.url if sub.mask_image else None,
-            }
+    task_type = ''
+    review_config = None
 
-    return Response({
-        'image_ids': image_ids,
-        'image_urls': image_urls,
-        'texts': texts,
-        'ai_detection_result': ai_detection_result,
-        'image_reviews': image_review_results,
-        'text_reviews': text_review_results,
-        'structured_result': structured_result,
-        'sub_detection_results': sub_detection_results,
-        'task_type': task_type,
-        'task_type_label': get_task_type_label(task_type),
-        'review_config': review_config,
-        'status': manual_review.status,
-    })
+    try:
+        # 解析 task_type 和审核配置
+        task_type = _resolve_task_type(review_request)
+        review_config = get_review_config(task_type)
+
+        # 获取图片列表
+        image_ids = [img.id for img in manual_review.imgs.all()]
+        image_urls = [request.build_absolute_uri(f"/api/preview/image/{img.id}/") for img in manual_review.imgs.all()]
+
+        # 获取文本列表(返回完整内容供审核使用)
+        texts = []
+        # 预加载结构化检测结果用于文本AI检测数据
+        per_section_list = []
+        overall_ai = {}
+        template_tendency_score_from_sdr = None
+        template_analysis_reason_from_sdr = ''
+        # 用户在检测提交时选中的 section，审核只展示这些
+        selected_ids = set(review_request.selected_section_ids or [])
+        detection_task_for_text = _resolve_detection_task(review_request)
+        if detection_task_for_text:
+            try:
+                sdr_for_text = StructuredDetectionResult.objects.get(detection_task=detection_task_for_text)
+                payload_for_text = sdr_for_text.result_payload or {}
+                evidence_for_text = payload_for_text.get('evidence') or {}
+                per_section_list = evidence_for_text.get('per_section') or []
+                overall_ai = payload_for_text.get('overall') or {}
+                # Extract template tendency from dimensions for review_text tasks
+                if detection_task_for_text.detect_type in ('review', 'multi'):
+                    dims = payload_for_text.get('dimensions') or []
+                    for d in dims:
+                        if d.get('name') == 'template_tendency':
+                            template_tendency_score_from_sdr = d.get('score')
+                            template_analysis_reason_from_sdr = d.get('summary', '')
+                            break
+            except StructuredDetectionResult.DoesNotExist:
+                pass
+
+        # 优先从 ManualReview M2M 获取文本，为空时回退到 DetectionTask 容器
+        text_qs = manual_review.text_resources.all()
+        if not text_qs.exists() and detection_task_for_text and detection_task_for_text.container:
+            text_qs = detection_task_for_text.container.review_texts.all()
+
+        if text_qs.exists():
+            for text in text_qs:
+                ai_detection = None
+                text_det = TextDetectionResult.objects.filter(
+                    detection_task=detection_task_for_text,
+                    text_resource_id=text.id,
+                ).first() if detection_task_for_text else None
+                if text_det:
+                    ai_detection = {
+                        'is_fake': text_det.is_fake,
+                        'confidence_score': text_det.confidence_score,
+                        'ai_generated_paragraphs': text_det.ai_generated_paragraphs or [],
+                        'factual_fake_reason': getattr(text_det, 'factual_fake_reason', ''),
+                        'template_tendency_score': getattr(text_det, 'template_tendency_score', None),
+                        'template_analysis_reason': getattr(text_det, 'template_analysis_reason', ''),
+                    }
+                elif per_section_list:
+                    text_high_risk = []
+                    for sec in per_section_list:
+                        sec_text = sec.get('text', '')
+                        if selected_ids and sec.get('item_id') not in selected_ids:
+                            continue
+                        if sec.get('is_aigc') and sec_text and sec_text in text.raw_text:
+                            text_high_risk.append({
+                                'paragraph_index': 0,
+                                'ai_probability': sec.get('confidence_score', 0),
+                                'text': sec_text,
+                                'reason': sec.get('label_name', ''),
+                            })
+                    ai_detection = {
+                        'is_fake': overall_ai.get('is_fake'),
+                        'confidence_score': overall_ai.get('confidence_score'),
+                        'ai_generated_paragraphs': text_high_risk,
+                        'factual_fake_reason': overall_ai.get('reason', ''),
+                        'template_tendency_score': template_tendency_score_from_sdr,
+                        'template_analysis_reason': template_analysis_reason_from_sdr,
+                    }
+                texts.append({
+                    'text_id': text.id,
+                    'raw_text': text.raw_text,
+                    'source_type': text.source_type,
+                    'ai_detection': ai_detection,
+                })
+        elif per_section_list:
+            # 文本存储在 SDR per_section 中（paper_text/review_text 任务）
+            from collections import OrderedDict
+            file_sections = OrderedDict()
+            for sec in per_section_list:
+                sf = sec.get('source_file', 'unknown')
+                if sf not in file_sections:
+                    file_sections[sf] = []
+                file_sections[sf].append(sec)
+
+            container = detection_task_for_text.container if detection_task_for_text else None
+
+            for idx, (source_file, sections) in enumerate(file_sections.items()):
+                raw_text = '\n\n'.join(sec.get('text', '') for sec in sections if sec.get('text'))
+                high_risk = []
+                for sec in sections:
+                    if selected_ids and sec.get('item_id') not in selected_ids:
+                        continue
+                    if sec.get('is_aigc'):
+                        high_risk.append({
+                            'paragraph_index': 0,
+                            'ai_probability': sec.get('confidence_score', 0),
+                            'text': sec.get('text', ''),
+                            'reason': sec.get('label_name', ''),
+                        })
+
+                # Find or create ReviewTextResource so post_review gets a real positive ID
+                text_resource = None
+                if container and raw_text.strip():
+                    lookup_prefix = raw_text[:500] if len(raw_text) >= 500 else raw_text
+                    text_resource = ReviewTextResource.objects.filter(
+                        container=container,
+                        raw_text__startswith=lookup_prefix
+                    ).first()
+                    if not text_resource:
+                        text_resource = ReviewTextResource.objects.create(
+                            container=container,
+                            source_type='file_parsed',
+                            raw_text=raw_text
+                        )
+                    manual_review.text_resources.add(text_resource)
+
+                texts.append({
+                    'text_id': text_resource.id if text_resource else -(idx + 1),
+                    'raw_text': raw_text,
+                    'source_type': 'file_parsed',
+                    'source_file': source_file,
+                    'ai_detection': {
+                        'is_fake': overall_ai.get('is_fake'),
+                        'confidence_score': overall_ai.get('confidence_score'),
+                        'ai_generated_paragraphs': high_risk,
+                        'factual_fake_reason': overall_ai.get('reason', ''),
+                        'template_tendency_score': template_tendency_score_from_sdr,
+                        'template_analysis_reason': template_analysis_reason_from_sdr,
+                    } if high_risk or overall_ai else None,
+                })
+
+        # 解析AI检测结果
+        ai_detection_result = _resolve_ai_detection_result(review_request)
+
+        # 获取已有图片审核结果
+        image_review_results = []
+        for image_review in manual_review.img_reviews.all():
+            scores = [
+                image_review.score1, image_review.score2, image_review.score3,
+                image_review.score4, image_review.score5, image_review.score6,
+                image_review.score7
+            ]
+            reasons = [
+                image_review.reason1, image_review.reason2, image_review.reason3,
+                image_review.reason4, image_review.reason5, image_review.reason6,
+                image_review.reason7
+            ]
+            points = [
+                image_review.points1, image_review.points2, image_review.points3,
+                image_review.points4, image_review.points5, image_review.points6,
+                image_review.points7
+            ]
+            image_review_results.append({
+                'image_id': image_review.img.id,
+                'scores': scores,
+                'reasons': reasons,
+                'points': points,
+                'result': image_review.result
+            })
+
+        # 获取已有文本审核结果
+        text_review_results = []
+        for text_review in manual_review.text_reviews.all():
+            text_review_results.append({
+                'text_id': text_review.text_resource.id,
+                'paragraph_reviews': text_review.paragraph_reviews,
+                'template_review_score': text_review.template_review_score,
+                'template_review_comment': text_review.template_review_comment,
+                'overall_comment': text_review.overall_comment,
+                'result': text_review.result
+            })
+
+        # 获取结构化检测结果(文本AI详细数据)
+        structured_result = {}
+        detection_task = _resolve_detection_task(review_request)
+        if detection_task:
+            try:
+                sdr = StructuredDetectionResult.objects.get(detection_task=detection_task)
+                structured_result = sdr.result_payload or {}
+            except StructuredDetectionResult.DoesNotExist:
+                pass
+
+        # 获取图像子检测结果(7维度)
+        sub_detection_results = {}
+        if review_request.detection_result:
+            for sub in review_request.detection_result.sub_results.all():
+                sub_detection_results[sub.method] = {
+                    'method': sub.method,
+                    'probability': float(sub.probability) if sub.probability else 0,
+                    'mask_url': sub.mask_image.url if sub.mask_image else None,
+                }
+
+        result = {
+            'image_ids': image_ids,
+            'image_urls': image_urls,
+            'texts': texts,
+            'ai_detection_result': ai_detection_result,
+            'image_reviews': image_review_results,
+            'text_reviews': text_review_results,
+            'structured_result': structured_result,
+            'sub_detection_results': sub_detection_results,
+            'task_type': task_type,
+            'task_type_label': get_task_type_label(task_type),
+            'review_config': review_config,
+            'status': manual_review.status,
+        }
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"[get_review_detail] MR={manual_review_id} task_type={task_type} texts_count={len(texts)} per_section={len(per_section_list)}")
+        return Response(result)
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Error in get_review_detail for manual_review {manual_review_id}: {e}", exc_info=True)
+        return Response({
+            'status': manual_review.status,
+            'task_type': task_type,
+            'task_type_label': get_task_type_label(task_type) if task_type else '未知类型',
+            'review_config': review_config,
+            'image_ids': image_ids,
+            'image_urls': image_urls,
+            'texts': texts,
+            'ai_detection_result': ai_detection_result,
+            'image_reviews': image_review_results,
+            'text_reviews': text_review_results,
+            'structured_result': structured_result,
+            'sub_detection_results': sub_detection_results,
+        })
 
 
 @api_view(['GET'])
@@ -1138,7 +1280,7 @@ def post_review(request, manual_review_id):
     user_id = request.user.id
     user = User.objects.get(id=user_id)
     if not user.has_permission('review'):
-        return Response({"错误": "该用户没有审核的权限"}, status=403)
+        return Response({"message": "该用户没有审核的权限"}, status=403)
 
     if user.role != 'reviewer':
         return Response({'error': 'Only reviewers can submit reviews'}, status=403)
@@ -1218,7 +1360,20 @@ def post_review(request, manual_review_id):
                 return Response({'error': 'result is required in each text_review item'}, status=400)
 
             try:
-                text_resource = ReviewTextResource.objects.get(id=text_id)
+                if text_id < 0:
+                    # Synthetic text_id should have been materialized by get_review_detail
+                    # Fallback: resolve by position in manual_review.text_resources
+                    text_resources = list(manual_review.text_resources.all().order_by('id'))
+                    pos = abs(text_id) - 1
+                    if pos < len(text_resources):
+                        text_resource = text_resources[pos]
+                    else:
+                        return Response(
+                            {'error': f'Synthetic text_id {text_id} could not be resolved. '
+                                      'Please refresh the review page and try again.'},
+                            status=400)
+                else:
+                    text_resource = ReviewTextResource.objects.get(id=text_id)
             except ReviewTextResource.DoesNotExist:
                 return Response({'error': f'Text resource with ID {text_id} not found'}, status=404)
 

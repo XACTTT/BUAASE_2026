@@ -352,7 +352,7 @@ def submit_detection2(request):
     organization = user.organization  # 获取用户所属组织
     organization.reset_usage()  # 重置组织内所有用户的共享次数
     if not user.has_permission('submit'):
-        return Response({"错误": "该用户没有提交检测的权限"}, status=403)
+        return Response({"message": "该用户没有提交检测的权限"}, status=403)
 
     detect_type = (request.data.get('detect_type') or 'image').strip().lower()
 
@@ -552,7 +552,7 @@ def submit_text_detection(request):
     user_id = request.user.id
     user = User.objects.get(id=user_id)
     if not user.has_permission('submit'):
-        return Response({"错误": "该用户没有提交检测的权限"}, status=403)
+        return Response({"message": "该用户没有提交检测的权限"}, status=403)
 
     task_name = request.data.get('task_name', 'New Text Detection Task')
     task_type = request.data.get('task_type', 'paper_text')  # 'paper_text' 或 'review_text'
@@ -1137,7 +1137,14 @@ class SubDetectionResultSerializer(serializers.ModelSerializer):
     # --- helpers ---------------------------------------------------------
     def get_mask_image(self, obj):
         req = self.context["request"]
-        if obj.mask_image:
+        if obj.mask_image and obj.mask_image.name:
+            try:
+                from PIL import Image
+                import numpy as np
+                if np.array(Image.open(obj.mask_image.path).convert('L')).max() == 0:
+                    return None
+            except Exception:
+                pass
             return req.build_absolute_uri(f"/api/preview/sub_result/{obj.id}/")
         return None
 
@@ -1177,8 +1184,10 @@ def detection_result_detail(request, result_id):
         "confidence_score": dr.confidence_score,
     })
     add("llm",          dr.llm_judgment)
-    add("llm_image",    request.build_absolute_uri(f"/api/preview/detection/{dr.id}/?image_type=llm"))
-    add("ela_image",    request.build_absolute_uri(f"/api/preview/detection/{dr.id}/?image_type=ela"))
+    add("llm_image",    request.build_absolute_uri(f"/api/preview/detection/{dr.id}/?image_type=llm")
+                        if dr.llm_image and dr.llm_image.name else None)
+    add("ela_image",    request.build_absolute_uri(f"/api/preview/detection/{dr.id}/?image_type=ela")
+                        if dr.ela_image and dr.ela_image.name else None)
     add("exif", {
         "photoshop_edited":  dr.exif_photoshop,
         "time_modified":     dr.exif_time_modified,
@@ -1229,8 +1238,10 @@ def detection_result_by_image(request, image_id):
         "confidence_score": dr.confidence_score,
     })
     add("llm", dr.llm_judgment)
-    add("llm_image", request.build_absolute_uri(f"/api/preview/detection/{dr.id}/?image_type=llm"))
-    add("ela_image", request.build_absolute_uri(f"/api/preview/detection/{dr.id}/?image_type=ela"))
+    add("llm_image", request.build_absolute_uri(f"/api/preview/detection/{dr.id}/?image_type=llm")
+                     if dr.llm_image and dr.llm_image.name else None)
+    add("ela_image", request.build_absolute_uri(f"/api/preview/detection/{dr.id}/?image_type=ela")
+                     if dr.ela_image and dr.ela_image.name else None)
     add("exif", {
         "photoshop_edited": dr.exif_photoshop,
         "time_modified": dr.exif_time_modified,

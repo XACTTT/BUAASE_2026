@@ -256,7 +256,7 @@
                         <v-list-item class="py-2 px-3">
                           <div class="d-flex align-center" style="gap: 24px; width: 100%;">
                             <div class="text-body-1 font-weight-medium" style="min-width: 100px;">
-                              {{ dimension.method }}
+                              {{ getMethodLabel(dimension.method) }}
                             </div>
 
                             <v-progress-circular :model-value="dimension.probability * 100"
@@ -264,7 +264,7 @@
                               <span class="text-caption">{{ (dimension.probability * 100).toFixed(0) }}%</span>
                             </v-progress-circular>
 
-                            <v-btn size="small" :color="dimension.visible ? 'error' : 'grey'" variant="tonal"
+                            <v-btn v-if="dimension.mask_image" size="small" :color="dimension.visible ? 'error' : 'grey'" variant="tonal"
                               @click="toggleOverlay(dimension)" class="fake-area-btn ml-4">
                               <v-icon size="small" :icon="dimension.visible ? 'mdi-eye-off' : 'mdi-eye'"
                                 class="mr-1"></v-icon>
@@ -362,6 +362,16 @@ interface SubMethod {
   visible: boolean
 }
 
+const METHOD_LABELS: Record<string, string> = {
+  splicing: '拼接检测',
+  blurring: '模糊检测',
+  bruteforce: '暴力篡改检测',
+  contrast: '对比度检测',
+  inpainting: '修复检测',
+}
+
+const getMethodLabel = (method: string) => METHOD_LABELS[method] || method
+
 interface Person {
   id: number
   username: string
@@ -411,12 +421,20 @@ const submitReview = async () => {
     snackbar.showMessage('已提交人工复查任务，请等待管理员审核', 'success')
     router.push('/annual')
   } catch (error: any) {
+    const respData = error?.response?.data
+    let backendMsg = ''
+    if (typeof respData === 'string') {
+      backendMsg = respData.substring(0, 200)
+    } else if (respData) {
+      backendMsg = respData.error || respData.detail || respData.message || ''
+    }
     let message = '提交人工复查任务失败'
-    if (axios.isAxiosError(error)) {
-      const status = error?.code
-      if (status === 'ERR_NETWORK') {
-        message = '用户无权限'
-      }
+    if (error?.response?.status === 403) {
+      message = backendMsg || '该用户没有发布的权限'
+    } else if (error?.code === 'ERR_NETWORK') {
+      message = '网络错误，请检查连接'
+    } else if (backendMsg) {
+      message = typeof backendMsg === 'string' ? backendMsg : JSON.stringify(backendMsg)
     }
     snackbar.showMessage(message, 'error')
   }

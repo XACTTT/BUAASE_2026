@@ -1,4 +1,5 @@
 import csv
+from django.db import models as db_models
 from rest_framework_simplejwt.tokens import RefreshToken
 from core.models import PublisherReviewerRelationship, ImageReview, Organization
 from django.http import JsonResponse, HttpResponse
@@ -14,7 +15,7 @@ from ..utils.log_utils import action_log, log_action, get_client_ip
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from datetime import datetime
-from core.models import Log, User
+from core.models import Log, User, PERM_UPLOAD_IMAGE, PERM_UPLOAD_PAPER, PERM_UPLOAD_REVIEW, PERM_UPLOAD_COMPREHENSIVE, PERM_SUBMIT, PERM_PUBLISH, PERM_REVIEW
 from rest_framework.decorators import api_view, permission_classes
 from collections import defaultdict
 from core.models import FileManagement, ImageUpload, DetectionResult, SubDetectionResult, StructuredDetectionResult, TextDetectionResult
@@ -169,12 +170,12 @@ def admin_resources(request):
 
     if query:
         query_filter = (
-            models.Q(file_name__icontains=query)
-            | models.Q(user__username__icontains=query)
-            | models.Q(user__email__icontains=query)
+            db_models.Q(file_name__icontains=query)
+            | db_models.Q(user__username__icontains=query)
+            | db_models.Q(user__email__icontains=query)
         )
         if query.isdigit():
-            query_filter = query_filter | models.Q(id=int(query))
+            query_filter = query_filter | db_models.Q(id=int(query))
         resources = resources.filter(query_filter)
 
     if uploader_id:
@@ -609,15 +610,14 @@ class LogDetailView(APIView):
 @permission_classes([IsAdminUser])
 def dashboard_img_tag(request):
     """
-    返回符合对应Tag的ImageUpload数量统计（包含值为0的tag）
-    参数: startTime, endTime（ISO 8601格式）
-    示例响应: {"Biology": 1, "Medicine": 5, "Chemistry": 50, "Graphics": 2, "Other": 3, "Math": 0}
+    返回符合对应Tag的资源数量统计（包含值为0的tag）
+    参数: startTime, endTime（ISO 8601格式）, resourceType（image/paper/review/all，默认all）
     """
     start_time = request.query_params.get('startTime')
     end_time = request.query_params.get('endTime')
+    resource_type = request.query_params.get('resourceType', 'all')
 
-    # 默认时间范围为最近一年
-    now = timezone.now()
+    now = timezone.localtime(timezone.now())
     default_start = now.replace(year=now.year - 1)
     default_end = now
 
@@ -634,24 +634,28 @@ def dashboard_img_tag(request):
     except ValueError:
         return Response({'error': 'Invalid datetime format'}, status=400)
 
-    # 获取所有预设 tag（从 FileManagement 中提取）
-    from core.models import FileManagement
-    TAG_CHOICES = dict(FileManagement.TAG_CHOICES)  # [('Biology', 'Biology'), ...]
+    TAG_CHOICES = dict(FileManagement.TAG_CHOICES)
+    tag_counts = {tag: 0 for tag in TAG_CHOICES.values()}
 
-    # 初始化所有 tag 的计数为 0
-    tag_counts = {tag: 0 for tag in TAG_CHOICES.keys()}
-
-    # 查询在时间范围内的所有 FileManagement 数据并预取 image_uploads
     file_managements = FileManagement.objects.filter(
         upload_time__range=[start_time, end_time]
-    ).prefetch_related('image_uploads')
+    )
 
-    # 统计每个 tag 下的图片数量
+    # Filter by resource type
+    if resource_type == 'paper':
+        file_managements = file_managements.filter(resource_role__startswith='paper_')
+    elif resource_type == 'review':
+        file_managements = file_managements.filter(resource_role__startswith='review_')
+    elif resource_type == 'image':
+        file_managements = file_managements.filter(
+            resource_role='material_other',
+            file_ext__in=['png', 'jpg', 'jpeg', 'bmp', 'gif', 'webp']
+        )
+
     for fm in file_managements:
-        count = fm.image_uploads.count()
-        tag = fm.get_tag_display()  # 获取 human-readable tag 名称
+        tag = fm.get_tag_display()
         if tag in tag_counts:
-            tag_counts[tag] += count
+            tag_counts[tag] += 1
 
     return Response(tag_counts)
 
@@ -672,21 +676,23 @@ def top_publishers_with_fake_ratio(request):
     for user in publishers:
         # 获取该用户的所有任务
         tasks = DetectionTask.objects.filter(user=user)
-        # 获取所有相关图片
-        images = ImageUpload.objects.filter(detection_task__in=tasks)
-        total_images = images.count()
+        # 通过 DetectionResult 关联（ImageUpload.detection_task 不可靠）
+        task_ids = tasks.values_list('id', flat=True)
+        detection_results = DetectionResult.objects.filter(detection_task__in=task_ids)
+        total_images = detection_results.count()
 
         if total_images == 0:
             fake_ratio = 0
+            fake_count = 0
         else:
-            fake_count = images.filter(isFake=True).count()
+            fake_count = detection_results.filter(is_fake=True).count()
             fake_ratio = round(fake_count / total_images, 2)
 
         result.append({
             "username": user.username,
             "total_tasks": tasks.count(),
             "total_images": total_images,
-            "fake_count": images.filter(isFake=True).count(),
+            "fake_count": fake_count,
             "fake_ratio": fake_ratio
         })
 
@@ -719,16 +725,17 @@ def top_organizations_with_fake_ratio(request):
 
         # 获取该组织下所有 publisher 的任务
         tasks = DetectionTask.objects.filter(user__in=publishers)
+        task_ids = tasks.values_list('id', flat=True)
 
-        # 获取这些任务下的所有图片
-        images = ImageUpload.objects.filter(detection_task__in=tasks)
-        total_images = images.count()
+        # 通过 DetectionResult 关联（ImageUpload.detection_task 不可靠）
+        detection_results = DetectionResult.objects.filter(detection_task__in=task_ids)
+        total_images = detection_results.count()
 
         if total_images == 0:
             fake_count = 0
             fake_ratio = 0.0
         else:
-            fake_count = images.filter(isFake=True).count()
+            fake_count = detection_results.filter(is_fake=True).count()
             fake_ratio = round(fake_count / total_images, 2)
 
         result.append({
@@ -1095,23 +1102,28 @@ class UserPermissionView(APIView):
             user.save_permission()
 
             if permission_value is not None:
-                perm_str = str(permission_value).zfill(4)
                 perms_desc = {
-                    'upload': '可上传' if perm_str[0] == '1' else '不可上传',
-                    'submit': '可提交' if perm_str[1] == '1' else '不可提交',
-                    'publish': '可发布' if perm_str[2] == '1' else '不可发布',
-                    'review': '可审核' if perm_str[3] == '1' else '不可审核',
+                    'upload_image': '可上传图像' if permission_value & PERM_UPLOAD_IMAGE else '不可上传图像',
+                    'upload_paper': '可上传论文' if permission_value & PERM_UPLOAD_PAPER else '不可上传论文',
+                    'upload_review': '可上传Review' if permission_value & PERM_UPLOAD_REVIEW else '不可上传Review',
+                    'upload_comprehensive': '可上传综合资源' if permission_value & PERM_UPLOAD_COMPREHENSIVE else '不可上传综合资源',
+                    'submit': '可提交检测' if permission_value & PERM_SUBMIT else '不可提交检测',
+                    'publish': '可发布审核' if permission_value & PERM_PUBLISH else '不可发布审核',
+                    'review': '可审核' if permission_value & PERM_REVIEW else '不可审核',
                 }
             else:
                 perms_desc = {
-                    'upload': '不可上传',
-                    'submit': '不可提交',
-                    'publish': '不可发布',
+                    'upload_image': '不可上传图像',
+                    'upload_paper': '不可上传论文',
+                    'upload_review': '不可上传Review',
+                    'upload_comprehensive': '不可上传综合资源',
+                    'submit': '不可提交检测',
+                    'publish': '不可发布审核',
                     'review': '不可审核',
                 }
 
             # 构建通知内容
-            permission_description = f"{perms_desc['upload']}、{perms_desc['submit']}、{perms_desc['publish']}、{perms_desc['review']}"
+            permission_description = f"{perms_desc['upload_image']}、{perms_desc['upload_paper']}、{perms_desc['upload_review']}、{perms_desc['upload_comprehensive']}、{perms_desc['submit']}、{perms_desc['publish']}、{perms_desc['review']}"
 
             send_notification(
                 receiver_id=user.id,
@@ -1327,7 +1339,11 @@ class UserActionLogDownloadView(APIView):
                 logs = logs.filter(user__organization_id=organization_id)
 
         if query:
-            logs = logs.filter(user__username__icontains=query)
+            try:
+                user_ids = [int(x) for x in query.split(',')]
+                logs = logs.filter(user__id__in=user_ids)
+            except (ValueError, AttributeError):
+                logs = logs.filter(user__username__icontains=query)
         if operation_type:
             logs = logs.filter(operation_type=operation_type)
         if target_type:
@@ -1566,7 +1582,6 @@ def get_all_user_tasks(request):
 def get_users(request):
     query = request.query_params.get('query', '')
     role = request.query_params.get('role', '')
-    permission = request.query_params.get('permission', '')
     start_time = request.query_params.get('startTime', None)
     end_time = request.query_params.get('endTime', None)
     organization_name = request.query_params.get('organization', None)  # 新增组织筛选参数
@@ -1587,15 +1602,27 @@ def get_users(request):
 
     # 应用其他筛选条件
     if query:
-        users = users.filter(username__startswith=query)
+        users = users.filter(username__icontains=query)
     if role:
         users = users.filter(role=role)
-    if permission:
+    permission_has = request.query_params.get('permission_has')
+    permission_not = request.query_params.get('permission_not')
+    if permission_has:
         try:
-            permission = int(permission)
-            users = users.filter(permission=permission)
+            permission_has = int(permission_has)
+            users = users.filter(permission__isnull=False).extra(
+                where=["(permission & %s) = %s"], params=[permission_has, permission_has]
+            )
         except ValueError:
-            return Response({'error': 'Permission value must be an integer'}, status=400)
+            return Response({'error': 'permission_has must be an integer'}, status=400)
+    if permission_not:
+        try:
+            permission_not = int(permission_not)
+            users = users.filter(permission__isnull=False).extra(
+                where=["(permission & %s) = 0"], params=[permission_not]
+            )
+        except ValueError:
+            return Response({'error': 'permission_not must be an integer'}, status=400)
     if start_time:
         users = users.filter(date_joined__gte=start_time)
     if end_time:
@@ -1655,9 +1682,7 @@ def create_user(request):
     if not username or not password:
         return Response({'error': 'Username and password are required'}, status=400)
 
-    user = User.objects.create_user(username=username, email=email, password=password)
-    user.role = role
-    user.save()
+    user = User.objects.create_user(username=username, email=email, password=password, role=role)
 
     return Response({'message': 'User created successfully', 'user_id': user.id})
 
@@ -1675,12 +1700,14 @@ def update_user(request, user_id):
         user.email = request.data.get('email', user.email)
         user.role = request.data.get('role', user.role)
         user.state = request.data.get('state', user.state)
-        user.permission = request.data.get('permission', user.permission)  # 更新 permission 字段
+        permission = request.data.get('permission', user.permission)
+        if permission is not None:
+            user.permission = int(permission)
 
         if 'password' in request.data:
             user.set_password(request.data['password'])
 
-        user.save()
+        user.save_permission()
         return Response({'message': 'User updated successfully'})
     except User.DoesNotExist:
         return Response({'error': 'User not found'}, status=404)
@@ -1764,9 +1791,8 @@ def create_admin(request):
         return Response({'error': 'Username already exists'}, status=400)
 
     # 创建新用户
-    user = User.objects.create_user(username=username, email=email, password=password)
-    user.role = role
-    user.is_staff = True  # 设置为员工用户
+    user = User.objects.create_user(username=username, email=email, password=password, role=role)
+    user.is_staff = True
     user.save()
 
     return Response({'message': 'Admin user created successfully', 'user_id': user.id}, status=201)

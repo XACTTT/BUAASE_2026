@@ -642,9 +642,20 @@ def recharge_uses(request):
 import os
 from django.conf import settings
 from django.http import FileResponse
-@api_view(['GET'])  # 明确指定允许的 HTTP 方法
+@api_view(['GET'])
 def generate_manual_review_report_view(request, review_id):
-    review = ManualReview.objects.get(id=review_id)
+    # review_id here comes from URL but is actually a ReviewRequest.id
+    # Look up the ManualReview for this ReviewRequest
+    try:
+        review = ManualReview.objects.filter(review_request_id=review_id).first()
+    except Exception:
+        review = None
+    if not review:
+        # Fallback: try as ManualReview.id directly
+        try:
+            review = ManualReview.objects.get(id=review_id)
+        except ManualReview.DoesNotExist:
+            return Response({"detail": "Manual review not found."}, status=404)
     report_path = generate_manual_review_report(review)
     # return Response({"report_url": review.report_file.url})
 

@@ -416,14 +416,6 @@ function formatDateTime(dateTime: string): string {
   return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`
 }
 
-function openReviewDialog() {
-  // Select all sections by default
-  const newSet = new Set<string>()
-  for (const s of structuredSections.value) newSet.add(s.item_id)
-  for (const s of structuredReviewSections.value) newSet.add(s.item_id)
-  selectedSectionIds.value = newSet
-}
-
 function clearReviewSelection() {
   selectedSectionIds.value = new Set()
   selectedReviewers.value = []
@@ -534,8 +526,10 @@ const submitReview = async () => {
       backendMsg = respData.error || respData.错误 || respData.detail || respData.message || ''
     }
     let message = '提交人工审核任务失败'
-    if (error?.code === 'ERR_NETWORK') {
-      message = '用户无权限'
+    if (error?.response?.status === 403) {
+      message = backendMsg || '该用户没有发布的权限'
+    } else if (error?.code === 'ERR_NETWORK') {
+      message = '网络错误，请检查连接'
     } else if (backendMsg) {
       message = typeof backendMsg === 'string' ? backendMsg : JSON.stringify(backendMsg)
     }

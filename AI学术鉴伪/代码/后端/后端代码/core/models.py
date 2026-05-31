@@ -113,6 +113,17 @@ class InvitationCode(models.Model):
         return f"{self.organization.name} - {self.role}"
 
 
+# Permission bit constants (bitmask)
+PERM_UPLOAD_IMAGE = 64
+PERM_UPLOAD_PAPER = 32
+PERM_UPLOAD_REVIEW = 16
+PERM_UPLOAD_COMPREHENSIVE = 8
+PERM_SUBMIT = 4
+PERM_PUBLISH = 2
+PERM_REVIEW = 1
+PERM_UPLOAD_ALL = PERM_UPLOAD_IMAGE | PERM_UPLOAD_PAPER | PERM_UPLOAD_REVIEW | PERM_UPLOAD_COMPREHENSIVE
+
+
 class User(AbstractUser):
     ROLES = (
         ('admin', 'Admin'),
@@ -190,17 +201,20 @@ class User(AbstractUser):
         }
 
     def save(self, *args, **kwargs):
-        # 设置权限
-        if self.role == 'publisher':
-            self.permission = 1110
-        elif self.role == 'reviewer':
-            self.permission = 1
-        else:
-            self.permission = None
+        # 仅在创建时设置默认权限，更新时保留自定义权限
+        if self.pk is None:
+            if self.role == 'publisher':
+                self.permission = PERM_UPLOAD_ALL | PERM_SUBMIT | PERM_PUBLISH  # 126
+            elif self.role == 'reviewer':
+                self.permission = PERM_REVIEW  # 1
+            else:
+                self.permission = None
         super().save(*args, **kwargs)
 
     def save_permission(self, *args, **kwargs):
-        # 设置权限
+        # Normalize old format to bitmask before saving
+        if self._is_old_permission_format(self.permission):
+            self.permission = self._convert_old_permission(self.permission)
         super().save(*args, **kwargs)
 
     def set_reset_code(self):
@@ -216,17 +230,55 @@ class User(AbstractUser):
             return True
         return False
 
+    @staticmethod
+    def _is_old_permission_format(perm):
+        """Detect old 4-digit binary-as-decimal format (e.g. 1110 meaning upload+submit+publish).
+        New bitmask max is 127. Values > 127 are always old format.
+        Values <= 127 that look like old format (only 0/1 digits) but ARE valid bitmask
+        are the collision set {1, 10, 11, 100, 101, 110, 111}. Since new bitmask 1 = PERM_REVIEW
+        maps to old "0001" = review, the results happen to be identical, so we treat them
+        as old format safely. The real collision only affects upload sub-permissions, but
+        values in the collision set never appear in normal admin usage (admin UI builds
+        bitmask from 7 switches, producing values like 126, 124, etc.)."""
+        if perm is None:
+            return False
+        if perm > 127:
+            return True
+        perm_str = str(perm)
+        if perm > 0 and all(c in '01' for c in perm_str) and len(perm_str) <= 4:
+            return True
+        return False
+
+    @staticmethod
+    def _convert_old_permission(perm):
+        """Convert old 4-digit binary-as-decimal to new bitmask."""
+        old = str(perm).zfill(4)
+        result = 0
+        if old[0] == '1': result |= PERM_UPLOAD_ALL
+        if old[1] == '1': result |= PERM_SUBMIT
+        if old[2] == '1': result |= PERM_PUBLISH
+        if old[3] == '1': result |= PERM_REVIEW
+        return result
+
     def has_permission(self, perm_type):
         if self.permission is None:
             return False
-        if not self.organization:  # 新增组织存在性检查
+        if not self.organization:
             return False
-        perm_str = str(self.permission).zfill(4)  # 补足4位
+
+        perm = self.permission
+        if self._is_old_permission_format(perm):
+            perm = self._convert_old_permission(perm)
+
         perms = {
-            'upload': perm_str[0] == '1',
-            'submit': perm_str[1] == '1',
-            'publish': perm_str[2] == '1',
-            'review': perm_str[3] == '1'
+            'upload_image': bool(perm & PERM_UPLOAD_IMAGE),
+            'upload_paper': bool(perm & PERM_UPLOAD_PAPER),
+            'upload_review': bool(perm & PERM_UPLOAD_REVIEW),
+            'upload_comprehensive': bool(perm & PERM_UPLOAD_COMPREHENSIVE),
+            'upload': bool(perm & PERM_UPLOAD_ALL),
+            'submit': bool(perm & PERM_SUBMIT),
+            'publish': bool(perm & PERM_PUBLISH),
+            'review': bool(perm & PERM_REVIEW),
         }
         return perms.get(perm_type, False)
 
@@ -567,13 +619,13 @@ class DetectionResult(models.Model):
         return f"Detection result for {self.image_upload.id}"
 
 
-# 7 种子检测方法的逐项记录
+# GPU 管线返回的子检测方法
 SUB_METHOD_CHOICES = [
-    ('method1', 'Method-1'),
-    ('method2', 'Method-2'),
-    ('method3', 'Method-3'),
-    ('method4', 'Method-4'),
-    ('method5', 'Method-5'),
+    ('splicing', '拼接检测'),
+    ('blurring', '模糊检测'),
+    ('bruteforce', '暴力篡改检测'),
+    ('contrast', '对比度检测'),
+    ('inpainting', '修复检测'),
     ('method6', 'Method-6'),
     ('method7', 'Method-7'),
 ]

@@ -300,7 +300,7 @@ const formatTime = (timestamp: string) => {
 }
 
 const goToTaskDetail = (task: Task) => {
-  router.push(`/task/detail/${task.manual_review_id}`)
+  router.push({ path: `/task/detail/${task.manual_review_id}`, query: { status: task.status } })
 }
 
 // 时间验证相关

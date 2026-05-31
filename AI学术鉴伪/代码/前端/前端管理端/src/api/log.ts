@@ -30,12 +30,13 @@ export default {
     startTime?: string;
     endTime?: string;
   }) {
-    return http.get('/user_action_log/download/', { 
+    return http.get('/user_action_log/download/', {
       params: {
         ...params,
         query: params.query?.join(',')
       },
-      responseType: 'blob'
+      responseType: 'blob',
+      timeout: 60000
     });
   }
 } 

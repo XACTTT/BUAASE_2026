@@ -257,7 +257,6 @@ interface Reviewer {
 }
 
 const allReviewers = ref<Reviewer[]>([])
-const showReviewDialog = ref(false)
 const selectedReviewers = ref<number[]>([])
 const reviewReason = ref('')
 const submittingReview = ref(false)
@@ -280,13 +279,15 @@ function isItemSelected(id: string): boolean {
   return selectedItemIds.value.has(id)
 }
 
-function selectAllItems(type: 'paper' | 'review' | 'image'): void {
+function selectAllItems(type?: 'paper' | 'review' | 'image'): void {
   const newSet = new Set(selectedItemIds.value)
-  if (type === 'paper') {
+  if (!type || type === 'paper') {
     paperParagraphs.value.forEach((p: any) => newSet.add(p.id))
-  } else if (type === 'review') {
+  }
+  if (!type || type === 'review') {
     reviewParagraphs.value.forEach((p: any) => newSet.add(p.id))
-  } else {
+  }
+  if (!type || type === 'image') {
     imageItems.value.forEach((img: any) => {
       if (img.image_id) newSet.add(`image_${img.image_id}`)
     })
@@ -294,13 +295,15 @@ function selectAllItems(type: 'paper' | 'review' | 'image'): void {
   selectedItemIds.value = newSet
 }
 
-function deselectAllItems(type: 'paper' | 'review' | 'image'): void {
+function deselectAllItems(type?: 'paper' | 'review' | 'image'): void {
   const newSet = new Set(selectedItemIds.value)
-  if (type === 'paper') {
+  if (!type || type === 'paper') {
     paperParagraphs.value.forEach((p: any) => newSet.delete(p.id))
-  } else if (type === 'review') {
+  }
+  if (!type || type === 'review') {
     reviewParagraphs.value.forEach((p: any) => newSet.delete(p.id))
-  } else {
+  }
+  if (!type || type === 'image') {
     imageItems.value.forEach((img: any) => {
       if (img.image_id) newSet.delete(`image_${img.image_id}`)
     })
@@ -522,20 +525,6 @@ function formatLlmAnalysisValue(value: unknown): string {
   }
 }
 
-function openReviewDialog() {
-  selectedReviewers.value = []
-  reviewReason.value = ''
-  // Auto-select all items by default
-  const allIds = new Set<string>()
-  paperParagraphs.value.forEach((p: any) => allIds.add(p.id))
-  reviewParagraphs.value.forEach((p: any) => allIds.add(p.id))
-  imageItems.value.forEach((img: any) => {
-    if (img.image_id) allIds.add(`image_${img.image_id}`)
-  })
-  selectedItemIds.value = allIds
-  showReviewDialog.value = true
-}
-
 // --- API actions ---
 const downloadReport = async () => {
   try {
@@ -587,7 +576,6 @@ const submitReview = async () => {
     }
     await publisher.dispatchAnnual(payload)
     snackbar.showMessage('已提交人工审核任务，请等待审核', 'success')
-    showReviewDialog.value = false
     router.push('/annual')
   } catch (error: any) {
     console.error('Review submit error:', JSON.stringify(error?.response, null, 2))
@@ -599,8 +587,10 @@ const submitReview = async () => {
       backendMsg = respData.error || respData.错误 || respData.detail || respData.message || ''
     }
     let message = '提交人工审核任务失败'
-    if (error?.code === 'ERR_NETWORK') {
-      message = '用户无权限'
+    if (error?.response?.status === 403) {
+      message = backendMsg || '该用户没有发布的权限'
+    } else if (error?.code === 'ERR_NETWORK') {
+      message = '网络错误，请检查连接'
     } else if (backendMsg) {
       message = typeof backendMsg === 'string' ? backendMsg : JSON.stringify(backendMsg)
     }
@@ -715,17 +705,6 @@ onMounted(async () => {
                     @click="downloadReport"
                   >
                     查看报告
-                  </v-btn>
-                  <v-btn
-                    :color="isDarkMode ? 'green-darken-2' : 'success'"
-                    variant="elevated"
-                    class="px-8 py-2"
-                    rounded="pill"
-                    prepend-icon="mdi-send"
-                    elevation="2"
-                    @click="openReviewDialog"
-                  >
-                    提交人工审核
                   </v-btn>
                 </div>
               </div>
@@ -1639,6 +1618,73 @@ onMounted(async () => {
       </v-col>
     </v-row>
 
+    <!-- ========== 提交人工审核 ========== -->
+    <v-row class="mt-6">
+      <v-col cols="12">
+        <v-card elevation="2" rounded="lg" class="pa-6">
+          <v-card-title class="pa-0 mb-4 d-flex align-center">
+            <v-icon color="success" class="mr-2">mdi-account-check</v-icon>
+            <span class="text-h6">提交人工审核</span>
+            <v-spacer />
+            <v-chip size="small" :color="selectedItemIds.size > 0 ? 'primary' : 'default'" variant="tonal">
+              已选择 {{ selectedItemIds.size }} 个材料
+            </v-chip>
+          </v-card-title>
+          <v-row>
+            <v-col cols="12" md="6">
+              <div class="text-subtitle-2 mb-2">已选材料预览</div>
+              <div class="text-body-2 text-medium-emphasis">
+                论文段落: {{ [...selectedItemIds].filter(id => id.startsWith('multi_paper_')).length }} 个
+              </div>
+              <div class="text-body-2 text-medium-emphasis">
+                Review段落: {{ [...selectedItemIds].filter(id => id.startsWith('multi_review_')).length }} 个
+              </div>
+              <div class="text-body-2 text-medium-emphasis">
+                图片: {{ [...selectedItemIds].filter(id => id.startsWith('image_')).length }} 个
+              </div>
+              <div class="d-flex ga-2 mt-3">
+                <v-btn size="small" variant="outlined" @click="selectAllItems()">全选</v-btn>
+                <v-btn size="small" variant="outlined" @click="deselectAllItems()">清除选择</v-btn>
+              </div>
+            </v-col>
+            <v-col cols="12" md="6">
+              <v-autocomplete
+                v-model="selectedReviewers"
+                :items="allReviewers"
+                item-title="username"
+                item-value="id"
+                label="选择审核人员"
+                multiple
+                chips
+                closable-chips
+                variant="outlined"
+                density="compact"
+                class="mb-3"
+              />
+              <v-textarea
+                v-model="reviewReason"
+                label="审核原因（可选）"
+                variant="outlined"
+                density="compact"
+                rows="2"
+                class="mb-3"
+              />
+              <div class="d-flex justify-end ga-2">
+                <v-btn
+                  color="primary"
+                  :loading="submittingReview"
+                  :disabled="selectedItemIds.size === 0 || selectedReviewers.length === 0 || submittingReview"
+                  @click="submitReview"
+                >
+                  提交人工审核
+                </v-btn>
+              </div>
+            </v-col>
+          </v-row>
+        </v-card>
+      </v-col>
+    </v-row>
+
     <!-- ========== Image Detail Dialog ========== -->
     <v-dialog v-model="showImageDetail" max-width="1000">
       <v-card rounded="lg">
@@ -1835,94 +1881,6 @@ onMounted(async () => {
       </v-card>
     </v-dialog>
 
-    <!-- ========== Review Submission Dialog ========== -->
-    <v-dialog v-model="showReviewDialog" max-width="700" persistent>
-      <v-card rounded="lg">
-        <v-card-title class="pa-6 d-flex align-center">
-          <v-icon color="success" class="mr-2">mdi-send</v-icon>
-          <span class="text-h6">提交人工审核</span>
-          <v-spacer />
-          <v-btn icon="mdi-close" variant="text" @click="showReviewDialog = false" />
-        </v-card-title>
-
-        <v-card-text class="pa-6">
-          <!-- Selection summary -->
-          <div class="mb-4">
-            <div class="text-subtitle-1 font-weight-bold mb-2">已选材料</div>
-            <div class="d-flex flex-wrap gap-2">
-              <v-chip v-if="selectedPaperCount > 0" size="small" color="primary" variant="tonal">
-                <v-icon start size="x-small">mdi-file-document</v-icon>
-                论文段落 {{ selectedPaperCount }} 篇
-              </v-chip>
-              <v-chip v-if="selectedReviewCount > 0" size="small" color="warning" variant="tonal">
-                <v-icon start size="x-small">mdi-comment-text</v-icon>
-                评审段落 {{ selectedReviewCount }} 篇
-              </v-chip>
-              <v-chip v-if="selectedImageCount > 0" size="small" color="info" variant="tonal">
-                <v-icon start size="x-small">mdi-image</v-icon>
-                图片 {{ selectedImageCount }} 张
-              </v-chip>
-              <div v-if="selectedTotalCount === 0" class="text-body-2 text-grey">
-                未选择任何材料，请在下方返回选择需要审核的材料
-              </div>
-            </div>
-          </div>
-
-          <!-- Reviewer selection -->
-          <div class="mb-4">
-            <div class="text-subtitle-1 font-weight-bold mb-2">选择审核人员</div>
-            <v-autocomplete
-              v-model="selectedReviewers"
-              :items="filteredReviewers"
-              v-model:search="reviewSearchQuery"
-              item-title="username"
-              item-value="id"
-              label="搜索审核人员"
-              multiple
-              chips
-              closable-chips
-              hide-details
-              variant="outlined"
-            >
-              <template #chip="{ props: chipProps, item }">
-                <v-chip v-bind="chipProps" :prepend-avatar="getImageUrl(item.raw.avatar)">
-                  {{ item.raw.username }}
-                </v-chip>
-              </template>
-              <template #item="{ props: itemProps, item }">
-                <v-list-item v-bind="itemProps" :prepend-avatar="getImageUrl(item.raw.avatar)" :title="item.raw.username" />
-              </template>
-            </v-autocomplete>
-          </div>
-
-          <!-- Reason -->
-          <div>
-            <div class="text-subtitle-1 font-weight-bold mb-2">审核原因</div>
-            <v-textarea
-              v-model="reviewReason"
-              label="请输入提交审核的原因（选填）"
-              variant="outlined"
-              rows="3"
-              hide-details
-            />
-          </div>
-        </v-card-text>
-
-        <v-card-actions class="pa-6 pt-0">
-          <v-spacer />
-          <v-btn variant="text" @click="showReviewDialog = false">取消</v-btn>
-          <v-btn
-            color="success"
-            variant="elevated"
-            :disabled="!canSubmitReview"
-            :loading="submittingReview"
-            @click="submitReview"
-          >
-            提交审核
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
   </v-container>
 </template>
 

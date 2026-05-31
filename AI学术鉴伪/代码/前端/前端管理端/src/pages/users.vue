@@ -80,30 +80,52 @@
             </v-chip>
             <template v-else>
               <div class="d-flex flex-wrap justify-center gap-2">
-                <div class="d-flex align-center">
-                  <v-icon :color="getPermissionBit(item.permission, 3) ? 'info' : 'error'" size="small" class="mr-1">
-                    {{ getPermissionBit(item.permission, 3) ? 'mdi-check-circle' : 'mdi-close-circle' }}
-                  </v-icon>
-                  <span class="text-caption">上传图像</span>
-                </div>
-                <div class="d-flex align-center">
-                  <v-icon :color="getPermissionBit(item.permission, 2) ? 'success' : 'error'" size="small" class="mr-1">
-                    {{ getPermissionBit(item.permission, 2) ? 'mdi-check-circle' : 'mdi-close-circle' }}
-                  </v-icon>
-                  <span class="text-caption">提交AI检测</span>
-                </div>
-                <div class="d-flex align-center">
-                  <v-icon :color="getPermissionBit(item.permission, 1) ? 'warning' : 'error'" size="small" class="mr-1">
-                    {{ getPermissionBit(item.permission, 1) ? 'mdi-check-circle' : 'mdi-close-circle' }}
-                  </v-icon>
-                  <span class="text-caption">发布人工审核</span>
-                </div>
-                <div class="d-flex align-center">
-                  <v-icon :color="getPermissionBit(item.permission, 0) ? 'primary' : 'error'" size="small" class="mr-1">
-                    {{ getPermissionBit(item.permission, 0) ? 'mdi-check-circle' : 'mdi-close-circle' }}
-                  </v-icon>
-                  <span class="text-caption">提交人工审核</span>
-                </div>
+                <template v-if="item.role === 'publisher'">
+                  <div class="d-flex align-center">
+                    <v-icon :color="getPermissionBit(item.permission, 6) ? 'purple' : 'error'" size="small" class="mr-1">
+                      {{ getPermissionBit(item.permission, 6) ? 'mdi-check-circle' : 'mdi-close-circle' }}
+                    </v-icon>
+                    <span class="text-caption">上传图像</span>
+                  </div>
+                  <div class="d-flex align-center">
+                    <v-icon :color="getPermissionBit(item.permission, 5) ? 'teal' : 'error'" size="small" class="mr-1">
+                      {{ getPermissionBit(item.permission, 5) ? 'mdi-check-circle' : 'mdi-close-circle' }}
+                    </v-icon>
+                    <span class="text-caption">上传论文</span>
+                  </div>
+                  <div class="d-flex align-center">
+                    <v-icon :color="getPermissionBit(item.permission, 4) ? 'cyan' : 'error'" size="small" class="mr-1">
+                      {{ getPermissionBit(item.permission, 4) ? 'mdi-check-circle' : 'mdi-close-circle' }}
+                    </v-icon>
+                    <span class="text-caption">上传Review</span>
+                  </div>
+                  <div class="d-flex align-center">
+                    <v-icon :color="getPermissionBit(item.permission, 3) ? 'indigo' : 'error'" size="small" class="mr-1">
+                      {{ getPermissionBit(item.permission, 3) ? 'mdi-check-circle' : 'mdi-close-circle' }}
+                    </v-icon>
+                    <span class="text-caption">上传综合</span>
+                  </div>
+                  <div class="d-flex align-center">
+                    <v-icon :color="getPermissionBit(item.permission, 2) ? 'success' : 'error'" size="small" class="mr-1">
+                      {{ getPermissionBit(item.permission, 2) ? 'mdi-check-circle' : 'mdi-close-circle' }}
+                    </v-icon>
+                    <span class="text-caption">提交AI检测</span>
+                  </div>
+                  <div class="d-flex align-center">
+                    <v-icon :color="getPermissionBit(item.permission, 1) ? 'amber' : 'error'" size="small" class="mr-1">
+                      {{ getPermissionBit(item.permission, 1) ? 'mdi-check-circle' : 'mdi-close-circle' }}
+                    </v-icon>
+                    <span class="text-caption">提交人工审核</span>
+                  </div>
+                </template>
+                <template v-else-if="item.role === 'reviewer'">
+                  <div class="d-flex align-center">
+                    <v-icon :color="getPermissionBit(item.permission, 0) ? 'orange' : 'error'" size="small" class="mr-1">
+                      {{ getPermissionBit(item.permission, 0) ? 'mdi-check-circle' : 'mdi-close-circle' }}
+                    </v-icon>
+                    <span class="text-caption">进行人工审核</span>
+                  </div>
+                </template>
               </div>
             </template>
           </div>
@@ -142,23 +164,23 @@
       </div>
     </v-card>
 
-    <!-- 权限设置对话框 -->
     <v-dialog v-model="showPermissionDialog" max-width="500">
       <v-card class="elevation-4">
         <v-card-title class="text-h6 font-weight-bold">修改权限</v-card-title>
         <v-card-text>
           <div class="d-flex flex-column gap-4">
-            <!-- 出版社权限 -->
             <template v-if="selectedUser?.role === 'publisher'">
-              <v-switch v-model="editingPermissions.uploadImage" label="上传图像权限" color="info" hide-details></v-switch>
+              <div class="text-subtitle-2 text-medium-emphasis">上传权限</div>
+              <v-switch v-model="editingPermissions.uploadImage" label="上传图像权限" color="purple" hide-details></v-switch>
+              <v-switch v-model="editingPermissions.uploadPaper" label="上传论文权限" color="teal" hide-details></v-switch>
+              <v-switch v-model="editingPermissions.uploadReview" label="上传Review权限" color="cyan" hide-details></v-switch>
+              <v-switch v-model="editingPermissions.uploadComprehensive" label="上传综合资源权限" color="indigo" hide-details></v-switch>
+              <div class="text-subtitle-2 text-medium-emphasis mt-2">操作权限</div>
               <v-switch v-model="editingPermissions.submitAI" label="提交AI检测权限" color="success" hide-details></v-switch>
-              <v-switch v-model="editingPermissions.publishReview" label="发布人工审核权限" color="warning"
-                hide-details></v-switch>
+              <v-switch v-model="editingPermissions.publishReview" label="提交人工审核权限" color="amber" hide-details></v-switch>
             </template>
-            <!-- 审稿人权限 -->
             <template v-else-if="selectedUser?.role === 'reviewer'">
-              <v-switch v-model="editingPermissions.submitReview" label="提交人工审核权限" color="primary"
-                hide-details></v-switch>
+              <v-switch v-model="editingPermissions.publishReview" label="进行人工审核权限" color="orange" hide-details></v-switch>
             </template>
           </div>
         </v-card-text>
@@ -197,13 +219,14 @@
               <div class="text-subtitle-2">权限筛选</div>
               <v-switch v-model="filters.enablePermissionFilter" label="启用权限筛选" color="info" hide-details></v-switch>
               <template v-if="filters.enablePermissionFilter">
-                <v-switch v-model="filters.permissions.uploadImage" label="上传图像权限" color="info" hide-details></v-switch>
-                <v-switch v-model="filters.permissions.submitAI" label="提交AI检测权限" color="success"
-                  hide-details></v-switch>
-                <v-switch v-model="filters.permissions.publishReview" label="发布人工审核权限" color="warning"
-                  hide-details></v-switch>
-                <v-switch v-model="filters.permissions.submitReview" label="提交人工审核权限" color="primary"
-                  hide-details></v-switch>
+                <div class="text-subtitle-2 text-medium-emphasis">上传权限</div>
+                <v-switch v-model="filters.permissions.uploadImage" label="上传图像权限" color="purple" hide-details></v-switch>
+                <v-switch v-model="filters.permissions.uploadPaper" label="上传论文权限" color="teal" hide-details></v-switch>
+                <v-switch v-model="filters.permissions.uploadReview" label="上传Review权限" color="cyan" hide-details></v-switch>
+                <v-switch v-model="filters.permissions.uploadComprehensive" label="上传综合资源权限" color="indigo" hide-details></v-switch>
+                <div class="text-subtitle-2 text-medium-emphasis">操作权限</div>
+                <v-switch v-model="filters.permissions.submitAI" label="提交AI检测权限" color="success" hide-details></v-switch>
+                <v-switch v-model="filters.permissions.publishReview" label="发布人工审核权限" color="orange" hide-details></v-switch>
               </template>
             </div>
 
@@ -405,9 +428,11 @@ const showPermissionDialog = ref(false)
 const selectedUser = ref<User | null>(null)
 const editingPermissions = ref({
   uploadImage: false,
+  uploadPaper: false,
+  uploadReview: false,
+  uploadComprehensive: false,
   submitAI: false,
-  publishReview: false,
-  submitReview: false
+  publishReview: false
 })
 
 // 删除对话框相关
@@ -452,13 +477,15 @@ const formatTime = (timestamp: number) => {
 
 const openPermissionDialog = (user: User) => {
   selectedUser.value = user
-  // 只有非管理员和非根管理员才能修改权限
   if (user.role !== 'admin' && user.email !== ROOT_ADMIN_EMAIL) {
+    const reviewBit = user.role === 'reviewer' ? 0 : 1
     editingPermissions.value = {
-      uploadImage: getPermissionBit(user.permission, 3),
+      uploadImage: getPermissionBit(user.permission, 6),
+      uploadPaper: getPermissionBit(user.permission, 5),
+      uploadReview: getPermissionBit(user.permission, 4),
+      uploadComprehensive: getPermissionBit(user.permission, 3),
       submitAI: getPermissionBit(user.permission, 2),
-      publishReview: getPermissionBit(user.permission, 1),
-      submitReview: getPermissionBit(user.permission, 0)
+      publishReview: getPermissionBit(user.permission, reviewBit)
     }
     showPermissionDialog.value = true
   } else {
@@ -469,21 +496,21 @@ const openPermissionDialog = (user: User) => {
 const updatePermissions = async () => {
   if (selectedUser.value && selectedUser.value.role !== 'admin' && selectedUser.value.email !== ROOT_ADMIN_EMAIL) {
     try {
-      // 计算权限值（4位二进制）
+      const isReviewer = selectedUser.value.role === 'reviewer'
+      const reviewBit = isReviewer ? 1 : 2
       const permissionValue =
-        (editingPermissions.value.uploadImage ? 8 : 0) +  // 第3位：上传图像
-        (editingPermissions.value.submitAI ? 4 : 0) +     // 第2位：提交AI检测
-        (editingPermissions.value.publishReview ? 2 : 0) + // 第1位：发布人工审核
-        (editingPermissions.value.submitReview ? 1 : 0)    // 第0位：提交人工审核
+        (editingPermissions.value.uploadImage ? 64 : 0) +
+        (editingPermissions.value.uploadPaper ? 32 : 0) +
+        (editingPermissions.value.uploadReview ? 16 : 0) +
+        (editingPermissions.value.uploadComprehensive ? 8 : 0) +
+        (editingPermissions.value.submitAI ? 4 : 0) +
+        (editingPermissions.value.publishReview ? reviewBit : 0)
 
-      // 转换为4位二进制字符串
-      const permissionBinary = permissionValue.toString(2).padStart(4, '0')
-      await userApi.updateUserPermission(selectedUser.value.id, permissionBinary)
+      await userApi.updateUserPermission(selectedUser.value.id, String(permissionValue))
 
-      // 更新本地数据
       const userToUpdate = users.value.find(u => u.id === selectedUser.value!.id)
       if (userToUpdate) {
-        userToUpdate.permission = permissionBinary  // 使用二进制字符串
+        userToUpdate.permission = String(permissionValue)
       }
 
       snackbar.showMessage('权限更新成功', 'success')
@@ -534,9 +561,11 @@ const filters = ref<{
   role: string | null
   permissions: {
     uploadImage: boolean | null
+    uploadPaper: boolean | null
+    uploadReview: boolean | null
+    uploadComprehensive: boolean | null
     submitAI: boolean | null
     publishReview: boolean | null
-    submitReview: boolean | null
   }
   timeRange: string | null
   startDate: string | null
@@ -545,10 +574,12 @@ const filters = ref<{
 }>({
   role: null,
   permissions: {
-    uploadImage: null,
-    submitAI: null,
-    publishReview: null,
-    submitReview: null
+    uploadImage: null as boolean | null,
+    uploadPaper: null as boolean | null,
+    uploadReview: null as boolean | null,
+    uploadComprehensive: null as boolean | null,
+    submitAI: null as boolean | null,
+    publishReview: null as boolean | null
   },
   timeRange: null,
   startDate: null,
@@ -584,9 +615,11 @@ const resetFilters = () => {
     role: null,
     permissions: {
       uploadImage: null,
+      uploadPaper: null,
+      uploadReview: null,
+      uploadComprehensive: null,
       submitAI: null,
-      publishReview: null,
-      submitReview: null
+      publishReview: null
     },
     timeRange: null,
     startDate: null,
@@ -607,21 +640,6 @@ const applyFilters = () => {
   // 如果有时间错误，不执行筛选
   if (timeError.value) {
     return
-  }
-
-  // 计算权限值
-  let permissionValue = 0
-  if (filters.value.permissions.uploadImage !== null) {
-    permissionValue |= (filters.value.permissions.uploadImage ? 8 : 0)
-  }
-  if (filters.value.permissions.submitAI !== null) {
-    permissionValue |= (filters.value.permissions.submitAI ? 4 : 0)
-  }
-  if (filters.value.permissions.publishReview !== null) {
-    permissionValue |= (filters.value.permissions.publishReview ? 2 : 0)
-  }
-  if (filters.value.permissions.submitReview !== null) {
-    permissionValue |= (filters.value.permissions.submitReview ? 1 : 0)
   }
 
   currentPage.value = 1
@@ -691,11 +709,26 @@ const getRoleName = (role: string) => {
   }
 }
 
-const getPermissionBit = (permission: string | null, bit: number) => {
-  if (permission === null) return false
-  // 将二进制字符串转换为数字，然后进行位运算
-  const permissionNum = parseInt(permission, 2)
-  return ((permissionNum >> bit) & 1) === 1
+const normalizePermission = (permission: string | number | null): number => {
+  if (permission === null || permission === undefined) return 0
+  let perm = typeof permission === 'number' ? permission : parseInt(String(permission), 10)
+  if (isNaN(perm)) return 0
+  // Backward compat: old 4-digit binary-as-decimal format (e.g. 1110 meaning upload+submit+publish)
+  const permStr = String(perm)
+  if (perm <= 1111 && /^[01]+$/.test(permStr) && permStr.length <= 4) {
+    const old = permStr.padStart(4, '0')
+    perm = 0
+    if (old[0] === '1') perm |= (64 | 32 | 16 | 8) // PERM_UPLOAD_ALL
+    if (old[1] === '1') perm |= 4  // PERM_SUBMIT
+    if (old[2] === '1') perm |= 2  // PERM_PUBLISH
+    if (old[3] === '1') perm |= 1  // PERM_REVIEW
+  }
+  return perm
+}
+
+const getPermissionBit = (permission: string | number | null, bit: number) => {
+  const perm = normalizePermission(permission)
+  return ((perm >> bit) & 1) === 1
 }
 
 // 创建管理员相关
@@ -712,17 +745,35 @@ const newAdmin = ref({
 const fetchUsers = async (page: number, pageSize: number) => {
   loading.value = true
   try {
-    // 计算权限筛选值（4 位二进制）
-    let permissionFilter = ''
+    // 计算权限筛选值（3态：null=不过滤, true=必须设置, false=必须未设置）
+    let permissionHas = 0
+    let permissionNot = 0
+    let hasPermFilter = false
     if (filters.value.enablePermissionFilter) {
-      const { uploadImage, submitAI, publishReview, submitReview } = filters.value.permissions
-      if (uploadImage !== null || submitAI !== null || publishReview !== null || submitReview !== null) {
-        let value = 0
-        if (uploadImage !== null) { value |= (uploadImage ? 8 : 0) }
-        if (submitAI !== null) { value |= (submitAI ? 4 : 0) }
-        if (publishReview !== null) { value |= (publishReview ? 2 : 0) }
-        if (submitReview !== null) { value |= (submitReview ? 1 : 0) }
-        permissionFilter = value.toString(2).padStart(4, '0')
+      const perms = filters.value.permissions
+      if (perms.uploadImage !== null) {
+        hasPermFilter = true
+        if (perms.uploadImage) { permissionHas |= 64 } else { permissionNot |= 64 }
+      }
+      if (perms.uploadPaper !== null) {
+        hasPermFilter = true
+        if (perms.uploadPaper) { permissionHas |= 32 } else { permissionNot |= 32 }
+      }
+      if (perms.uploadReview !== null) {
+        hasPermFilter = true
+        if (perms.uploadReview) { permissionHas |= 16 } else { permissionNot |= 16 }
+      }
+      if (perms.uploadComprehensive !== null) {
+        hasPermFilter = true
+        if (perms.uploadComprehensive) { permissionHas |= 8 } else { permissionNot |= 8 }
+      }
+      if (perms.submitAI !== null) {
+        hasPermFilter = true
+        if (perms.submitAI) { permissionHas |= 4 } else { permissionNot |= 4 }
+      }
+      if (perms.publishReview !== null) {
+        hasPermFilter = true
+        if (perms.publishReview) { permissionHas |= 2 } else { permissionNot |= 2 }
       }
     }
 
@@ -746,15 +797,18 @@ const fetchUsers = async (page: number, pageSize: number) => {
       endTimeFilter = formatDateFilter(new Date(filters.value.endDate).getTime())
     }
 
-    const params = {
+    const params: Record<string, any> = {
       page,
       page_size: pageSize,
       query: searchQuery.value || '',
       role: filters.value.role || '',
-      permission: permissionFilter || '',
       startTime: startTimeFilter,
       endTime: endTimeFilter,
       organization: currentUser.value?.admin_type === 'software_admin' ? organizationQuery.value : ''
+    }
+    if (hasPermFilter) {
+      if (permissionHas) params.permission_has = String(permissionHas)
+      if (permissionNot) params.permission_not = String(permissionNot)
     }
     const response = await userApi.getUsers(params)
     const { users: userList, current_page, total_pages, total_users } = response.data

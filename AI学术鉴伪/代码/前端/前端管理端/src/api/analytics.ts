@@ -2,7 +2,7 @@ import http from './request'
 
 export default {
   // 获取图像标签统计
-  getImgTag: (params: { startTime?: string; endTime?: string }) => {
+  getImgTag: (params: { startTime?: string; endTime?: string; resourceType?: string }) => {
     return http.get('/dashboard/img_tag/', { params })
   },
   getTopPublishers: () => {

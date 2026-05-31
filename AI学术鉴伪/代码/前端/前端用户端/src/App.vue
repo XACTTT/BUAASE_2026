@@ -299,17 +299,21 @@ const goToLogin = () => {
 
 const handleLogout = async () => {
   const refresh = localStorage.getItem("2-refresh")
+
+  // 先发后端登出请求（此时 localStorage 中 token 还在，请求能携带 Authorization）
+  try {
+    await user.logout({ refresh })
+  } catch {
+    // 后端登出失败也继续本地清理
+  }
+
   localStorage.removeItem("2-refresh")
   localStorage.removeItem("2-token")
   isLoggedIn.value = false
   localStorage.setItem("2-isLoggedIn", "false")
-  userStore.clearUserInfo() // 清除用户信息
+  userStore.clearUserInfo()
   snackbar.showMessage('退出成功', 'success')
   router.push('/login')
-
-  user.logout({ refresh }).catch(() => {
-    snackbar.showMessage('已退出(本地)，服务端未确认', 'warning')
-  })
 }
 
 const toggleTheme = () => {
