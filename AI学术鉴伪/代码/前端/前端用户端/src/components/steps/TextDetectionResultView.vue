@@ -21,6 +21,7 @@ const userStore = useUserStore()
 const isDarkMode = computed(() => theme.global.current.value.dark)
 
 const loading = ref(true)
+const showRawJson = ref(false)
 
 // --- Data ---
 interface TextResultItem {
@@ -391,6 +392,7 @@ const factualFakeReasons = computed(() => {
 // Review text: aggregated template data
 const reviewTemplateData = computed(() => {
   const data: { score: number; reason: string; resource_id: number }[] = []
+  // For structured tasks, template data comes from textDetails (fetched per resource)
   for (const item of reviewResults.value) {
     const detail = textDetails.value.get(item.resource_id)
     if (detail && detail.template_tendency_score !== undefined) {
@@ -398,6 +400,19 @@ const reviewTemplateData = computed(() => {
         score: detail.template_tendency_score,
         reason: detail.template_analysis_reason || '',
         resource_id: item.resource_id
+      })
+    }
+  }
+  // Fallback: for structured tasks where textDetails is empty,
+  // extract template tendency from dimensions array in taskMeta
+  if (data.length === 0 && reviewResults.value.length > 0) {
+    const dims = props.taskMeta?.result?.dimensions || props.taskMeta?.dimensions || []
+    const templateDim = dims.find((d: any) => d.name === 'template_tendency')
+    if (templateDim && templateDim.score !== undefined) {
+      data.push({
+        score: templateDim.score,
+        reason: templateDim.summary || '',
+        resource_id: reviewResults.value[0]?.resource_id || 0
       })
     }
   }
@@ -470,14 +485,6 @@ function formatDateTime(dateTime: string): string {
   const minutes = String(date.getMinutes()).padStart(2, '0')
   const seconds = String(date.getSeconds()).padStart(2, '0')
   return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`
-}
-
-function openReviewDialog() {
-  // Select all sections by default
-  const newSet = new Set<string>()
-  for (const s of structuredSections.value) newSet.add(s.item_id)
-  for (const s of structuredReviewSections.value) newSet.add(s.item_id)
-  selectedSectionIds.value = newSet
 }
 
 function clearReviewSelection() {
@@ -590,8 +597,10 @@ const submitReview = async () => {
       backendMsg = respData.error || respData.错误 || respData.detail || respData.message || ''
     }
     let message = '提交人工审核任务失败'
-    if (error?.code === 'ERR_NETWORK') {
-      message = '用户无权限'
+    if (error?.response?.status === 403) {
+      message = backendMsg || '该用户没有发布的权限'
+    } else if (error?.code === 'ERR_NETWORK') {
+      message = '网络错误，请检查连接'
     } else if (backendMsg) {
       message = typeof backendMsg === 'string' ? backendMsg : JSON.stringify(backendMsg)
     }
@@ -599,6 +608,15 @@ const submitReview = async () => {
   } finally {
     submittingReview.value = false
   }
+}
+
+const copyRawJson = () => {
+  const text = JSON.stringify(props.taskMeta, null, 2)
+  navigator.clipboard.writeText(text).then(() => {
+    snackbar.showMessage('已复制到剪贴板', 'success')
+  }).catch(() => {
+    snackbar.showMessage('复制失败', 'error')
+  })
 }
 
 // --- Data loading ---
@@ -1909,6 +1927,28 @@ onMounted(async () => {
         </v-card>
       </v-col>
     </v-row>
+
+    <!-- ========== Raw Result JSON ========== -->
+    <v-row>
+      <v-col cols="12">
+        <v-card class="mb-6" elevation="2" rounded="lg">
+          <v-card-title class="pa-6 d-flex align-center" @click="showRawJson = !showRawJson" style="cursor: pointer;">
+            <v-icon color="grey-darken-2" class="mr-2">mdi-code-json</v-icon>
+            <span class="text-h6">模型返回原始数据</span>
+            <v-spacer />
+            <v-btn :icon="showRawJson ? 'mdi-chevron-up' : 'mdi-chevron-down'" variant="text" size="small" />
+          </v-card-title>
+          <v-card-text v-if="showRawJson" class="pa-6">
+            <div class="d-flex justify-end mb-2">
+              <v-btn size="small" variant="outlined" prepend-icon="mdi-content-copy" @click="copyRawJson">
+                复制
+              </v-btn>
+            </div>
+            <pre class="raw-json-pre">{{ JSON.stringify(taskMeta, null, 2) }}</pre>
+          </v-card-text>
+        </v-card>
+      </v-col>
+    </v-row>
   </v-container>
 </template>
 
@@ -2058,5 +2098,20 @@ onMounted(async () => {
 
 .cursor-pointer {
   cursor: pointer;
+}
+
+.raw-json-pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  padding: 16px;
+  background-color: #1e1e1e;
+  color: #d4d4d4;
+  border-radius: 8px;
+  font-family: "Courier New", Courier, monospace;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  max-height: 600px;
+  overflow-y: auto;
 }
 </style>

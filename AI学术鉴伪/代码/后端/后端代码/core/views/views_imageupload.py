@@ -24,8 +24,16 @@ logger = logging.getLogger(__name__)
 @permission_classes([IsAuthenticated])
 def upload_file(request):
     user = request.user
-    if not user.has_permission('upload'):
-        return Response({"错误": "该用户没有上传文件的权限"}, status=403)
+    detect_type = request.data.get('detect_type', '')
+    perm_map = {
+        'image': 'upload_image',
+        'paper': 'upload_paper',
+        'review': 'upload_review',
+        'multi': 'upload_comprehensive',
+    }
+    perm_type = perm_map.get(detect_type, 'upload')
+    if not user.has_permission(perm_type):
+        return Response({"message": "该用户没有上传文件的权限"}, status=403)
 
     uploaded_files = request.FILES.getlist('file')
     if not uploaded_files:
@@ -377,6 +385,18 @@ def preview_resource(request, resource_type, resource_id):
                 owner = getattr(image.file_management, 'user', None)
                 if owner and owner.organization_id != auth_user.organization_id and not getattr(auth_user, 'is_superuser', False):
                     image = None
+
+        # Reviewer access: allow reviewers to view images assigned to their reviews
+        if image is None and getattr(auth_user, 'role', None) == 'reviewer':
+            from core.models import ManualReview
+            if ManualReview.objects.filter(
+                reviewer=auth_user,
+                imgs__id=resource_id,
+            ).exists():
+                try:
+                    image = ImageUpload.objects.select_related('file_management').get(id=resource_id)
+                except ImageUpload.DoesNotExist:
+                    pass
 
         if image is None:
             return Response({"message": "Image not found"}, status=404)

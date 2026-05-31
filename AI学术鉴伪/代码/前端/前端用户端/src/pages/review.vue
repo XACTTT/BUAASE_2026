@@ -300,7 +300,7 @@ const formatTime = (timestamp: string) => {
 }
 
 const goToTaskDetail = (task: Task) => {
-  router.push(`/task/detail/${task.manual_review_id}`)
+  router.push({ path: `/task/detail/${task.manual_review_id}`, query: { status: task.status } })
 }
 
 // 时间验证相关
@@ -401,7 +401,7 @@ const fetchTasks = async (page: number, pageSize: number) => {
       end_time: endTimeFilter
     }
     const response = await reviewerApi.getReviewerTasks(params)
-    const { results: taskList, current_page, total_pages, total_users } = response.data
+    const { results: taskList, current_page, total_pages, total_count } = response.data
     
     tasks.value = taskList.map((task: any) => ({
       manual_review_id: task.manual_review_id,
@@ -417,7 +417,7 @@ const fetchTasks = async (page: number, pageSize: number) => {
     
     currentPage.value = current_page
     totalPages.value = total_pages
-    totalTasks.value = total_users
+    totalTasks.value = total_count
   } catch (error) {
     console.error('获取任务列表失败:', error)
     snackbar.showMessage('获取任务列表失败', 'error')

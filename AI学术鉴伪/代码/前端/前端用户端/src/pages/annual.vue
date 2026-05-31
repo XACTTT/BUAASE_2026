@@ -40,6 +40,16 @@
           </div>
         </template>
 
+        <template v-slot:item.task_type="{ item }">
+          <v-chip
+            :color="getTaskTypeColor(item.task_type || 'image')"
+            size="small"
+            variant="tonal"
+          >
+            {{ getTaskTypeName(item.task_type || 'image') }}
+          </v-chip>
+        </template>
+
         <template v-slot:item.status="{ item }">
           <v-chip
             :color="getStatusColor(item.status)"
@@ -171,10 +181,13 @@ interface Task {
   request_time: string
   status: string
   progress: string
+  task_type?: string
+  task_type_label?: string
 }
 
 const headers = [
   { title: '任务ID', key: 'review_request_id', align: 'start' },
+  { title: '材料类型', key: 'task_type', align: 'center', sortable: false },
   { title: '提交时间', key: 'request_time', align: 'center' },
   { title: '状态', key: 'status', align: 'center' },
   { title: '进度', key: 'progress', align: 'center' },
@@ -216,6 +229,26 @@ const timeRangeOptions = [
   { title: '最近三月', value: '90d' },
   { title: '最近一年', value: '365d' }
 ]
+
+const getTaskTypeColor = (type: string) => {
+  switch (type) {
+    case 'image': return 'blue'
+    case 'paper_text': return 'teal'
+    case 'review_text': return 'purple'
+    case 'multi_material': return 'orange'
+    default: return 'grey'
+  }
+}
+
+const getTaskTypeName = (type: string) => {
+  switch (type) {
+    case 'image': return '图像'
+    case 'paper_text': return '论文'
+    case 'review_text': return '审稿'
+    case 'multi_material': return '综合'
+    default: return type
+  }
+}
 
 const getStatusColor = (status: string) => {
   switch (status) {
@@ -355,7 +388,9 @@ const fetchTasks = async (page: number, pageSize: number) => {
       review_request_id: task.review_request_id,
       request_time: task.request_time,
       status: task.status,
-      progress: task.progress
+      progress: task.progress,
+      task_type: task.task_type,
+      task_type_label: task.task_type_label,
     }))
     
     currentPage.value = current_page

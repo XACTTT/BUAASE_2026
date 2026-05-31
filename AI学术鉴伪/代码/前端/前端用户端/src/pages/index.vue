@@ -19,7 +19,7 @@
     </v-card>
 
     <!-- 资源列表 -->
-    <v-card>
+    <v-card v-if="userStore.role !== 'reviewer'">
       <v-card-title class="d-flex align-center">
         <h2 class="text-h6 font-weight-bold">我的资源</h2>
         <v-spacer></v-spacer>

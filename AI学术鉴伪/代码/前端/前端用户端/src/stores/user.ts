@@ -12,6 +12,7 @@ interface UserState {
   id: number;
   organization_name: string;
   organization: number
+  permission: number | null
 }
 
 const API_BASE_URL = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000').replace(/\/$/, '');
@@ -26,6 +27,7 @@ export const useUserStore = defineStore('user', {
     isLoaded: false,
     id: 0,
     organization: 0,
+    permission: null,
     organization_name: ''
   }),
 
@@ -42,6 +44,7 @@ export const useUserStore = defineStore('user', {
         this.id = response.data.id;
         this.organization = response.data.organization
         this.organization_name = response.data.organization_name
+        this.permission = response.data.permission ?? null
         return true;
       } catch (error) {
         console.error('获取用户信息失败:', error);
@@ -77,6 +80,7 @@ export const useUserStore = defineStore('user', {
       this.id = 0;
       this.organization = 0;
       this.organization_name = ''
+      this.permission = null
     }
   },
 

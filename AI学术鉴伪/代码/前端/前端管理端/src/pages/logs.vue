@@ -22,6 +22,7 @@
         return-object
         clearable
         hide-details
+        no-filter
         @update:search="searchUsersForTable"
         @update:model-value="handleSearchSelection"
       >
@@ -206,6 +207,7 @@
             multiple
             clearable
             hide-details
+            no-filter
             @update:search="searchUsersForDownload"
             @update:model-value="downloadUserSearch = ''"
           >
@@ -707,7 +709,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useSnackbarStore } from '@/stores/snackbar'
 import logApi from '@/api/log'
 import resourceApi from '@/api/resource'
@@ -1295,10 +1297,26 @@ const downloadUsersList = ref<User[]>([])
 const loadingDownloadUsers = ref(false)
 const downloadUserSearch = ref('')
 
+watch(() => showDownloadDialog.value, async (newVal) => {
+  if (newVal) {
+    try {
+      const response = await userApi.getUsers({ page: 1, page_size: 50 })
+      downloadUsersList.value = response.data.users || []
+    } catch (error) {
+      console.error('加载用户列表失败:', error)
+    }
+  }
+})
+
 // 搜索用户（用于下载）
 const searchUsersForDownload = async (query: string) => {
   if (!query) {
-    downloadUsersList.value = []
+    // 保留已选用户在列表中，防止 Vuetify 清空选中项
+    if (downloadSelectedUsers.value.length > 0) {
+      downloadUsersList.value = [...downloadSelectedUsers.value]
+    } else {
+      downloadUsersList.value = []
+    }
     return
   }
   
@@ -1379,7 +1397,11 @@ const handleSearchSelection = () => {
 // 搜索用户（用于表格）
 const searchUsersForTable = async (query: string) => {
   if (!query) {
-    searchUsersList.value = []
+    if (searchSelectedUser.value) {
+      searchUsersList.value = [searchSelectedUser.value]
+    } else {
+      searchUsersList.value = []
+    }
     return
   }
   

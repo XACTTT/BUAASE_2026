@@ -469,12 +469,14 @@ import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import uploadApi from '@/api/upload'
 import { useSnackbarStore } from '@/stores/snackbar'
+import { useUserStore } from '@/stores/user'
 import ImageSelectionStep from '@/components/steps/ImageSelectionStep.vue'
 import ExtractedContentStep from '@/components/steps/ExtractedContentStep.vue'
 import publisher from '@/api/publisher'
 import axios from 'axios'
 
 const router = useRouter()
+const userStore = useUserStore()
 const selectedVersion = ref<1 | 2 | 3>(1)
 type ModuleKey = 'image' | 'paper' | 'review' | 'multi'
 type UploadCategoryKey = 'image' | 'paper' | 'review'
@@ -500,7 +502,7 @@ const uploadModules: UploadModule[] = [
     acceptAttr: '.jpg,.png,.pdf',
     basicFormat: 'JPG/PNG',
     proFormat: 'JPG/PNG/PDF',
-    allowedExtensions: ['jpg', 'png'],
+    allowedExtensions: ['jpg', 'png', 'pdf'],
     maxSizeMB: 100
   },
   {
@@ -870,6 +872,15 @@ const handleSubmit = async () => {
       snackbar.showMessage('请在图片、论文、Review上传区至少上传一个文件', 'error')
       return
     }
+  }
+
+  // Check upload permission before sending file
+  const perm = userStore.permission
+  const permBitMap: Record<string, number> = { image: 64, paper: 32, review: 16, multi: 8 }
+  const requiredBit = permBitMap[selectedModule.value] ?? 120
+  if (perm === null || perm === undefined || (perm & requiredBit) === 0) {
+    snackbar.showMessage('您没有该类型上传权限，请联系管理员开通', 'error')
+    return
   }
 
   loading.value = true

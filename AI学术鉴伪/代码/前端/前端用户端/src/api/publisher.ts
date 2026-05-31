@@ -133,11 +133,15 @@ export default {
 
   //publisher根据imgid获取detectionid
   getTextReviewAll(data: any) {
-    return http.get(`/get_text_review_all/?review_request_id=${data.review_request_id}&text_id=${data.text_id}`)
+    return http.get('/get_text_review_all/', {
+      params: { review_request_id: data.review_request_id, text_id: data.text_id }
+    })
   },
 
   getTextReviewDetail(data: any) {
-    return http.get(`/get_text_review/?review_request_id=${data.review_request_id}&text_id=${data.text_id}&reviewer_id=${data.reviewer_id}`)
+    return http.get('/get_text_review/', {
+      params: { review_request_id: data.review_request_id, text_id: data.text_id, reviewer_id: data.reviewer_id }
+    })
   },
 
   getDetectionID(data: any) {

@@ -887,7 +887,7 @@ const filteredResources = computed(() => {
   if (filters.value.detectionResult) {
     const dr = filters.value.detectionResult
     if (dr === 'undetected') {
-      filtered = filtered.filter(r => r.detection_result === null && r.detection_status === 'pending')
+      filtered = filtered.filter(r => r.detection_result === null && !r.task_id)
     } else if (dr === 'detecting') {
       filtered = filtered.filter(r => r.detection_status === 'detecting')
     } else if (dr === 'failed') {
@@ -1250,7 +1250,7 @@ const getDetectionResultText = (item: Resource) => {
 }
 
 const getDetectionResultCount = (result: string) => {
-  if (result === 'undetected') return filteredResources.value.filter(r => r.detection_result === null && r.detection_status === 'pending').length
+  if (result === 'undetected') return filteredResources.value.filter(r => r.detection_result === null && !r.task_id).length
   if (result === 'detecting') return filteredResources.value.filter(r => r.detection_status === 'detecting').length
   if (result === 'failed') return filteredResources.value.filter(r => r.detection_result === 'failed' || r.detection_status === 'failed').length
   return filteredResources.value.filter(r => r.detection_result === result).length

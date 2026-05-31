@@ -1,4 +1,5 @@
 import csv
+from django.db import models as db_models
 from rest_framework_simplejwt.tokens import RefreshToken
 from core.models import PublisherReviewerRelationship, ImageReview, Organization
 from django.http import JsonResponse, HttpResponse
@@ -14,7 +15,7 @@ from ..utils.log_utils import action_log, log_action, get_client_ip
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from datetime import datetime
-from core.models import Log, User
+from core.models import Log, User, PERM_UPLOAD_IMAGE, PERM_UPLOAD_PAPER, PERM_UPLOAD_REVIEW, PERM_UPLOAD_COMPREHENSIVE, PERM_SUBMIT, PERM_PUBLISH, PERM_REVIEW
 from rest_framework.decorators import api_view, permission_classes
 from collections import defaultdict
 from core.models import FileManagement, ImageUpload, DetectionResult, SubDetectionResult, StructuredDetectionResult, TextDetectionResult
@@ -28,6 +29,8 @@ from django.core.exceptions import ObjectDoesNotExist
 from core.util import send_notification
 from core.models import Notification
 from core.utils.avatar_utils import safe_avatar_url as _safe_avatar_url
+from core.views.views_review import _resolve_task_type
+from core.services.review_indicator_service import get_task_type_label
 
 
 def _infer_resource_type(file_obj):
@@ -167,12 +170,12 @@ def admin_resources(request):
 
     if query:
         query_filter = (
-            models.Q(file_name__icontains=query)
-            | models.Q(user__username__icontains=query)
-            | models.Q(user__email__icontains=query)
+            db_models.Q(file_name__icontains=query)
+            | db_models.Q(user__username__icontains=query)
+            | db_models.Q(user__email__icontains=query)
         )
         if query.isdigit():
-            query_filter = query_filter | models.Q(id=int(query))
+            query_filter = query_filter | db_models.Q(id=int(query))
         resources = resources.filter(query_filter)
 
     if uploader_id:
@@ -607,15 +610,14 @@ class LogDetailView(APIView):
 @permission_classes([IsAdminUser])
 def dashboard_img_tag(request):
     """
-    返回符合对应Tag的ImageUpload数量统计（包含值为0的tag）
-    参数: startTime, endTime（ISO 8601格式）
-    示例响应: {"Biology": 1, "Medicine": 5, "Chemistry": 50, "Graphics": 2, "Other": 3}
+    返回符合对应Tag的资源数量统计（包含值为0的tag）
+    参数: startTime, endTime（ISO 8601格式）, resourceType（image/paper/review/all，默认all）
     """
     start_time = request.query_params.get('startTime')
     end_time = request.query_params.get('endTime')
+    resource_type = request.query_params.get('resourceType', 'all')
 
-    # 默认时间范围为最近一年
-    now = timezone.now()
+    now = timezone.localtime(timezone.now())
     default_start = now.replace(year=now.year - 1)
     default_end = now
 
@@ -632,9 +634,6 @@ def dashboard_img_tag(request):
     except ValueError:
         return Response({'error': 'Invalid datetime format'}, status=400)
 
-    from core.models import FileManagement
-    from django.db.models import Count
-
     tag_choices = list(FileManagement.TAG_CHOICES)
     tag_counts = {label: 0 for _, label in tag_choices}
     tag_aliases = {}
@@ -650,10 +649,20 @@ def dashboard_img_tag(request):
     if request.user.email != 'admin@mail.com':
         file_managements = file_managements.filter(organization=request.user.organization)
 
-    for row in file_managements.values('tag').annotate(image_count=Count('image_uploads')):
+    if resource_type == 'paper':
+        file_managements = file_managements.filter(resource_role__startswith='paper_')
+    elif resource_type == 'review':
+        file_managements = file_managements.filter(resource_role__startswith='review_')
+    elif resource_type == 'image':
+        file_managements = file_managements.filter(
+            resource_role='material_other',
+            file_ext__in=['png', 'jpg', 'jpeg', 'bmp', 'gif', 'webp']
+        )
+
+    for row in file_managements.values('tag').annotate(resource_count=db_models.Count('id')):
         raw_tag = row.get('tag') or 'other'
         normalized_tag = tag_aliases.get(raw_tag) or tag_aliases.get(str(raw_tag).lower()) or tag_aliases['other']
-        tag_counts[normalized_tag] += row['image_count']
+        tag_counts[normalized_tag] += row['resource_count']
 
     return Response(tag_counts)
 
@@ -674,21 +683,23 @@ def top_publishers_with_fake_ratio(request):
     for user in publishers:
         # 获取该用户的所有任务
         tasks = DetectionTask.objects.filter(user=user)
-        # 获取所有相关图片
-        images = ImageUpload.objects.filter(detection_task__in=tasks)
-        total_images = images.count()
+        # 通过 DetectionResult 关联（ImageUpload.detection_task 不可靠）
+        task_ids = tasks.values_list('id', flat=True)
+        detection_results = DetectionResult.objects.filter(detection_task__in=task_ids)
+        total_images = detection_results.count()
 
         if total_images == 0:
             fake_ratio = 0
+            fake_count = 0
         else:
-            fake_count = images.filter(isFake=True).count()
+            fake_count = detection_results.filter(is_fake=True).count()
             fake_ratio = round(fake_count / total_images, 2)
 
         result.append({
             "username": user.username,
             "total_tasks": tasks.count(),
             "total_images": total_images,
-            "fake_count": images.filter(isFake=True).count(),
+            "fake_count": fake_count,
             "fake_ratio": fake_ratio
         })
 
@@ -721,16 +732,17 @@ def top_organizations_with_fake_ratio(request):
 
         # 获取该组织下所有 publisher 的任务
         tasks = DetectionTask.objects.filter(user__in=publishers)
+        task_ids = tasks.values_list('id', flat=True)
 
-        # 获取这些任务下的所有图片
-        images = ImageUpload.objects.filter(detection_task__in=tasks)
-        total_images = images.count()
+        # 通过 DetectionResult 关联（ImageUpload.detection_task 不可靠）
+        detection_results = DetectionResult.objects.filter(detection_task__in=task_ids)
+        total_images = detection_results.count()
 
         if total_images == 0:
             fake_count = 0
             fake_ratio = 0.0
         else:
-            fake_count = images.filter(isFake=True).count()
+            fake_count = detection_results.filter(is_fake=True).count()
             fake_ratio = round(fake_count / total_images, 2)
 
         result.append({
@@ -1097,23 +1109,28 @@ class UserPermissionView(APIView):
             user.save_permission()
 
             if permission_value is not None:
-                perm_str = str(permission_value).zfill(4)
                 perms_desc = {
-                    'upload': '可上传' if perm_str[0] == '1' else '不可上传',
-                    'submit': '可提交' if perm_str[1] == '1' else '不可提交',
-                    'publish': '可发布' if perm_str[2] == '1' else '不可发布',
-                    'review': '可审核' if perm_str[3] == '1' else '不可审核',
+                    'upload_image': '可上传图像' if permission_value & PERM_UPLOAD_IMAGE else '不可上传图像',
+                    'upload_paper': '可上传论文' if permission_value & PERM_UPLOAD_PAPER else '不可上传论文',
+                    'upload_review': '可上传Review' if permission_value & PERM_UPLOAD_REVIEW else '不可上传Review',
+                    'upload_comprehensive': '可上传综合资源' if permission_value & PERM_UPLOAD_COMPREHENSIVE else '不可上传综合资源',
+                    'submit': '可提交检测' if permission_value & PERM_SUBMIT else '不可提交检测',
+                    'publish': '可发布审核' if permission_value & PERM_PUBLISH else '不可发布审核',
+                    'review': '可审核' if permission_value & PERM_REVIEW else '不可审核',
                 }
             else:
                 perms_desc = {
-                    'upload': '不可上传',
-                    'submit': '不可提交',
-                    'publish': '不可发布',
+                    'upload_image': '不可上传图像',
+                    'upload_paper': '不可上传论文',
+                    'upload_review': '不可上传Review',
+                    'upload_comprehensive': '不可上传综合资源',
+                    'submit': '不可提交检测',
+                    'publish': '不可发布审核',
                     'review': '不可审核',
                 }
 
             # 构建通知内容
-            permission_description = f"{perms_desc['upload']}、{perms_desc['submit']}、{perms_desc['publish']}、{perms_desc['review']}"
+            permission_description = f"{perms_desc['upload_image']}、{perms_desc['upload_paper']}、{perms_desc['upload_review']}、{perms_desc['upload_comprehensive']}、{perms_desc['submit']}、{perms_desc['publish']}、{perms_desc['review']}"
 
             send_notification(
                 receiver_id=user.id,
@@ -1329,7 +1346,11 @@ class UserActionLogDownloadView(APIView):
                 logs = logs.filter(user__organization_id=organization_id)
 
         if query:
-            logs = logs.filter(user__username__icontains=query)
+            try:
+                user_ids = [int(x) for x in query.split(',')]
+                logs = logs.filter(user__id__in=user_ids)
+            except (ValueError, AttributeError):
+                logs = logs.filter(user__username__icontains=query)
         if operation_type:
             logs = logs.filter(operation_type=operation_type)
         if target_type:
@@ -1400,10 +1421,12 @@ class LogStatisticsView(APIView):
     @permission_classes([IsAdminUser])
     def get(self, request):
         from django.db.models import Count
-        from django.db.models.functions import TruncDate
         
         # 默认统计最近 30 天
-        days = int(request.GET.get('days', 30))
+        try:
+            days = int(request.GET.get('days', 30))
+        except (TypeError, ValueError):
+            return JsonResponse({'error': 'Invalid days parameter'}, status=400)
         start_date = timezone.now() - timedelta(days=days)
         
         logs = Log.objects.filter(operation_time__gte=start_date)
@@ -1414,10 +1437,14 @@ class LogStatisticsView(APIView):
             logs = logs.filter(user__organization=request.user.organization)
         
         # 1. 每日操作次数统计
-        daily_stats = logs.annotate(date=TruncDate('operation_time')) \
-                          .values('date') \
-                          .annotate(count=Count('log_id')) \
-                          .order_by('date')
+        daily_counts = defaultdict(int)
+        for operation_time in logs.exclude(operation_time__isnull=True).values_list('operation_time', flat=True):
+            local_time = timezone.localtime(operation_time) if timezone.is_aware(operation_time) else operation_time
+            daily_counts[local_time.date().isoformat()] += 1
+        daily_stats = [
+            {'date': date, 'count': count}
+            for date, count in sorted(daily_counts.items())
+        ]
         
         # 2. 操作类型占比
         type_stats = logs.values('operation_type') \
@@ -1428,7 +1455,7 @@ class LogStatisticsView(APIView):
         anomaly_count = logs.filter(is_anomaly=True).count()
         
         return JsonResponse({
-            'daily_stats': list(daily_stats),
+            'daily_stats': daily_stats,
             'type_stats': list(type_stats),
             'total_count': logs.count(),
             'anomaly_count': anomaly_count
@@ -1568,7 +1595,6 @@ def get_all_user_tasks(request):
 def get_users(request):
     query = request.query_params.get('query', '')
     role = request.query_params.get('role', '')
-    permission = request.query_params.get('permission', '')
     start_time = request.query_params.get('startTime', None)
     end_time = request.query_params.get('endTime', None)
     organization_name = request.query_params.get('organization', None)  # 新增组织筛选参数
@@ -1589,15 +1615,27 @@ def get_users(request):
 
     # 应用其他筛选条件
     if query:
-        users = users.filter(username__startswith=query)
+        users = users.filter(username__icontains=query)
     if role:
         users = users.filter(role=role)
-    if permission:
+    permission_has = request.query_params.get('permission_has')
+    permission_not = request.query_params.get('permission_not')
+    if permission_has:
         try:
-            permission = int(permission)
-            users = users.filter(permission=permission)
+            permission_has = int(permission_has)
+            users = users.filter(permission__isnull=False).extra(
+                where=["(permission & %s) = %s"], params=[permission_has, permission_has]
+            )
         except ValueError:
-            return Response({'error': 'Permission value must be an integer'}, status=400)
+            return Response({'error': 'permission_has must be an integer'}, status=400)
+    if permission_not:
+        try:
+            permission_not = int(permission_not)
+            users = users.filter(permission__isnull=False).extra(
+                where=["(permission & %s) = 0"], params=[permission_not]
+            )
+        except ValueError:
+            return Response({'error': 'permission_not must be an integer'}, status=400)
     if start_time:
         users = users.filter(date_joined__gte=start_time)
     if end_time:
@@ -1657,9 +1695,7 @@ def create_user(request):
     if not username or not password:
         return Response({'error': 'Username and password are required'}, status=400)
 
-    user = User.objects.create_user(username=username, email=email, password=password)
-    user.role = role
-    user.save()
+    user = User.objects.create_user(username=username, email=email, password=password, role=role)
 
     return Response({'message': 'User created successfully', 'user_id': user.id})
 
@@ -1677,12 +1713,14 @@ def update_user(request, user_id):
         user.email = request.data.get('email', user.email)
         user.role = request.data.get('role', user.role)
         user.state = request.data.get('state', user.state)
-        user.permission = request.data.get('permission', user.permission)  # 更新 permission 字段
+        permission = request.data.get('permission', user.permission)
+        if permission is not None:
+            user.permission = int(permission)
 
         if 'password' in request.data:
             user.set_password(request.data['password'])
 
-        user.save()
+        user.save_permission()
         return Response({'message': 'User updated successfully'})
     except User.DoesNotExist:
         return Response({'error': 'User not found'}, status=404)
@@ -1766,9 +1804,8 @@ def create_admin(request):
         return Response({'error': 'Username already exists'}, status=400)
 
     # 创建新用户
-    user = User.objects.create_user(username=username, email=email, password=password)
-    user.role = role
-    user.is_staff = True  # 设置为员工用户
+    user = User.objects.create_user(username=username, email=email, password=password, role=role)
+    user.is_staff = True
     user.save()
 
     return Response({'message': 'Admin user created successfully', 'user_id': user.id}, status=201)
@@ -1905,6 +1942,7 @@ def get_all_review_requests(request):
 
     request_data = []
     for req in page_obj.object_list:
+        task_type = _resolve_task_type(req)
         request_data.append({
             "id": req.id,
             "username": req.user.username,
@@ -1912,6 +1950,8 @@ def get_all_review_requests(request):
             "state": req.status2,
             "time": timezone.localtime(req.request_time).strftime('%Y-%m-%d %H:%M:%S'),
             "organization": req.organization.name if req.organization else None,
+            "task_type": task_type,
+            "task_type_label": get_task_type_label(task_type),
         })
 
     return Response({
@@ -1952,33 +1992,18 @@ def get_review_request_detail_admin(request, reviewRequest_id):
         for img in review_request.imgs.all():
             imgs.append({
                 "id": img.id,
-                "url": serialize_value(img.image, request) if img.image else None,
-            })
-
-        # 获取 texts 数据
-        texts = []
-        for text in review_request.text_resources.all():
-            texts.append({
-                "id": text.id,
-                "raw_text": text.raw_text[:200] + '...' if len(text.raw_text) > 200 else text.raw_text,
-                "source_type": text.source_type,
-            })
-
-        # 获取 persons 数据：所有参与该请求的 reviewer（来自 ManualReview 表）
-        persons = []
-        for reviewer in review_request.reviewers.all():
-            persons.append({
-                "id": reviewer.id,
-                "username": reviewer.username,
-                "avatar": _safe_avatar_url(reviewer),
+                "url": request.build_absolute_uri(f'/api/preview/image/{img.id}/') if img.image else None,
             })
 
         # 获取关联的 DetectionTask
         from core.models import DetectionTask
         detection_task = None
-        if review_request.detection_result:
+        # 优先直接通过 FK
+        if review_request.detection_task_id:
+            detection_task = review_request.detection_task
+        if not detection_task and review_request.detection_result:
             detection_task = review_request.detection_result.detection_task
-        elif review_request.text_detection_result:
+        if not detection_task and review_request.text_detection_result:
             detection_task = review_request.text_detection_result.detection_task
         if not detection_task:
             img = review_request.imgs.first()
@@ -1997,6 +2022,235 @@ def get_review_request_detail_admin(request, reviewRequest_id):
 
         task_id = detection_task.id if detection_task else None
         task_type = detection_task.task_type if detection_task else None
+        detect_type = detection_task.detect_type if detection_task else None
+
+        # 构建 structured_items 和文件信息
+        structured_items = []
+        paper_files = []
+        review_files = []
+        snapshot = None
+        structured_result = None
+        if detection_task:
+            from core.models import StructuredDetectionResult
+            structured_result = StructuredDetectionResult.objects.filter(
+                detection_task=detection_task
+            ).first()
+            if structured_result and structured_result.result_payload:
+                payload = structured_result.result_payload
+                evidence = payload.get('evidence') or {}
+                per_section = evidence.get('per_section') or []
+                item_text_lookup = {}
+                try:
+                    from core.services.structured_detection_service import StructuredDetectionService
+                    snapshot = StructuredDetectionService.build_input_snapshot(detection_task)
+                    paper_files = snapshot.get('paper_files') or []
+                    review_files = snapshot.get('review_files') or []
+                    review_texts_list = snapshot.get('review_texts') or []
+                    images_list = snapshot.get('images') or []
+                    text_items = StructuredDetectionService._extract_text_items_from_snapshot(
+                        snapshot, detection_task.detect_type
+                    )
+                    item_text_lookup = {
+                        item.get('id'): item.get('text')
+                        for item in text_items
+                        if item.get('id')
+                    }
+                except Exception:
+                    item_text_lookup = {}
+
+                def _resolve_source_file_id(item_id):
+                    if not item_id:
+                        return None
+                    parts = str(item_id).split('_')
+                    # paper: {detect_type}_paper_{fileIdx}_{secIdx}
+                    if len(parts) >= 4 and parts[1] == 'paper':
+                        try:
+                            file_idx = int(parts[2])
+                            return (paper_files[file_idx] or {}).get('file_id')
+                        except (IndexError, ValueError, TypeError):
+                            return None
+                    # review file: {detect_type}_review_file_{fileIdx}_{secIdx}
+                    if len(parts) >= 5 and parts[1] == 'review' and parts[2] == 'file':
+                        try:
+                            file_idx = int(parts[3])
+                            return (review_files[file_idx] or {}).get('file_id')
+                        except (IndexError, ValueError, TypeError):
+                            return None
+                    # review text: {detect_type}_review_text_{textIdx} -- no source file
+                    return None
+
+                # Build review_texts lookup from snapshot for per-text filtering
+                review_texts_list = snapshot.get('review_texts') or [] if snapshot else []
+                review_text_ids = [rt.get('review_text_id') for rt in review_texts_list if rt.get('review_text_id')]
+
+                structured_items = [
+                    {
+                        "item_id": entry.get("item_id"),
+                        "text": item_text_lookup.get(entry.get("item_id")),
+                        "is_aigc": entry.get("is_aigc"),
+                        "label_name": entry.get("label_name"),
+                        "confidence_score": entry.get("confidence_score"),
+                        "probabilities": entry.get("probabilities"),
+                        "source_file_id": _resolve_source_file_id(entry.get("item_id")),
+                    }
+                    for entry in per_section
+                ]
+
+                # Filter: only keep items that were selected by the user
+                selected_ids = review_request.selected_section_ids
+                if selected_ids and structured_items:
+                    selected_set = set(selected_ids)
+                    structured_items = [
+                        item for item in structured_items
+                        if item.get('item_id') in selected_set
+                    ]
+
+        # Extract template_tendency from structured result dimensions (review_text)
+        template_tendency_info = {}
+        if detection_task and detect_type in ('review', 'multi') and structured_result:
+            dims = ((structured_result.result_payload or {}).get('dimensions') or [])
+            for d in dims:
+                if d.get('name') == 'template_tendency':
+                    template_tendency_info = {
+                        'template_tendency_score': d.get('score'),
+                        'template_analysis_reason': d.get('summary', ''),
+                    }
+                    break
+
+        # 获取 texts 数据
+        texts = []
+        for index, text in enumerate(review_request.text_resources.all()):
+            text_data = {
+                "id": text.id,
+                "raw_text": text.raw_text,
+                "source_type": text.source_type,
+            }
+            # per-text structured items
+            text_result = None
+            if detection_task:
+                text_result = TextDetectionResult.objects.filter(
+                    detection_task=detection_task,
+                    text_resource_id=text.id,
+                ).order_by('-id').first()
+            items = []
+            if text_result:
+                items = text_result.ai_generated_paragraphs or []
+            elif structured_items:
+                # Filter structured_items for this specific text resource
+                # For review_text items, match by review_text_{textIdx} pattern
+                # For paper/review_file items, match by selected_section_ids
+                selected_ids = review_request.selected_section_ids
+                if selected_ids:
+                    selected_set = set(selected_ids)
+                    items = [
+                        item for item in structured_items
+                        if item.get('item_id') in selected_set
+                    ]
+                else:
+                    items = structured_items
+            if items:
+                text_data['items'] = items
+
+            source_file_id = None
+            if paper_files:
+                source_file_id = paper_files[0].get('file_id')
+            elif review_files:
+                source_file_id = review_files[0].get('file_id')
+            elif structured_items:
+                source_file_id = structured_items[0].get('source_file_id')
+            if source_file_id:
+                text_data['source_file_id'] = source_file_id
+
+            # AI detection summary
+            if text_result:
+                text_data['ai_detection'] = {
+                    'is_fake': text_result.is_fake,
+                    'confidence_score': text_result.confidence_score,
+                    'factual_fake_reason': getattr(text_result, 'factual_fake_reason', ''),
+                    'template_tendency_score': getattr(text_result, 'template_tendency_score', None),
+                    'template_analysis_reason': getattr(text_result, 'template_analysis_reason', ''),
+                }
+            elif template_tendency_info:
+                text_data['ai_detection'] = {
+                    'is_fake': ((structured_result.result_payload or {}).get('overall') or {}).get('is_fake'),
+                    'confidence_score': ((structured_result.result_payload or {}).get('overall') or {}).get('confidence_score'),
+                    'factual_fake_reason': '',
+                    **template_tendency_info,
+                }
+
+            texts.append(text_data)
+
+        # 构建 paper_files 和 review_files 的前端展示数据
+        paper_files_display = []
+        for pf in paper_files:
+            file_id = pf.get('file_id')
+            pf_data = {
+                'file_id': file_id,
+                'file_name': pf.get('file_name', ''),
+                'resource_role': pf.get('resource_role', ''),
+                'file_ext': pf.get('file_ext', ''),
+                'sections_count': len(pf.get('sections') or []),
+                'preview_url': request.build_absolute_uri(f'/api/preview/file/{file_id}/') if file_id else None,
+            }
+            paper_files_display.append(pf_data)
+
+        review_files_display = []
+        for rf in review_files:
+            file_id = rf.get('file_id')
+            rf_data = {
+                'file_id': file_id,
+                'file_name': rf.get('file_name', ''),
+                'resource_role': rf.get('resource_role', ''),
+                'file_ext': rf.get('file_ext', ''),
+                'sections_count': len(rf.get('sections') or []),
+                'preview_url': request.build_absolute_uri(f'/api/preview/file/{file_id}/') if file_id else None,
+            }
+            review_files_display.append(rf_data)
+
+        review_texts_display = []
+        if snapshot:
+            for rt in (snapshot.get('review_texts') or []):
+                review_texts_display.append({
+                    'review_text_id': rt.get('review_text_id'),
+                    'source_type': rt.get('source_type', ''),
+                    'language': rt.get('language', ''),
+                    'token_count': rt.get('token_count', 0),
+                    'preview_text': (rt.get('raw_text') or '')[:300],
+                })
+
+        # 构建 top-level AI detection result
+        ai_detection_result = {}
+        if review_request.detection_result:
+            ai_detection_result = {
+                "is_fake": review_request.detection_result.is_fake,
+                "confidence_score": review_request.detection_result.confidence_score,
+                "detection_time": review_request.detection_result.detection_time.strftime('%Y-%m-%d %H:%M:%S')
+                if review_request.detection_result.detection_time else None,
+            }
+        elif review_request.text_detection_result:
+            ai_detection_result = {
+                "is_fake": review_request.text_detection_result.is_fake,
+                "confidence_score": review_request.text_detection_result.confidence_score,
+                "detection_time": review_request.text_detection_result.detection_time.strftime('%Y-%m-%d %H:%M:%S')
+                if review_request.text_detection_result.detection_time else None,
+            }
+        elif detection_task and structured_result:
+            overall = (structured_result.result_payload or {}).get('overall') or {}
+            ai_detection_result = {
+                "is_fake": overall.get('is_fake'),
+                "confidence_score": overall.get('confidence_score'),
+                "detection_time": detection_task.completion_time.strftime('%Y-%m-%d %H:%M:%S')
+                if detection_task.completion_time else None,
+            }
+
+        # 获取 persons 数据：所有参与该请求的 reviewer（来自 ManualReview 表）
+        persons = []
+        for reviewer in review_request.reviewers.all():
+            persons.append({
+                "id": reviewer.id,
+                "username": reviewer.username,
+                "avatar": _safe_avatar_url(reviewer),
+            })
 
         return Response({
             "imgs": imgs,
@@ -2006,6 +2260,12 @@ def get_review_request_detail_admin(request, reviewRequest_id):
             "organization": review_request.organization.name if review_request.organization else None,
             "task_id": task_id,
             "task_type": task_type,
+            "detect_type": detect_type,
+            "ai_detection_result": ai_detection_result,
+            "structured_items": structured_items,
+            "paper_files": paper_files_display,
+            "review_files": review_files_display,
+            "review_texts": review_texts_display,
         })
 
     except ReviewRequest.DoesNotExist:
@@ -2111,18 +2371,21 @@ def get_review_request_detail(request, manual_review_id):
                 if not item_id:
                     return None
                 parts = str(item_id).split('_')
+                # paper: {detect_type}_paper_{fileIdx}_{secIdx}
                 if len(parts) >= 4 and parts[1] == 'paper':
                     try:
                         file_idx = int(parts[2])
                         return (paper_files[file_idx] or {}).get('file_id')
                     except (IndexError, ValueError, TypeError):
                         return None
+                # review file: {detect_type}_review_file_{fileIdx}_{secIdx}
                 if len(parts) >= 5 and parts[1] == 'review' and parts[2] == 'file':
                     try:
                         file_idx = int(parts[3])
                         return (review_files[file_idx] or {}).get('file_id')
                     except (IndexError, ValueError, TypeError):
                         return None
+                # review text: {detect_type}_review_text_{textIdx} -- no source file
                 return None
 
             structured_items = [
@@ -2295,6 +2558,7 @@ def handle_review_request(request, reviewRequest_id):
             manual_review = ManualReview.objects.create(
                 review_request=review_request,
                 reviewer=reviewer,
+                organization=review_request.organization,
                 status='undo'  # 默认状态
             )
 
@@ -2337,6 +2601,9 @@ def handle_review_request(request, reviewRequest_id):
 
     # 更新审核请求的状态和理由
     review_request.check_reason = reason
+    if choice == 1:
+        review_request.status1 = 'in_progress'
+        review_request.review_start_time = timezone.now()
     review_request.save()
 
     return Response({'message': 'ReviewRequest handled successfully'})

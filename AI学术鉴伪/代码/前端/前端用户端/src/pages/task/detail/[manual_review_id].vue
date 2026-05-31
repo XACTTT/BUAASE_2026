@@ -201,9 +201,9 @@
       <template v-else-if="reviewMode === 'text'">
         <div class="pa-6">
           <v-row>
-            <!-- Left: Text list -->
+            <!-- Left: Text list + Text content -->
             <v-col cols="12" md="3">
-              <v-card elevation="2" rounded="lg" class="text-sidebar">
+              <v-card elevation="2" rounded="lg" class="text-sidebar mb-4">
                 <v-card-title class="pa-4">
                   <v-icon class="mr-2">mdi-file-document-multiple</v-icon>
                   文本列表
@@ -211,7 +211,7 @@
                   <v-chip size="small" color="primary">{{ textResources.length }}</v-chip>
                 </v-card-title>
                 <v-divider></v-divider>
-                <v-card-text class="pa-2" style="max-height: calc(100vh - 260px); overflow-y: auto;">
+                <v-card-text class="pa-2" style="max-height: calc(50vh - 120px); overflow-y: auto;">
                   <div v-for="(text, index) in textResources" :key="text.id"
                     class="text-sidebar-item pa-3 mb-2 rounded-lg cursor-pointer"
                     :class="{ 'text-sidebar-item-active': currentTextIndex === index }"
@@ -234,94 +234,91 @@
                   </div>
                 </v-card-text>
               </v-card>
+
+              <!-- Text content card below the list -->
+              <v-card v-if="currentTextResource" elevation="2" rounded="lg">
+                <v-card-title class="pa-4 d-flex align-center">
+                  <v-icon class="mr-2">mdi-text-box</v-icon>
+                  文本内容
+                  <v-spacer></v-spacer>
+                  <v-btn size="small" variant="text" @click="toggleFullText">
+                    {{ showFullText ? '收起' : '展开全文' }}
+                  </v-btn>
+                </v-card-title>
+                <v-divider></v-divider>
+                <v-card-text class="pa-4" style="max-height: 200px; overflow-y: auto;">
+                  <div class="text-body-2" style="white-space: pre-wrap; line-height: 1.8;">
+                    {{ displayText }}
+                  </div>
+                </v-card-text>
+              </v-card>
+
+              <!-- AI detection result reference -->
+              <v-card v-if="currentTextResource && currentAiDetection" elevation="2" rounded="lg" class="mb-4">
+                <v-card-title class="pa-4">
+                  <v-icon class="mr-2" color="primary">mdi-robot</v-icon>
+                  AI 检测结果参考
+                </v-card-title>
+                <v-divider></v-divider>
+                <v-card-text class="pa-4" style="max-height: 300px; overflow-y: auto;">
+                  <v-row class="mb-3">
+                    <v-col cols="6">
+                      <div class="text-body-2 text-grey mb-1">AI判定</div>
+                      <v-chip :color="currentAiDetection.is_fake ? 'error' : 'success'" size="small">
+                        {{ currentAiDetection.is_fake ? '疑似造假' : '可能真实' }}
+                      </v-chip>
+                    </v-col>
+                    <v-col cols="6">
+                      <div class="text-body-2 text-grey mb-1">置信度</div>
+                      <span class="text-h6" :class="currentAiDetection.confidence_score > 0.7 ? 'error--text' : 'primary--text'">
+                        {{ ((currentAiDetection.confidence_score || 0) * 100).toFixed(1) }}%
+                      </span>
+                    </v-col>
+                  </v-row>
+
+                  <template v-if="(currentAiDetection.ai_generated_paragraphs?.length ?? 0) > 0">
+                    <div class="text-subtitle-2 mb-2">AI生成段落标记</div>
+                    <div class="paragraph-review-list">
+                      <div v-for="(para, pIdx) in currentAiDetection.ai_generated_paragraphs" :key="pIdx"
+                        class="pa-2 mb-2 rounded" style="background: rgba(var(--v-theme-error), 0.05); border-left: 3px solid rgb(var(--v-theme-error));">
+                        <div class="d-flex align-center mb-1">
+                          <v-chip size="x-small" color="error" class="mr-2">段落 {{ para.paragraph_index }}</v-chip>
+                          <span class="text-caption text-grey">AI概率: {{ ((para.ai_probability || 0) * 100).toFixed(1) }}%</span>
+                        </div>
+                        <div class="text-caption" style="max-height: 60px; overflow: hidden;">{{ para.text?.substring(0, 150) }}...</div>
+                        <div v-if="para.reason" class="text-caption text-grey mt-1">原因: {{ para.reason }}</div>
+                      </div>
+                    </div>
+                  </template>
+
+                  <v-alert v-if="currentAiDetection.factual_fake_reason" type="warning" variant="tonal" class="mb-3">
+                    <div class="text-subtitle-2 mb-1">AI检测分析</div>
+                    {{ currentAiDetection.factual_fake_reason }}
+                  </v-alert>
+
+                  <template v-if="currentAiDetection.template_tendency_score !== null && currentAiDetection.template_tendency_score !== undefined">
+                    <div class="text-subtitle-2 mb-2">模板化倾向分析</div>
+                    <v-progress-linear
+                      :model-value="(currentAiDetection.template_tendency_score || 0) * 100"
+                      :color="(currentAiDetection.template_tendency_score || 0) > 0.7 ? 'error' : (currentAiDetection.template_tendency_score || 0) > 0.4 ? 'warning' : 'success'"
+                      height="20"
+                      class="mb-2"
+                    >
+                      <template #default="{ value }">
+                        <span class="text-caption">{{ value.toFixed(0) }}%</span>
+                      </template>
+                    </v-progress-linear>
+                    <div v-if="currentAiDetection.template_analysis_reason" class="text-body-2 text-grey mt-2">
+                      {{ currentAiDetection.template_analysis_reason }}
+                    </div>
+                  </template>
+                </v-card-text>
+              </v-card>
             </v-col>
 
-            <!-- Center: Text content and review form -->
+            <!-- Center: Review form for selected text -->
             <v-col cols="12" md="6">
               <template v-if="currentTextResource">
-                <!-- Text content card -->
-                <v-card elevation="2" rounded="lg" class="mb-4">
-                  <v-card-title class="pa-4 d-flex align-center">
-                    <v-icon class="mr-2">mdi-text-box</v-icon>
-                    文本内容
-                    <v-spacer></v-spacer>
-                    <v-btn size="small" variant="text" @click="toggleFullText">
-                      {{ showFullText ? '收起' : '展开全文' }}
-                    </v-btn>
-                  </v-card-title>
-                  <v-divider></v-divider>
-                  <v-card-text class="pa-4" style="max-height: 300px; overflow-y: auto;">
-                    <div class="text-body-2" style="white-space: pre-wrap; line-height: 1.8;">
-                      {{ displayText }}
-                    </div>
-                  </v-card-text>
-                </v-card>
-
-                <!-- AI detection result reference -->
-                <v-card v-if="currentAiDetection" elevation="2" rounded="lg" class="mb-4">
-                  <v-card-title class="pa-4">
-                    <v-icon class="mr-2" color="primary">mdi-robot</v-icon>
-                    AI 检测结果参考
-                  </v-card-title>
-                  <v-divider></v-divider>
-                  <v-card-text class="pa-4">
-                    <v-row class="mb-3">
-                      <v-col cols="6">
-                        <div class="text-body-2 text-grey mb-1">AI判定</div>
-                        <v-chip :color="currentAiDetection.is_fake ? 'error' : 'success'" size="small">
-                          {{ currentAiDetection.is_fake ? '疑似造假' : '可能真实' }}
-                        </v-chip>
-                      </v-col>
-                      <v-col cols="6">
-                        <div class="text-body-2 text-grey mb-1">置信度</div>
-                        <span class="text-h6" :class="currentAiDetection.confidence_score > 0.7 ? 'error--text' : 'primary--text'">
-                          {{ ((currentAiDetection.confidence_score || 0) * 100).toFixed(1) }}%
-                        </span>
-                      </v-col>
-                    </v-row>
-
-                    <!-- Paper type: AI generated paragraphs -->
-                    <template v-if="(currentAiDetection.ai_generated_paragraphs?.length ?? 0) > 0">
-                      <div class="text-subtitle-2 mb-2">AI生成段落标记</div>
-                      <div class="paragraph-review-list">
-                        <div v-for="(para, pIdx) in currentAiDetection.ai_generated_paragraphs" :key="pIdx"
-                          class="pa-2 mb-2 rounded" style="background: rgba(var(--v-theme-error), 0.05); border-left: 3px solid rgb(var(--v-theme-error));">
-                          <div class="d-flex align-center mb-1">
-                            <v-chip size="x-small" color="error" class="mr-2">段落 {{ para.paragraph_index }}</v-chip>
-                            <span class="text-caption text-grey">AI概率: {{ ((para.ai_probability || 0) * 100).toFixed(1) }}%</span>
-                          </div>
-                          <div class="text-caption" style="max-height: 60px; overflow: hidden;">{{ para.text?.substring(0, 150) }}...</div>
-                          <div v-if="para.reason" class="text-caption text-grey mt-1">原因: {{ para.reason }}</div>
-                        </div>
-                      </div>
-                    </template>
-
-                    <!-- AI analysis reason -->
-                    <v-alert v-if="currentAiDetection.factual_fake_reason" type="warning" variant="tonal" class="mb-3">
-                      <div class="text-subtitle-2 mb-1">AI检测分析</div>
-                      {{ currentAiDetection.factual_fake_reason }}
-                    </v-alert>
-
-                    <!-- Review type: template tendency -->
-                    <template v-if="currentAiDetection.template_tendency_score !== null && currentAiDetection.template_tendency_score !== undefined">
-                      <div class="text-subtitle-2 mb-2">模板化倾向分析</div>
-                      <v-progress-linear
-                        :model-value="(currentAiDetection.template_tendency_score || 0) * 100"
-                        :color="(currentAiDetection.template_tendency_score || 0) > 0.7 ? 'error' : (currentAiDetection.template_tendency_score || 0) > 0.4 ? 'warning' : 'success'"
-                        height="20"
-                        class="mb-2"
-                      >
-                        <template #default="{ value }">
-                          <span class="text-caption">{{ value.toFixed(0) }}%</span>
-                        </template>
-                      </v-progress-linear>
-                      <div v-if="currentAiDetection.template_analysis_reason" class="text-body-2 text-grey mt-2">
-                        {{ currentAiDetection.template_analysis_reason }}
-                      </div>
-                    </template>
-                  </v-card-text>
-                </v-card>
-
                 <!-- Review form -->
                 <v-card elevation="2" rounded="lg" class="mb-4">
                   <v-card-title class="pa-4">
@@ -485,44 +482,76 @@
         </div>
       </template>
 
-      <!-- ==================== Multi review mode (image + text tabs) ==================== -->
+      <!-- ==================== Multi review mode (unified) ==================== -->
       <template v-else-if="reviewMode === 'multi'">
         <div class="pa-6">
-          <!-- Tab switcher -->
-          <v-tabs v-model="multiTab" color="primary" class="mb-4">
-            <v-tab value="images">
-              <v-icon class="mr-2">mdi-image-multiple</v-icon>
-              图像审核
-              <v-chip size="x-small" class="ml-2" :color="imageJudgements.every(j => j !== null) ? 'success' : 'grey'">
-                {{ imageJudgements.filter(j => j !== null).length }}/{{ images.length }}
-              </v-chip>
-            </v-tab>
-            <v-tab value="texts">
-              <v-icon class="mr-2">mdi-file-document-multiple</v-icon>
-              文本审核
-              <v-chip size="x-small" class="ml-2" :color="textReviewProgress >= 100 ? 'success' : 'grey'">
-                {{ textReviewCompleteCount }}/{{ textResources.length }}
-              </v-chip>
-            </v-tab>
-          </v-tabs>
-
-          <v-tabs-window v-model="multiTab">
-            <!-- Image review tab -->
-            <v-tab-item value="images">
-              <div class="content-wrapper d-flex pa-2 justify-center">
-                <div class="content-container d-flex" style="gap: 12px;">
-                  <!-- Image list -->
-                  <div class="image-list rounded-lg elevation-1"
-                    style="background-color: rgb(var(--v-theme-surface)); padding: 20px;">
-                    <div class="text-h6 font-weight-medium text-center mb-4" style="white-space: nowrap;">图片列表</div>
-                    <div class="image-grid">
-                      <div v-for="(image, index) in images" :key="'m-img-' + index" class="image-grid-item"
-                        :class="{ 'active': currentImageIndex === index }" @click="handleImageSelect(index)">
-                        <v-img :src="getImageUrl(image.url)" cover width="100%" height="100%" class="rounded-lg"></v-img>
-                      </div>
+          <v-row>
+            <!-- LEFT: Unified resource sidebar -->
+            <v-col cols="12" md="2">
+              <v-card elevation="2" rounded="lg" style="max-height: calc(100vh - 160px); overflow-y: auto;">
+                <!-- Image group -->
+                <div class="pa-3 d-flex align-center">
+                  <v-icon class="mr-2" size="small">mdi-image-multiple</v-icon>
+                  <span class="text-subtitle-2">图像审核</span>
+                  <v-spacer />
+                  <v-chip size="x-small" :color="imageJudgements.every(j => j !== null) ? 'success' : 'grey'">
+                    {{ imageJudgements.filter(j => j !== null).length }}/{{ images.length }}
+                  </v-chip>
+                </div>
+                <v-divider />
+                <div class="pa-2">
+                  <div class="d-flex flex-wrap" style="gap: 6px;">
+                    <div v-for="(image, index) in images" :key="'m-sb-img-' + index"
+                      class="multi-sidebar-thumb"
+                      :class="{ 'active': multiSelectedType === 'image' && currentImageIndex === index }"
+                      @click="selectMultiImage(index)">
+                      <v-img :src="getImageUrl(image.url)" cover width="56" height="56" class="rounded">
+                        <template #error>
+                          <div class="d-flex align-center justify-center fill-width fill-height bg-grey-lighten-2 rounded">
+                            <v-icon color="grey" size="16">mdi-image-broken-variant</v-icon>
+                          </div>
+                        </template>
+                      </v-img>
+                      <v-icon v-if="imageJudgements[index] !== null" size="x-small" color="success"
+                        class="thumb-check">mdi-check-circle</v-icon>
                     </div>
                   </div>
+                </div>
 
+                <v-divider />
+
+                <!-- Text group -->
+                <div class="pa-3 d-flex align-center">
+                  <v-icon class="mr-2" size="small">mdi-file-document-multiple</v-icon>
+                  <span class="text-subtitle-2">文本审核</span>
+                  <v-spacer />
+                  <v-chip size="x-small" :color="textReviewProgress >= 100 ? 'success' : 'grey'">
+                    {{ textReviewCompleteCount }}/{{ textResources.length }}
+                  </v-chip>
+                </div>
+                <v-divider />
+                <div class="pa-2">
+                  <div v-for="(text, index) in textResources" :key="'m-sb-txt-' + text.id"
+                    class="text-sidebar-item pa-2 mb-1 rounded-lg cursor-pointer"
+                    :class="{ 'text-sidebar-item-active': multiSelectedType === 'text' && currentTextIndex === index }"
+                    @click="selectMultiText(index)">
+                    <div class="d-flex align-center mb-1">
+                      <v-chip size="x-small" :color="getTextChipColor(text)" class="mr-1">
+                        {{ getTextChipLabel(text) }}
+                      </v-chip>
+                      <v-icon v-if="isTextReviewComplete(index)" size="x-small" color="success">mdi-check-circle</v-icon>
+                    </div>
+                    <div class="text-caption text-truncate">{{ text.raw_text?.substring(0, 40) }}...</div>
+                  </div>
+                </div>
+              </v-card>
+            </v-col>
+
+            <!-- CENTER: Conditional content -->
+            <v-col cols="12" md="7">
+              <!-- Image review content -->
+              <template v-if="multiSelectedType === 'image'">
+                <div class="d-flex" style="gap: 12px;">
                   <!-- Image preview -->
                   <div class="preview-section">
                     <div class="preview-box">
@@ -603,288 +632,248 @@
                     </div>
                   </div>
                 </div>
-              </div>
-            </v-tab-item>
+              </template>
 
-            <!-- Text review tab -->
-            <v-tab-item value="texts">
-              <v-row>
-                <!-- Left: Text list -->
-                <v-col cols="12" md="3">
-                  <v-card elevation="2" rounded="lg" class="text-sidebar">
-                    <v-card-title class="pa-4">
-                      <v-icon class="mr-2">mdi-file-document-multiple</v-icon>
-                      文本列表
-                      <v-spacer></v-spacer>
-                      <v-chip size="small" color="primary">{{ textResources.length }}</v-chip>
-                    </v-card-title>
-                    <v-divider></v-divider>
-                    <v-card-text class="pa-2" style="max-height: calc(100vh - 300px); overflow-y: auto;">
-                      <div v-for="(text, index) in textResources" :key="'m-text-' + text.id"
-                        class="text-sidebar-item pa-3 mb-2 rounded-lg cursor-pointer"
-                        :class="{ 'text-sidebar-item-active': currentTextIndex === index }"
-                        @click="currentTextIndex = index">
-                        <div class="d-flex align-center mb-1">
-                          <v-chip size="x-small" :color="getTextChipColor(text)" class="mr-2">
-                            {{ getTextChipLabel(text) }}
-                          </v-chip>
-                          <span class="text-caption text-grey">ID: {{ text.id }}</span>
-                        </div>
-                        <div class="text-body-2 text-truncate">{{ text.raw_text?.substring(0, 60) }}...</div>
-                        <div v-if="textReviews[index]?.result !== undefined && textReviews[index]?.result !== null"
-                          class="mt-1">
-                          <v-chip size="x-small" :color="textReviews[index].result ? 'error' : 'success'">
-                            {{ textReviews[index].result ? '判定为假' : '判定为真' }}
-                          </v-chip>
+              <!-- Text review content -->
+              <template v-else>
+                <!-- Text content card -->
+                <v-card v-if="currentTextResource" elevation="2" rounded="lg" class="mb-4">
+                  <v-card-title class="pa-4 d-flex align-center">
+                    <v-icon class="mr-2">mdi-text-box</v-icon>
+                    文本内容
+                    <v-spacer></v-spacer>
+                    <v-btn size="small" variant="text" @click="toggleFullText">
+                      {{ showFullText ? '收起' : '展开全文' }}
+                    </v-btn>
+                  </v-card-title>
+                  <v-divider></v-divider>
+                  <v-card-text class="pa-4" style="max-height: 200px; overflow-y: auto;">
+                    <div class="text-body-2" style="white-space: pre-wrap; line-height: 1.8;">
+                      {{ displayText }}
+                    </div>
+                  </v-card-text>
+                </v-card>
+
+                <!-- AI detection result reference -->
+                <v-card v-if="currentTextResource && currentAiDetection" elevation="2" rounded="lg" class="mb-4">
+                  <v-card-title class="pa-4">
+                    <v-icon class="mr-2" color="primary">mdi-robot</v-icon>
+                    AI 检测结果参考
+                  </v-card-title>
+                  <v-divider></v-divider>
+                  <v-card-text class="pa-4" style="max-height: 300px; overflow-y: auto;">
+                    <v-row class="mb-3">
+                      <v-col cols="6">
+                        <div class="text-body-2 text-grey mb-1">AI判定</div>
+                        <v-chip :color="currentAiDetection.is_fake ? 'error' : 'success'" size="small">
+                          {{ currentAiDetection.is_fake ? '疑似造假' : '可能真实' }}
+                        </v-chip>
+                      </v-col>
+                      <v-col cols="6">
+                        <div class="text-body-2 text-grey mb-1">置信度</div>
+                        <span class="text-h6" :class="currentAiDetection.confidence_score > 0.7 ? 'error--text' : 'primary--text'">
+                          {{ ((currentAiDetection.confidence_score || 0) * 100).toFixed(1) }}%
+                        </span>
+                      </v-col>
+                    </v-row>
+
+                    <template v-if="(currentAiDetection.ai_generated_paragraphs?.length ?? 0) > 0">
+                      <div class="text-subtitle-2 mb-2">AI生成段落标记</div>
+                      <div class="paragraph-review-list">
+                        <div v-for="(para, pIdx) in currentAiDetection.ai_generated_paragraphs" :key="'m-aip-' + pIdx"
+                          class="pa-2 mb-2 rounded" style="background: rgba(var(--v-theme-error), 0.05); border-left: 3px solid rgb(var(--v-theme-error));">
+                          <div class="d-flex align-center mb-1">
+                            <v-chip size="x-small" color="error" class="mr-2">段落 {{ para.paragraph_index }}</v-chip>
+                            <span class="text-caption text-grey">AI概率: {{ ((para.ai_probability || 0) * 100).toFixed(1) }}%</span>
+                          </div>
+                          <div class="text-caption" style="max-height: 60px; overflow: hidden;">{{ para.text?.substring(0, 150) }}...</div>
+                          <div v-if="para.reason" class="text-caption text-grey mt-1">原因: {{ para.reason }}</div>
                         </div>
                       </div>
-                    </v-card-text>
-                  </v-card>
-                </v-col>
+                    </template>
 
-                <!-- Center: Text content and review -->
-                <v-col cols="12" md="6">
-                  <template v-if="currentTextResource">
-                    <!-- Text content -->
-                    <v-card elevation="2" rounded="lg" class="mb-4">
-                      <v-card-title class="pa-4 d-flex align-center">
-                        <v-icon class="mr-2">mdi-text-box</v-icon>
-                        文本内容
-                        <v-spacer></v-spacer>
-                        <v-btn size="small" variant="text" @click="toggleFullText">
-                          {{ showFullText ? '收起' : '展开全文' }}
-                        </v-btn>
-                      </v-card-title>
-                      <v-divider></v-divider>
-                      <v-card-text class="pa-4" style="max-height: 300px; overflow-y: auto;">
-                        <div class="text-body-2" style="white-space: pre-wrap; line-height: 1.8;">
-                          {{ displayText }}
-                        </div>
-                      </v-card-text>
-                    </v-card>
+                    <v-alert v-if="currentAiDetection.factual_fake_reason" type="warning" variant="tonal" class="mb-3">
+                      <div class="text-subtitle-2 mb-1">AI检测分析</div>
+                      {{ currentAiDetection.factual_fake_reason }}
+                    </v-alert>
 
-                    <!-- AI detection result -->
-                    <v-card v-if="currentAiDetection" elevation="2" rounded="lg" class="mb-4">
-                      <v-card-title class="pa-4">
-                        <v-icon class="mr-2" color="primary">mdi-robot</v-icon>
-                        AI 检测结果参考
-                      </v-card-title>
-                      <v-divider></v-divider>
-                      <v-card-text class="pa-4">
-                        <v-row class="mb-3">
-                          <v-col cols="6">
-                            <div class="text-body-2 text-grey mb-1">AI判定</div>
-                            <v-chip :color="currentAiDetection.is_fake ? 'error' : 'success'" size="small">
-                              {{ currentAiDetection.is_fake ? '疑似造假' : '可能真实' }}
-                            </v-chip>
-                          </v-col>
-                          <v-col cols="6">
-                            <div class="text-body-2 text-grey mb-1">置信度</div>
-                            <span class="text-h6" :class="currentAiDetection.confidence_score > 0.7 ? 'error--text' : 'primary--text'">
-                              {{ ((currentAiDetection.confidence_score || 0) * 100).toFixed(1) }}%
-                            </span>
-                          </v-col>
-                        </v-row>
-
-                        <!-- AI generated paragraphs -->
-                        <template v-if="(currentAiDetection.ai_generated_paragraphs?.length ?? 0) > 0">
-                          <div class="text-subtitle-2 mb-2">AI生成段落标记</div>
-                          <div class="paragraph-review-list">
-                            <div v-for="(para, pIdx) in currentAiDetection.ai_generated_paragraphs" :key="'m-aip-' + pIdx"
-                              class="pa-2 mb-2 rounded" style="background: rgba(var(--v-theme-error), 0.05); border-left: 3px solid rgb(var(--v-theme-error));">
-                              <div class="d-flex align-center mb-1">
-                                <v-chip size="x-small" color="error" class="mr-2">段落 {{ para.paragraph_index }}</v-chip>
-                                <span class="text-caption text-grey">AI概率: {{ ((para.ai_probability || 0) * 100).toFixed(1) }}%</span>
-                              </div>
-                              <div class="text-caption" style="max-height: 60px; overflow: hidden;">{{ para.text?.substring(0, 150) }}...</div>
-                              <div v-if="para.reason" class="text-caption text-grey mt-1">原因: {{ para.reason }}</div>
-                            </div>
-                          </div>
+                    <template v-if="currentAiDetection.template_tendency_score !== null && currentAiDetection.template_tendency_score !== undefined">
+                      <div class="text-subtitle-2 mb-2">模板化倾向分析</div>
+                      <v-progress-linear
+                        :model-value="(currentAiDetection.template_tendency_score || 0) * 100"
+                        :color="(currentAiDetection.template_tendency_score || 0) > 0.7 ? 'error' : (currentAiDetection.template_tendency_score || 0) > 0.4 ? 'warning' : 'success'"
+                        height="20"
+                        class="mb-2"
+                      >
+                        <template #default="{ value }">
+                          <span class="text-caption">{{ value.toFixed(0) }}%</span>
                         </template>
+                      </v-progress-linear>
+                      <div v-if="currentAiDetection.template_analysis_reason" class="text-body-2 text-grey mt-2">
+                        {{ currentAiDetection.template_analysis_reason }}
+                      </div>
+                    </template>
+                  </v-card-text>
+                </v-card>
 
-                        <v-alert v-if="currentAiDetection.factual_fake_reason" type="warning" variant="tonal" class="mb-3">
-                          <div class="text-subtitle-2 mb-1">AI检测分析</div>
-                          {{ currentAiDetection.factual_fake_reason }}
-                        </v-alert>
-
-                        <!-- Template tendency -->
-                        <template v-if="currentAiDetection.template_tendency_score !== null && currentAiDetection.template_tendency_score !== undefined">
-                          <div class="text-subtitle-2 mb-2">模板化倾向分析</div>
-                          <v-progress-linear
-                            :model-value="(currentAiDetection.template_tendency_score || 0) * 100"
-                            :color="(currentAiDetection.template_tendency_score || 0) > 0.7 ? 'error' : (currentAiDetection.template_tendency_score || 0) > 0.4 ? 'warning' : 'success'"
-                            height="20"
-                            class="mb-2"
-                          >
-                            <template #default="{ value }">
-                              <span class="text-caption">{{ value.toFixed(0) }}%</span>
-                            </template>
-                          </v-progress-linear>
-                          <div v-if="currentAiDetection.template_analysis_reason" class="text-body-2 text-grey mt-2">
-                            {{ currentAiDetection.template_analysis_reason }}
-                          </div>
-                        </template>
-                      </v-card-text>
-                    </v-card>
-
-                    <!-- Review form -->
-                    <v-card elevation="2" rounded="lg" class="mb-4">
-                      <v-card-title class="pa-4">
-                        <v-icon class="mr-2" color="warning">mdi-pencil-box</v-icon>
-                        人工审核
-                      </v-card-title>
-                      <v-divider></v-divider>
-                      <v-card-text class="pa-4">
-                        <!-- Paragraph review -->
-                        <template v-if="(currentAiDetection?.ai_generated_paragraphs?.length ?? 0) > 0">
-                          <div class="text-subtitle-2 mb-3">段落复核</div>
-                          <div class="text-caption text-grey mb-3">请对AI标记的每个段落进行复核。</div>
-                          <div v-for="(para, pIdx) in currentAiDetection!.ai_generated_paragraphs" :key="'m-pr-' + pIdx"
-                            class="pa-3 mb-3 rounded-lg" style="border: 1px solid rgba(var(--v-theme-primary), 0.2);">
-                            <div class="d-flex align-center mb-2">
-                              <v-chip size="small" color="primary" class="mr-2">段落 {{ para.paragraph_index }}</v-chip>
-                              <span class="text-caption text-grey">AI概率: {{ ((para.ai_probability || 0) * 100).toFixed(1) }}%</span>
-                            </div>
-                            <div class="text-body-2 mb-2" style="max-height: 80px; overflow: auto;">{{ para.text }}</div>
-                            <v-row dense>
-                              <v-col cols="12" sm="4">
-                                <div class="text-caption text-grey mb-1">是否同意AI判定</div>
-                                <v-btn-toggle v-model="getParagraphReview(pIdx).is_ai_agreed" mandatory density="compact">
-                                  <v-btn size="small" :value="true" color="error" variant="outlined">同意(AI生成)</v-btn>
-                                  <v-btn size="small" :value="false" color="success" variant="outlined">不同意</v-btn>
-                                </v-btn-toggle>
-                              </v-col>
-                              <v-col cols="12" sm="8">
-                                <v-textarea v-model="getParagraphReview(pIdx).comment"
-                                  :label="'段落 ' + para.paragraph_index + ' 复核意见'" variant="outlined" density="compact"
-                                  rows="2" hide-details class="mt-1"></v-textarea>
-                              </v-col>
-                            </v-row>
-                          </div>
-                        </template>
-
-                        <!-- Template tendency review -->
-                        <template v-if="currentAiDetection?.template_tendency_score !== null && currentAiDetection?.template_tendency_score !== undefined">
-                          <div class="text-subtitle-2 mb-3 mt-4">模板化倾向复核</div>
-                          <v-row dense>
-                            <v-col cols="12" sm="6">
-                              <div class="text-caption text-grey mb-1">您对模板化程度的评分 (0-100)</div>
-                              <v-slider :model-value="currentTextReview.template_review_score ?? undefined" @update:model-value="currentTextReview.template_review_score = $event" :min="0" :max="100" step="1"
-                                thumb-label color="primary" track-color="grey-lighten-2">
-                                <template #append>
-                                  <v-text-field :model-value="currentTextReview.template_review_score ?? undefined" @update:model-value="currentTextReview.template_review_score = Number($event)" type="number" density="compact"
-                                    style="width: 70px" variant="outlined" hide-details></v-text-field>
-                                </template>
-                              </v-slider>
-                            </v-col>
-                            <v-col cols="12" sm="6">
-                              <v-textarea v-model="currentTextReview.template_review_comment" label="模板化复核意见"
-                                variant="outlined" density="compact" rows="3" hide-details></v-textarea>
-                            </v-col>
-                          </v-row>
-                        </template>
-
-                        <!-- Overall comment -->
-                        <div class="text-subtitle-2 mb-3 mt-4">综合审核意见</div>
-                        <v-textarea v-model="currentTextReview.overall_comment" label="请输入您的综合审核意见"
-                          variant="outlined" rows="4" class="mb-4"></v-textarea>
-
-                        <!-- Final judgment -->
-                        <div class="text-subtitle-2 mb-3">最终判定</div>
-                        <div class="d-flex">
-                          <v-btn :color="currentTextReview.result === true ? 'error' : 'grey'" variant="tonal"
-                            class="flex-grow-1 mr-2" size="large" @click="currentTextReview.result = true"
-                            :disabled="reviewStatus === 'completed'">
-                            <v-icon class="mr-1">mdi-alert-circle</v-icon>
-                            判定为假
-                          </v-btn>
-                          <v-btn :color="currentTextReview.result === false ? 'success' : 'grey'" variant="tonal"
-                            class="flex-grow-1" size="large" @click="currentTextReview.result = false"
-                            :disabled="reviewStatus === 'completed'">
-                            <v-icon class="mr-1">mdi-check-circle</v-icon>
-                            判定为真
-                          </v-btn>
-                        </div>
-                      </v-card-text>
-                    </v-card>
-                  </template>
-                  <template v-else>
-                    <v-card elevation="2" rounded="lg">
-                      <v-card-text class="text-center pa-8 text-grey">
-                        请从左侧选择一个文本进行审核
-                      </v-card-text>
-                    </v-card>
-                  </template>
-                </v-col>
-
-                <!-- Right: Progress + submit -->
-                <v-col cols="12" md="3">
+                <!-- Review form -->
+                <template v-if="currentTextResource">
                   <v-card elevation="2" rounded="lg" class="mb-4">
                     <v-card-title class="pa-4">
-                      <v-icon class="mr-2">mdi-clipboard-check</v-icon>
-                      审核进度
+                      <v-icon class="mr-2" color="warning">mdi-pencil-box</v-icon>
+                      人工审核
                     </v-card-title>
                     <v-divider></v-divider>
                     <v-card-text class="pa-4">
-                      <div class="text-subtitle-2 mb-2">图片</div>
-                      <div v-for="(img, index) in images" :key="'m-prog-img-' + index" class="d-flex align-center mb-1">
-                        <v-icon :color="imageJudgements[index] !== null ? 'success' : 'grey'" class="mr-2" size="small">
-                          {{ imageJudgements[index] !== null ? 'mdi-check-circle' : 'mdi-circle-outline' }}
-                        </v-icon>
-                        <span class="text-body-2">图片 {{ index + 1 }}</span>
-                      </div>
-                      <v-divider class="my-3"></v-divider>
-                      <div class="text-subtitle-2 mb-2">文本</div>
-                      <div v-for="(text, index) in textResources" :key="'m-prog-text-' + text.id" class="d-flex align-center mb-2">
-                        <v-icon :color="isTextReviewComplete(index) ? 'success' : 'grey'" class="mr-2" size="small">
-                          {{ isTextReviewComplete(index) ? 'mdi-check-circle' : 'mdi-circle-outline' }}
-                        </v-icon>
-                        <span class="text-body-2" :class="isTextReviewComplete(index) ? 'success--text' : ''">
-                          文本 {{ index + 1 }}
-                        </span>
+                      <!-- Paragraph review -->
+                      <template v-if="(currentAiDetection?.ai_generated_paragraphs?.length ?? 0) > 0">
+                        <div class="text-subtitle-2 mb-3">段落复核</div>
+                        <div class="text-caption text-grey mb-3">请对AI标记的每个段落进行复核。</div>
+                        <div v-for="(para, pIdx) in currentAiDetection!.ai_generated_paragraphs" :key="'m-pr-' + pIdx"
+                          class="pa-3 mb-3 rounded-lg" style="border: 1px solid rgba(var(--v-theme-primary), 0.2);">
+                          <div class="d-flex align-center mb-2">
+                            <v-chip size="small" color="primary" class="mr-2">段落 {{ para.paragraph_index }}</v-chip>
+                            <span class="text-caption text-grey">AI概率: {{ ((para.ai_probability || 0) * 100).toFixed(1) }}%</span>
+                          </div>
+                          <div class="text-body-2 mb-2" style="max-height: 80px; overflow: auto;">{{ para.text }}</div>
+                          <v-row dense>
+                            <v-col cols="12" sm="4">
+                              <div class="text-caption text-grey mb-1">是否同意AI判定</div>
+                              <v-btn-toggle v-model="getParagraphReview(pIdx).is_ai_agreed" mandatory density="compact">
+                                <v-btn size="small" :value="true" color="error" variant="outlined">同意(AI生成)</v-btn>
+                                <v-btn size="small" :value="false" color="success" variant="outlined">不同意</v-btn>
+                              </v-btn-toggle>
+                            </v-col>
+                            <v-col cols="12" sm="8">
+                              <v-textarea v-model="getParagraphReview(pIdx).comment"
+                                :label="'段落 ' + para.paragraph_index + ' 复核意见'" variant="outlined" density="compact"
+                                rows="2" hide-details class="mt-1"></v-textarea>
+                            </v-col>
+                          </v-row>
+                        </div>
+                      </template>
+
+                      <!-- Template tendency review -->
+                      <template v-if="currentAiDetection?.template_tendency_score !== null && currentAiDetection?.template_tendency_score !== undefined">
+                        <div class="text-subtitle-2 mb-3 mt-4">模板化倾向复核</div>
+                        <v-row dense>
+                          <v-col cols="12" sm="6">
+                            <div class="text-caption text-grey mb-1">您对模板化程度的评分 (0-100)</div>
+                            <v-slider :model-value="currentTextReview.template_review_score ?? undefined" @update:model-value="currentTextReview.template_review_score = $event" :min="0" :max="100" step="1"
+                              thumb-label color="primary" track-color="grey-lighten-2">
+                              <template #append>
+                                <v-text-field :model-value="currentTextReview.template_review_score ?? undefined" @update:model-value="currentTextReview.template_review_score = Number($event)" type="number" density="compact"
+                                  style="width: 70px" variant="outlined" hide-details></v-text-field>
+                              </template>
+                            </v-slider>
+                          </v-col>
+                          <v-col cols="12" sm="6">
+                            <v-textarea v-model="currentTextReview.template_review_comment" label="模板化复核意见"
+                              variant="outlined" density="compact" rows="3" hide-details></v-textarea>
+                          </v-col>
+                        </v-row>
+                      </template>
+
+                      <!-- Overall comment -->
+                      <div class="text-subtitle-2 mb-3 mt-4">综合审核意见</div>
+                      <v-textarea v-model="currentTextReview.overall_comment" label="请输入您的综合审核意见"
+                        variant="outlined" rows="4" class="mb-4"></v-textarea>
+
+                      <!-- Final judgment -->
+                      <div class="text-subtitle-2 mb-3">最终判定</div>
+                      <div class="d-flex">
+                        <v-btn :color="currentTextReview.result === true ? 'error' : 'grey'" variant="tonal"
+                          class="flex-grow-1 mr-2" size="large" @click="currentTextReview.result = true"
+                          :disabled="reviewStatus === 'completed'">
+                          <v-icon class="mr-1">mdi-alert-circle</v-icon>
+                          判定为假
+                        </v-btn>
+                        <v-btn :color="currentTextReview.result === false ? 'success' : 'grey'" variant="tonal"
+                          class="flex-grow-1" size="large" @click="currentTextReview.result = false"
+                          :disabled="reviewStatus === 'completed'">
+                          <v-icon class="mr-1">mdi-check-circle</v-icon>
+                          判定为真
+                        </v-btn>
                       </div>
                     </v-card-text>
                   </v-card>
-
-                  <!-- AI assist sidebar in multi mode -->
-                  <v-card v-if="aiAssistFields.length > 0" elevation="2" rounded="lg" class="mb-4">
-                    <v-card-title class="pa-4">
-                      <v-icon class="mr-2" color="primary">mdi-robot-outline</v-icon>
-                      AI 辅助信息
-                    </v-card-title>
-                    <v-divider></v-divider>
-                    <v-card-text class="pa-4">
-                      <div v-for="field in aiAssistFields" :key="field.field" class="mb-3">
-                        <div class="text-caption text-grey mb-1">{{ field.label }}</div>
-                        <template v-if="field.type === 'boolean'">
-                          <v-chip size="small" :color="getAiFieldValue(field.field) ? 'error' : 'success'">
-                            {{ getAiFieldValue(field.field) ? '是' : '否' }}
-                          </v-chip>
-                        </template>
-                        <template v-else-if="field.type === 'score'">
-                          <span class="text-body-2 font-weight-bold" :class="getAiFieldValue(field.field) > 0.7 ? 'error--text' : 'primary--text'">
-                            {{ ((getAiFieldValue(field.field) || 0) * 100).toFixed(1) }}%
-                          </span>
-                        </template>
-                        <template v-else-if="field.type === 'text'">
-                          <div class="text-body-2">{{ getAiFieldValue(field.field) || '-' }}</div>
-                        </template>
-                        <template v-else>
-                          <div class="text-body-2">{{ getAiFieldValue(field.field) ?? '-' }}</div>
-                        </template>
-                      </div>
+                </template>
+                <template v-else>
+                  <v-card elevation="2" rounded="lg">
+                    <v-card-text class="text-center pa-8 text-grey">
+                      请从左侧选择一个文本进行审核
                     </v-card-text>
                   </v-card>
+                </template>
+              </template>
+            </v-col>
 
-                  <v-btn color="primary" block size="large" @click="handleSubmit"
-                    :disabled="imageJudgements.some(j => j === null) || textReviewProgress < 100 || reviewStatus === 'completed'">
-                    <v-icon class="mr-2">mdi-send</v-icon>
-                    提交全部审核结果
-                  </v-btn>
-                </v-col>
-              </v-row>
-            </v-tab-item>
-          </v-tabs-window>
+            <!-- RIGHT: Progress + AI assist + Submit (always visible) -->
+            <v-col cols="12" md="3">
+              <v-card elevation="2" rounded="lg" class="mb-4">
+                <v-card-title class="pa-4">
+                  <v-icon class="mr-2">mdi-clipboard-check</v-icon>
+                  审核进度
+                </v-card-title>
+                <v-divider></v-divider>
+                <v-card-text class="pa-4">
+                  <div class="text-subtitle-2 mb-2">图片</div>
+                  <div v-for="(img, index) in images" :key="'m-prog-img-' + index" class="d-flex align-center mb-1">
+                    <v-icon :color="imageJudgements[index] !== null ? 'success' : 'grey'" class="mr-2" size="small">
+                      {{ imageJudgements[index] !== null ? 'mdi-check-circle' : 'mdi-circle-outline' }}
+                    </v-icon>
+                    <span class="text-body-2">图片 {{ index + 1 }}</span>
+                  </div>
+                  <v-divider class="my-3"></v-divider>
+                  <div class="text-subtitle-2 mb-2">文本</div>
+                  <div v-for="(text, index) in textResources" :key="'m-prog-text-' + text.id" class="d-flex align-center mb-2">
+                    <v-icon :color="isTextReviewComplete(index) ? 'success' : 'grey'" class="mr-2" size="small">
+                      {{ isTextReviewComplete(index) ? 'mdi-check-circle' : 'mdi-circle-outline' }}
+                    </v-icon>
+                    <span class="text-body-2" :class="isTextReviewComplete(index) ? 'success--text' : ''">
+                      文本 {{ index + 1 }}
+                    </span>
+                  </div>
+                </v-card-text>
+              </v-card>
+
+              <!-- AI assist sidebar -->
+              <v-card v-if="aiAssistFields.length > 0" elevation="2" rounded="lg" class="mb-4">
+                <v-card-title class="pa-4">
+                  <v-icon class="mr-2" color="primary">mdi-robot-outline</v-icon>
+                  AI 辅助信息
+                </v-card-title>
+                <v-divider></v-divider>
+                <v-card-text class="pa-4">
+                  <div v-for="field in aiAssistFields" :key="field.field" class="mb-3">
+                    <div class="text-caption text-grey mb-1">{{ field.label }}</div>
+                    <template v-if="field.type === 'boolean'">
+                      <v-chip size="small" :color="getAiFieldValue(field.field) ? 'error' : 'success'">
+                        {{ getAiFieldValue(field.field) ? '是' : '否' }}
+                      </v-chip>
+                    </template>
+                    <template v-else-if="field.type === 'score'">
+                      <span class="text-body-2 font-weight-bold" :class="getAiFieldValue(field.field) > 0.7 ? 'error--text' : 'primary--text'">
+                        {{ ((getAiFieldValue(field.field) || 0) * 100).toFixed(1) }}%
+                      </span>
+                    </template>
+                    <template v-else-if="field.type === 'text'">
+                      <div class="text-body-2">{{ getAiFieldValue(field.field) || '-' }}</div>
+                    </template>
+                    <template v-else>
+                      <div class="text-body-2">{{ getAiFieldValue(field.field) ?? '-' }}</div>
+                    </template>
+                  </div>
+                </v-card-text>
+              </v-card>
+
+              <v-btn color="primary" block size="large" @click="handleSubmit"
+                :disabled="imageJudgements.some(j => j === null) || textReviewProgress < 100 || reviewStatus === 'completed'">
+                <v-icon class="mr-2">mdi-send</v-icon>
+                提交全部审核结果
+              </v-btn>
+            </v-col>
+          </v-row>
         </div>
       </template>
 
@@ -944,7 +933,17 @@ const manual_review_id = computed(() => (route.params as RouteParams & { manual_
 const showAlert = ref(false)
 const alertMessage = ref('')
 const reviewMode = ref<'image' | 'text' | 'multi' | 'loading' | 'empty'>('loading')
-const multiTab = ref<'images' | 'texts'>('images')
+const multiSelectedType = ref<'image' | 'text'>('image')
+
+const selectMultiImage = (index: number) => {
+  multiSelectedType.value = 'image'
+  handleImageSelect(index)
+}
+
+const selectMultiText = (index: number) => {
+  multiSelectedType.value = 'text'
+  currentTextIndex.value = index
+}
 
 // Task type and config from backend
 const taskType = ref<string>('')
@@ -954,7 +953,7 @@ const reviewConfig = ref<any>(null)
 const aiDetectionResult = ref<any>(null)
 const structuredResult = ref<any>({})
 const subDetectionResults = ref<any>({})
-const reviewStatus = ref<string>('undo')
+const reviewStatus = ref<string>((route.query.status as string) || 'undo')
 
 // Task type display helpers
 const taskTypeIcon = computed(() => {
@@ -1053,7 +1052,7 @@ const fetchDetectionResults = async () => {
     const response = (await publisher.getSingleImageResult(id)).data
     detectionResults.value = response.sub_methods
   } catch (error) {
-    snackbar.showMessage('获取检测结果失败', 'error')
+    detectionResults.value = []
   }
 }
 
@@ -1086,7 +1085,8 @@ const fetchMaskImage = async () => {
     }))
     overall.value = res.overall
   } catch (error) {
-    snackbar.showMessage('获取mask失败', 'error')
+    urn.value = []
+    overall.value = null
   }
 }
 
@@ -1494,8 +1494,14 @@ onMounted(async () => {
   try {
     // Call both endpoints: new get_review_detail for config/type, legacy for text AI data
     const [detailRes, legacyRes] = await Promise.all([
-      reviewer.getReviewDetail({ manual_review_id: manual_review_id.value }).catch(() => null),
-      reviewer.getReviewTaskDetail({ manual_review_id: manual_review_id.value }).catch(() => null),
+      reviewer.getReviewDetail({ manual_review_id: manual_review_id.value }).catch((e) => {
+        console.error('[ReviewDetail] get_review_detail failed:', e?.response?.status, e?.message)
+        return null
+      }),
+      reviewer.getReviewTaskDetail({ manual_review_id: manual_review_id.value }).catch((e) => {
+        console.error('[ReviewDetail] get_review_request_detail failed:', e?.response?.status, e?.message)
+        return null
+      }),
     ])
 
     if (!detailRes && !legacyRes) {
@@ -1506,6 +1512,7 @@ onMounted(async () => {
 
     const detailData = detailRes?.data || {}
     const legacyData = legacyRes?.data || {}
+    console.log('[ReviewDetail] detailData.texts count:', detailData.texts?.length, 'task_type:', detailData.task_type, 'status:', detailData.status)
 
     // Extract task type and config from new endpoint
     taskType.value = detailData.task_type || ''
@@ -1514,7 +1521,7 @@ onMounted(async () => {
     aiDetectionResult.value = detailData.ai_detection_result || null
     structuredResult.value = detailData.structured_result || {}
     subDetectionResults.value = detailData.sub_detection_results || {}
-    reviewStatus.value = detailData.status || 'undo'
+    reviewStatus.value = detailData.status || (route.query.status as string) || 'undo'
 
     // Determine task type color
     const colorMap: Record<string, string> = {
@@ -1529,6 +1536,12 @@ onMounted(async () => {
     const configReviewMode = reviewConfig.value?.review_mode
     if (configReviewMode && ['image', 'text', 'multi'].includes(configReviewMode)) {
       reviewMode.value = configReviewMode
+    } else if (taskType.value === 'paper_text' || taskType.value === 'review_text') {
+      reviewMode.value = 'text'
+    } else if (taskType.value === 'multi_material') {
+      reviewMode.value = 'multi'
+    } else if (taskType.value === 'image') {
+      reviewMode.value = 'image'
     } else {
       // Fallback: infer from data presence
       const hasImages = (detailData.image_ids?.length || legacyData.imgs?.length || 0) > 0
@@ -1553,22 +1566,21 @@ onMounted(async () => {
       }))
     }
 
-    // Build text data - prefer legacy (has ai_detection embedded), merge with new if available
+    // Build text data - prefer new endpoint (has ai_detection embedded)
     let texts: TextResource[] = []
-    if (legacyData.texts?.length > 0) {
+    if (detailData.texts?.length > 0) {
+      texts = detailData.texts.map((t: any) => ({
+        id: t.text_id || t.id,
+        raw_text: t.raw_text,
+        source_type: t.source_type,
+        ai_detection: t.ai_detection || extractAiDetectionForText(t, detailData.structured_result),
+      }))
+    } else if (legacyData.texts?.length > 0) {
       texts = legacyData.texts.map((t: any) => ({
         id: t.id,
         raw_text: t.raw_text,
         source_type: t.source_type,
         ai_detection: t.ai_detection || null,
-      }))
-    } else if (detailData.texts?.length > 0) {
-      // New endpoint only - extract AI data from structured_result
-      texts = detailData.texts.map((t: any) => ({
-        id: t.text_id || t.id,
-        raw_text: t.raw_text,
-        source_type: t.source_type,
-        ai_detection: extractAiDetectionForText(t, detailData.structured_result),
       }))
     }
 
@@ -1855,6 +1867,31 @@ watch(() => currentDrawingDimension.value, (newVal) => {
 
 .image-grid-item.active {
   border-color: rgb(var(--v-theme-primary));
+}
+
+.multi-sidebar-thumb {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  cursor: pointer;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 2px solid transparent;
+  transition: border-color 0.2s ease;
+}
+
+.multi-sidebar-thumb:hover {
+  border-color: rgba(var(--v-theme-primary), 0.5);
+}
+
+.multi-sidebar-thumb.active {
+  border-color: rgb(var(--v-theme-primary));
+}
+
+.thumb-check {
+  position: absolute;
+  top: 2px;
+  right: 2px;
 }
 
 .preview-section {

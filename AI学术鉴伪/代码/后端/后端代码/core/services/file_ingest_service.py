@@ -380,6 +380,13 @@ class FileIngestService:
         image.save(full_path)
 
     @staticmethod
+    def _save_raw_image_bytes(image_bytes: bytes, relative_path: str) -> None:
+        full_path = os.path.join(settings.MEDIA_ROOT, relative_path)
+        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+        with open(full_path, 'wb') as f:
+            f.write(image_bytes)
+
+    @staticmethod
     def _create_image_record(file_management, container, relative_path, image_data, image_role, source_kind, image_index=None, page_number=None, extracted_from_pdf=False):
         with Image.open(io.BytesIO(image_data)) as image_obj:
             width, height = image_obj.size
@@ -418,54 +425,42 @@ class FileIngestService:
         with fitz.open(full_file_path) as pdf_document:
             image_counter = 0
             seen_hashes = set()
-            skipped_small = 0
             skipped_dup = 0
+
             for page_number in range(pdf_document.page_count):
                 page = pdf_document.load_page(page_number)
-                image_list = page.get_images(full=True)
-                for idx, img in enumerate(image_list):
-                    xref = img[0]
-                    base_image = pdf_document.extract_image(xref)
-                    image_bytes = base_image['image']
-                    image_ext = base_image.get('ext', 'png')
+                pix = page.get_pixmap(dpi=200)
+                image_bytes = pix.tobytes("png")
 
-                    # Skip tiny images by pixel area (icons, bullets, decorative lines)
-                    with Image.open(io.BytesIO(image_bytes)) as pil_check:
-                        w, h = pil_check.size
-                    if w * h < FileIngestService.MIN_IMAGE_AREA:
-                        skipped_small += 1
-                        continue
+                # Skip duplicate pages (same content rendered twice)
+                content_hash = hashlib.sha256(image_bytes).hexdigest()
+                if content_hash in seen_hashes:
+                    skipped_dup += 1
+                    continue
+                seen_hashes.add(content_hash)
 
-                    # Skip duplicates by content hash (repeated headers/logos across pages)
-                    content_hash = hashlib.sha256(image_bytes).hexdigest()
-                    if content_hash in seen_hashes:
-                        skipped_dup += 1
-                        continue
-                    seen_hashes.add(content_hash)
+                image_counter += 1
+                image_filename = f"{file_management.id}_page{page_number + 1}.png"
+                unique_image_name = f"{uuid.uuid4().hex}_{image_filename}"
+                relative_path = os.path.join('extracted_images', unique_image_name).replace('\\', '/')
 
-                    image_counter += 1
-                    image_filename = f"{file_management.id}_page{page_number + 1}_image{idx + 1}.{image_ext}"
-                    unique_image_name = f"{uuid.uuid4().hex}_{image_filename}"
-                    relative_path = os.path.join('extracted_images', unique_image_name).replace('\\', '/')
+                FileIngestService._save_raw_image_bytes(image_bytes, relative_path)
 
-                    with Image.open(io.BytesIO(image_bytes)) as pil_image:
-                        FileIngestService._save_pil_image(pil_image, relative_path)
-
-                    FileIngestService._create_image_record(
-                        file_management=file_management,
-                        container=container,
-                        relative_path=relative_path,
-                        image_data=image_bytes,
-                        image_role='figure',
-                        source_kind=source_kind,
-                        image_index=image_counter,
-                        page_number=page_number + 1,
-                        extracted_from_pdf=True,
-                    )
+                FileIngestService._create_image_record(
+                    file_management=file_management,
+                    container=container,
+                    relative_path=relative_path,
+                    image_data=image_bytes,
+                    image_role='figure',
+                    source_kind=source_kind,
+                    image_index=image_counter,
+                    page_number=page_number + 1,
+                    extracted_from_pdf=True,
+                )
 
             _logger.info(
-                'PDF image extraction for file %s: kept %d, skipped %d small, %d duplicates',
-                file_management.id, image_counter, skipped_small, skipped_dup,
+                'PDF image extraction for file %s: kept %d pages, skipped %d duplicates',
+                file_management.id, image_counter, skipped_dup,
             )
 
     @staticmethod
@@ -510,8 +505,7 @@ class FileIngestService:
                 unique_name = f"{file_management.id}_{uuid.uuid4().hex}.{file_ext}"
                 relative_path = os.path.join('extracted_images', unique_name).replace('\\', '/')
 
-                with Image.open(io.BytesIO(image_data)) as pil_image:
-                    FileIngestService._save_pil_image(pil_image, relative_path)
+                FileIngestService._save_raw_image_bytes(image_data, relative_path)
 
                 FileIngestService._create_image_record(
                     file_management=file_management,
@@ -547,8 +541,7 @@ class FileIngestService:
                     unique_name = f"{file_management.id}_{uuid.uuid4().hex}.{file_ext}"
                     relative_path = os.path.join('extracted_images', unique_name).replace('\\', '/')
 
-                    with Image.open(io.BytesIO(image_data)) as pil_image:
-                        FileIngestService._save_pil_image(pil_image, relative_path)
+                    FileIngestService._save_raw_image_bytes(image_data, relative_path)
 
                     FileIngestService._create_image_record(
                         file_management=file_management,
@@ -589,8 +582,7 @@ class FileIngestService:
             file_ext = 'png'
         unique_filename = f"{uuid.uuid4().hex}.{file_ext}"
         saved_relative_path = os.path.join('extracted_images', f"{file_management.id}_{unique_filename}").replace('\\', '/')
-        with Image.open(io.BytesIO(image_data)) as pil_image:
-            FileIngestService._save_pil_image(pil_image, saved_relative_path)
+        FileIngestService._save_raw_image_bytes(image_data, saved_relative_path)
 
         FileIngestService._create_image_record(
             file_management=file_management,

@@ -2,11 +2,11 @@
   <v-card class="mb-6 chart-card" elevation="2">
     <v-card-title class="text-h5 font-weight-bold primary--text py-4">
       <v-icon large color="primary" class="mr-2">mdi-chart-pie</v-icon>
-      图像标签统计分析
+      资源标签统计分析
     </v-card-title>
     <v-card-text class="pa-4">
       <v-row>
-        <v-col sm="5">
+        <v-col cols="12" sm="4">
           <v-text-field
             v-model="startTime"
             label="开始时间"
@@ -16,11 +16,11 @@
             :error-messages="startTimeError"
             class="rounded-lg"
             variant="outlined"
-            @update:model-value="validateTime"
+            @update:model-value="fetchChartData"
             required
           />
         </v-col>
-        <v-col sm="5">
+        <v-col cols="12" sm="4">
           <v-text-field
             v-model="endTime"
             label="结束时间"
@@ -28,20 +28,26 @@
             hide-details="auto"
             density="compact"
             :error-messages="endTimeError"
+            :min="startTime ?? undefined"
             class="rounded-lg"
             variant="outlined"
-            @update:model-value="validateTime"
+            @update:model-value="fetchChartData"
             required
           />
         </v-col>
-        <v-col class="d-flex justify-end">
-          <v-btn
-            color="primary"
-            @click="fetchChartData"
-            :disabled="!!timeError || !startTime || !endTime"
-            prepend-icon="mdi-refresh"
-          >
-          </v-btn>
+        <v-col cols="12" sm="3">
+          <v-select
+            v-model="resourceType"
+            :items="resourceTypeOptions"
+            item-title="label"
+            item-value="value"
+            label="类型"
+            density="compact"
+            variant="outlined"
+            hide-details
+            class="rounded-lg"
+            @update:model-value="fetchChartData"
+          />
         </v-col>
       </v-row>
       <div ref="chartContainer" class="chart-wrapper"></div>
@@ -65,7 +71,13 @@ const chart = ref<echarts.ECharts | null>(null)
 const snackbar = useSnackbarStore()
 const themeStore = useThemeStore()
 
-const timeError = computed(() => startTimeError.value || endTimeError.value)
+const resourceType = ref('all')
+const resourceTypeOptions = [
+  { label: '全部', value: 'all' },
+  { label: '图像', value: 'image' },
+  { label: '论文', value: 'paper' },
+  { label: 'Review', value: 'review' },
+]
 
 const formatDateTime = (date: Date): string => {
   const year = date.getFullYear()
@@ -73,13 +85,13 @@ const formatDateTime = (date: Date): string => {
   const day = String(date.getDate()).padStart(2, '0')
   const hours = String(date.getHours()).padStart(2, '0')
   const minutes = String(date.getMinutes()).padStart(2, '0')
-  return `${year}-${month}-${day} ${hours}:${minutes}`
+  return `${year}-${month}-${day}T${hours}:${minutes}`
 }
 
 const initDefaultTime = () => {
   const end = new Date()
   const start = new Date(end)
-  start.setDate(start.getDate() - 1)
+  start.setFullYear(start.getFullYear() - 1)
   endTime.value = formatDateTime(end)
   startTime.value = formatDateTime(start)
 }
@@ -259,7 +271,8 @@ const fetchChartData = async () => {
   try {
     const params = {
       startTime: startTime.value!.replace('T', ' '),
-      endTime: endTime.value!.replace('T', ' ')
+      endTime: endTime.value!.replace('T', ' '),
+      resourceType: resourceType.value
     }
     const tagResponse = await analyticsApi.getImgTag(params)
     if (tagResponse.data) {
@@ -312,4 +325,4 @@ watch(() => themeStore.theme, () => {
     height: 300px;
   }
 }
-</style> 
+</style>

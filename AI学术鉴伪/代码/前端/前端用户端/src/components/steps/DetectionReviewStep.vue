@@ -151,6 +151,24 @@
                 </v-autocomplete>
               </v-card-text>
             </v-card>
+
+            <!-- 模型返回原始数据 -->
+            <v-card class="mt-6" elevation="2" rounded="lg">
+              <v-card-title class="pa-6 d-flex align-center" @click="showRawJson = !showRawJson" style="cursor: pointer;">
+                <v-icon color="grey-darken-2" class="mr-2">mdi-code-json</v-icon>
+                <span class="text-h6">模型返回原始数据</span>
+                <v-spacer />
+                <v-btn :icon="showRawJson ? 'mdi-chevron-up' : 'mdi-chevron-down'" variant="text" size="small" />
+              </v-card-title>
+              <v-card-text v-if="showRawJson" class="pa-6">
+                <div class="d-flex justify-end mb-2">
+                  <v-btn size="small" variant="outlined" prepend-icon="mdi-content-copy" @click="copyRawJson">
+                    复制
+                  </v-btn>
+                </div>
+                <pre class="raw-json-pre">{{ JSON.stringify(rawDetectionData, null, 2) }}</pre>
+              </v-card-text>
+            </v-card>
           </v-col>
         </v-row>
       </v-col>
@@ -238,7 +256,7 @@
                         <v-list-item class="py-2 px-3">
                           <div class="d-flex align-center" style="gap: 24px; width: 100%;">
                             <div class="text-body-1 font-weight-medium" style="min-width: 100px;">
-                              {{ dimension.method }}
+                              {{ getMethodLabel(dimension.method) }}
                             </div>
 
                             <v-progress-circular :model-value="dimension.probability * 100"
@@ -246,7 +264,7 @@
                               <span class="text-caption">{{ (dimension.probability * 100).toFixed(0) }}%</span>
                             </v-progress-circular>
 
-                            <v-btn size="small" :color="dimension.visible ? 'error' : 'grey'" variant="tonal"
+                            <v-btn v-if="dimension.mask_image" size="small" :color="dimension.visible ? 'error' : 'grey'" variant="tonal"
                               @click="toggleOverlay(dimension)" class="fake-area-btn ml-4">
                               <v-icon size="small" :icon="dimension.visible ? 'mdi-eye-off' : 'mdi-eye'"
                                 class="mr-1"></v-icon>
@@ -344,6 +362,16 @@ interface SubMethod {
   visible: boolean
 }
 
+const METHOD_LABELS: Record<string, string> = {
+  splicing: '拼接检测',
+  blurring: '模糊检测',
+  bruteforce: '暴力篡改检测',
+  contrast: '对比度检测',
+  inpainting: '修复检测',
+}
+
+const getMethodLabel = (method: string) => METHOD_LABELS[method] || method
+
 interface Person {
   id: number
   username: string
@@ -387,17 +415,26 @@ const submitReview = async () => {
     ]
     await publisher.dispatchAnnual({
       image_ids: reviewImages,
-      reviewers: selectedPeopleList.value
+      reviewers: selectedPeopleList.value,
+      task_id: props.task_id
     })
     snackbar.showMessage('已提交人工复查任务，请等待管理员审核', 'success')
     router.push('/annual')
   } catch (error: any) {
+    const respData = error?.response?.data
+    let backendMsg = ''
+    if (typeof respData === 'string') {
+      backendMsg = respData.substring(0, 200)
+    } else if (respData) {
+      backendMsg = respData.error || respData.detail || respData.message || ''
+    }
     let message = '提交人工复查任务失败'
-    if (axios.isAxiosError(error)) {
-      const status = error?.code
-      if (status === 'ERR_NETWORK') {
-        message = '用户无权限'
-      }
+    if (error?.response?.status === 403) {
+      message = backendMsg || '该用户没有发布的权限'
+    } else if (error?.code === 'ERR_NETWORK') {
+      message = '网络错误，请检查连接'
+    } else if (backendMsg) {
+      message = typeof backendMsg === 'string' ? backendMsg : JSON.stringify(backendMsg)
     }
     snackbar.showMessage(message, 'error')
   }
@@ -497,6 +534,26 @@ function formatLlmAnalysis(value: unknown) {
     return String(value)
   }
 }
+
+const copyRawJson = () => {
+  const text = JSON.stringify(rawDetectionData.value, null, 2)
+  navigator.clipboard.writeText(text).then(() => {
+    snackbar.showMessage('已复制到剪贴板', 'success')
+  }).catch(() => {
+    snackbar.showMessage('复制失败', 'error')
+  })
+}
+
+const showRawJson = ref(false)
+
+const rawDetectionData = computed(() => ({
+  llm_analysis: taskLlmAnalysis.value,
+  fake_images: detectionResult.value.fakeImages,
+  real_images: detectionResult.value.realImages,
+  fake_count: detectionResult.value.fakeCount,
+  total_count: detectionResult.value.totalCount,
+  detection_time: detectionResult.value.detectionTime
+}))
 
 const showImageDetail = ref(false)
 const selectedImage = ref<Image | null>(null)
@@ -765,5 +822,20 @@ watch(activeTab, () => {
   margin: 0;
   font-family: "Courier New", Courier, monospace;
   font-size: 0.9rem;
+}
+
+.raw-json-pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  padding: 16px;
+  background-color: #1e1e1e;
+  color: #d4d4d4;
+  border-radius: 8px;
+  font-family: "Courier New", Courier, monospace;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  max-height: 600px;
+  overflow-y: auto;
 }
 </style>

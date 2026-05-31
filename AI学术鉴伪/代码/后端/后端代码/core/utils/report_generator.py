@@ -61,6 +61,15 @@ COLOR_BODY_TEXT     = Color(0.15, 0.15, 0.15)
 COLOR_LIGHT_GRAY    = Color(0.82, 0.82, 0.82)
 COLOR_WHITE         = Color(1, 1, 1)
 
+def _is_mask_blank(image_path):
+    """Return True if mask image is entirely black (no forgery detected)."""
+    try:
+        from PIL import Image
+        import numpy as np
+        return bool(np.array(Image.open(image_path).convert('L')).max() == 0)
+    except Exception:
+        return False
+
 # ─── Layout Constants ──────────────────────────────────────────────────────────
 MARGIN = 50
 HEADER_BAR_HEIGHT = 36
@@ -414,8 +423,13 @@ def generate_detection_task_report(task: DetectionTask) -> str:
             y = _draw_section_title(c, y, W, "深度学习检测方法", level=2)
 
             sub_rows = []
+            METHOD_LABELS = {
+                'splicing': '拼接检测', 'blurring': '模糊检测',
+                'bruteforce': '暴力篡改检测', 'contrast': '对比度检测',
+                'inpainting': '修复检测',
+            }
             for sub in sub_results:
-                method_name = sub.get_method_display() if hasattr(sub, 'get_method_display') else sub.method
+                method_name = METHOD_LABELS.get(sub.method, sub.method)
                 prob = sub.probability if sub.probability is not None else 0.0
                 sub_rows.append((method_name, f"{prob:.4f}"))
 
@@ -425,8 +439,16 @@ def generate_detection_task_report(task: DetectionTask) -> str:
             # Mask images for each sub result
             for sub in sub_results:
                 if sub.mask_image and hasattr(sub.mask_image, 'path') and os.path.exists(sub.mask_image.path):
+                    method_label = METHOD_LABELS.get(sub.method, sub.method)
+                    if _is_mask_blank(sub.mask_image.path):
+                        y, page_num = _ensure_space(c, y, W, H, 30, page_num, header_title, gen_time)
+                        c.setFont(FONT_REGULAR, 8)
+                        c.setFillColor(COLOR_FOOTER_TEXT)
+                        c.drawString(MARGIN + 8, y, f"{method_label} - 热力图：未检测到异常区域")
+                        c.setFillColor(Color(0, 0, 0))
+                        y -= 20
+                        continue
                     y, page_num = _ensure_space(c, y, W, H, 90, page_num, header_title, gen_time)
-                    method_label = sub.get_method_display() if hasattr(sub, 'get_method_display') else sub.method
                     c.setFont(FONT_REGULAR, 8)
                     c.drawString(MARGIN + 8, y, f"{method_label} - 热力图：")
                     y -= 12
@@ -437,8 +459,9 @@ def generate_detection_task_report(task: DetectionTask) -> str:
                         c.drawImage(mask_reader, MARGIN + 8, y - int(mh * scale),
                                     width=int(mw * scale), height=int(mh * scale), preserveAspectRatio=True)
                         y -= int(mh * scale) + 8
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        import logging
+                        logging.getLogger(__name__).warning(f"Failed to draw mask for {sub.method}: {e}")
 
     c.save()
     return _save_task_report(task, rel_path)
