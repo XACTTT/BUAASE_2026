@@ -8,7 +8,10 @@ class MaterialValidationService:
 
     @staticmethod
     def validate_container_materials(user, container):
-        has_images = ImageUpload.objects.filter(container=container).exists()
+        has_images = ImageUpload.objects.filter(
+            container=container,
+            source_kind__in=('direct_image', 'zip_image'),
+        ).exists()
 
         has_paper_file = FileManagement.objects.filter(
             container=container,

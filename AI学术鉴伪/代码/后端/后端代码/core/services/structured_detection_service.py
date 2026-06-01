@@ -161,6 +161,8 @@ class StructuredDetectionService:
         file_ids = task.extra_payload.get('file_ids', [])
         review_text_ids = task.extra_payload.get('review_text_ids', [])
 
+        USER_IMAGE_KINDS = StructuredDetectionService.USER_IMAGE_KINDS
+
         if file_ids:
             paper_files = FileManagement.objects.filter(
                 id__in=file_ids,
@@ -170,7 +172,10 @@ class StructuredDetectionService:
                 id__in=file_ids,
                 resource_role__in=StructuredDetectionService.REVIEW_FILE_ROLES,
             ).order_by('id')
-            images = ImageUpload.objects.filter(file_management_id__in=file_ids).order_by('id')
+            images = ImageUpload.objects.filter(
+                file_management_id__in=file_ids,
+                source_kind__in=USER_IMAGE_KINDS,
+            ).order_by('id')
         else:
             paper_files = FileManagement.objects.filter(
                 container=task.container,
@@ -180,7 +185,10 @@ class StructuredDetectionService:
                 container=task.container,
                 resource_role__in=StructuredDetectionService.REVIEW_FILE_ROLES,
             ).order_by('id')
-            images = ImageUpload.objects.filter(container=task.container).order_by('id')
+            images = ImageUpload.objects.filter(
+                container=task.container,
+                source_kind__in=USER_IMAGE_KINDS,
+            ).order_by('id')
 
         if review_text_ids:
             review_texts = ReviewTextResource.objects.filter(id__in=review_text_ids).order_by('id')
@@ -902,10 +910,15 @@ class StructuredDetectionService:
 
         return detection_results
 
+    # source_kind values that represent user-intended image uploads (not auto-extracted)
+    USER_IMAGE_KINDS = {'direct_image', 'zip_image'}
+
     @staticmethod
     def _wait_for_image_uploads(task: DetectionTask, timeout: int = 180, interval: int = 3):
-        """Poll until ImageUpload records stabilize, or timeout.
+        """Poll until user-uploaded ImageUpload records stabilize, or timeout.
 
+        Only waits for images with source_kind in USER_IMAGE_KINDS (direct_image, zip_image).
+        Auto-extracted images from PDF/DOCX are ignored — they are not real image materials.
         parse_uploaded_file_task runs async and may not have finished yet.
         Waits until ALL FileManagement records finish parsing AND the image count
         is stable (same across multiple consecutive checks).
@@ -916,10 +929,11 @@ class StructuredDetectionService:
         target_file_ids = set(int(fid) for fid in file_ids if fid)
 
         def _count_images():
+            q = dict(source_kind__in=StructuredDetectionService.USER_IMAGE_KINDS)
             if target_file_ids:
-                return ImageUpload.objects.filter(file_management_id__in=target_file_ids).count()
+                return ImageUpload.objects.filter(file_management_id__in=target_file_ids, **q).count()
             if container_id:
-                return ImageUpload.objects.filter(container_id=container_id).count()
+                return ImageUpload.objects.filter(container_id=container_id, **q).count()
             return 0
 
         def _all_files_parsed():
@@ -935,8 +949,14 @@ class StructuredDetectionService:
                 logger.exception('Error checking parse status for files %s', target_file_ids)
                 return False
 
+        # Quick check: if there are no user-uploaded images at all, skip waiting
+        initial_count = _count_images()
+        if initial_count == 0 and _all_files_parsed():
+            logger.info('No user-uploaded images for task %s, skipping image wait', task.id)
+            return 0
+
         elapsed = 0
-        last_count = 0
+        last_count = initial_count
         stable_rounds = 0
         while elapsed < timeout:
             count = _count_images()
@@ -959,7 +979,7 @@ class StructuredDetectionService:
                            task.id, timeout, last_count)
             return last_count
 
-        logger.warning('No ImageUpload records found for task %s after %ds wait', task.id, timeout)
+        logger.warning('No user-uploaded images found for task %s after %ds wait', task.id, timeout)
         return 0
 
     @staticmethod
