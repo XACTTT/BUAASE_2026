@@ -1044,8 +1044,8 @@ onMounted(async () => {
                               class="flex-shrink-0 mr-1"
                               style="margin-top: 0; padding-top: 0;"
                             />
-                            <v-icon :color="getProbabilityColor(para.confidence)" class="mr-2" size="small">
-                              {{ para.confidence > 0.5 ? 'mdi-alert-circle' : 'mdi-check-circle' }}
+                            <v-icon :color="getProbabilityColor(para.aigcProb)" class="mr-2" size="small">
+                              {{ para.aigcProb > 0.5 ? 'mdi-alert-circle' : 'mdi-check-circle' }}
                             </v-icon>
                             <span class="text-body-2 font-weight-medium text-truncate flex-grow-1">
                               {{ para.title || para.id }}
@@ -1075,12 +1075,12 @@ onMounted(async () => {
                       <!-- Detail header -->
                       <v-card variant="outlined" rounded="lg" class="mb-3">
                         <v-card-title class="d-flex align-center flex-wrap ga-2">
-                          <v-icon :color="getProbabilityColor(selectedPaperParagraph.confidence)">
-                            {{ selectedPaperParagraph.confidence > 0.5 ? 'mdi-alert-circle' : 'mdi-check-circle' }}
+                          <v-icon :color="getProbabilityColor(selectedPaperParagraph.aigcProb)">
+                            {{ selectedPaperParagraph.aigcProb > 0.5 ? 'mdi-alert-circle' : 'mdi-check-circle' }}
                           </v-icon>
                           <span class="text-h6">{{ selectedPaperParagraph.title || selectedPaperParagraph.id }}</span>
-                          <v-chip :color="getProbabilityColor(selectedPaperParagraph.confidence)" size="small">
-                            {{ getProbabilityLevel(selectedPaperParagraph.confidence) }}
+                          <v-chip :color="getProbabilityColor(selectedPaperParagraph.aigcProb)" size="small">
+                            {{ getProbabilityLevel(selectedPaperParagraph.aigcProb) }}
                           </v-chip>
                           <v-chip v-if="selectedPaperParagraph.isAigc" color="error" size="small">
                             <v-icon start size="x-small">mdi-robot</v-icon> AI生成
@@ -1104,9 +1104,9 @@ onMounted(async () => {
                         <div class="text-subtitle-2 font-weight-bold mb-2">BERT检测结果</div>
                         <div class="mb-2">
                           <div class="text-caption text-grey mb-1">AI生成置信度</div>
-                          <v-progress-linear :model-value="selectedPaperParagraph.confidence * 100" :color="getProbabilityColor(selectedPaperParagraph.confidence)" height="24" rounded>
+                          <v-progress-linear :model-value="selectedPaperParagraph.aigcProb * 100" :color="getProbabilityColor(selectedPaperParagraph.aigcProb)" height="24" rounded>
                             <template #default>
-                              <span class="text-caption font-weight-bold" style="color: white">{{ (selectedPaperParagraph.confidence * 100).toFixed(1) }}%</span>
+                              <span class="text-caption font-weight-bold" style="color: white">{{ (selectedPaperParagraph.aigcProb * 100).toFixed(1) }}%</span>
                             </template>
                           </v-progress-linear>
                         </div>
@@ -1247,8 +1247,8 @@ onMounted(async () => {
                               class="flex-shrink-0 mr-1"
                               style="margin-top: 0; padding-top: 0;"
                             />
-                            <v-icon :color="getProbabilityColor(para.confidence)" class="mr-2" size="small">
-                              {{ para.confidence > 0.5 ? 'mdi-alert-circle' : 'mdi-check-circle' }}
+                            <v-icon :color="getProbabilityColor(para.aigcProb)" class="mr-2" size="small">
+                              {{ para.aigcProb > 0.5 ? 'mdi-alert-circle' : 'mdi-check-circle' }}
                             </v-icon>
                             <span class="text-body-2 font-weight-medium text-truncate flex-grow-1">
                               {{ para.title || para.id }}
@@ -1278,12 +1278,12 @@ onMounted(async () => {
                       <!-- Detail header -->
                       <v-card variant="outlined" rounded="lg" class="mb-3">
                         <v-card-title class="d-flex align-center flex-wrap ga-2">
-                          <v-icon :color="getProbabilityColor(selectedReviewParagraph.confidence)">
-                            {{ selectedReviewParagraph.confidence > 0.5 ? 'mdi-alert-circle' : 'mdi-check-circle' }}
+                          <v-icon :color="getProbabilityColor(selectedReviewParagraph.aigcProb)">
+                            {{ selectedReviewParagraph.aigcProb > 0.5 ? 'mdi-alert-circle' : 'mdi-check-circle' }}
                           </v-icon>
                           <span class="text-h6">{{ selectedReviewParagraph.title || selectedReviewParagraph.id }}</span>
-                          <v-chip :color="getProbabilityColor(selectedReviewParagraph.confidence)" size="small">
-                            {{ getProbabilityLevel(selectedReviewParagraph.confidence) }}
+                          <v-chip :color="getProbabilityColor(selectedReviewParagraph.aigcProb)" size="small">
+                            {{ getProbabilityLevel(selectedReviewParagraph.aigcProb) }}
                           </v-chip>
                           <v-chip v-if="selectedReviewParagraph.isAigc" color="error" size="small">
                             <v-icon start size="x-small">mdi-robot</v-icon> AI生成
@@ -1307,9 +1307,9 @@ onMounted(async () => {
                         <div class="text-subtitle-2 font-weight-bold mb-2">BERT检测结果</div>
                         <div class="mb-2">
                           <div class="text-caption text-grey mb-1">AI生成置信度</div>
-                          <v-progress-linear :model-value="selectedReviewParagraph.confidence * 100" :color="getProbabilityColor(selectedReviewParagraph.confidence)" height="24" rounded>
+                          <v-progress-linear :model-value="selectedReviewParagraph.aigcProb * 100" :color="getProbabilityColor(selectedReviewParagraph.aigcProb)" height="24" rounded>
                             <template #default>
-                              <span class="text-caption font-weight-bold" style="color: white">{{ (selectedReviewParagraph.confidence * 100).toFixed(1) }}%</span>
+                              <span class="text-caption font-weight-bold" style="color: white">{{ (selectedReviewParagraph.aigcProb * 100).toFixed(1) }}%</span>
                             </template>
                           </v-progress-linear>
                         </div>

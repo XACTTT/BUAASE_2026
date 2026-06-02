@@ -80,7 +80,7 @@ const structuredSections = computed<SectionItem[]>(() => {
 
 const sortedSections = computed(() => {
   if (sortMode.value === 'risk') {
-    return [...structuredSections.value].sort((a, b) => (b.confidence_score || 0) - (a.confidence_score || 0))
+    return [...structuredSections.value].sort((a, b) => ((b.probabilities?.aigc || 0) - (a.probabilities?.aigc || 0)))
   }
   return structuredSections.value
 })
@@ -102,7 +102,7 @@ const structuredReviewSections = computed<SectionItem[]>(() => {
 
 const sortedReviewSections = computed(() => {
   if (reviewSortMode.value === 'risk') {
-    return [...structuredReviewSections.value].sort((a, b) => (b.confidence_score || 0) - (a.confidence_score || 0))
+    return [...structuredReviewSections.value].sort((a, b) => ((b.probabilities?.aigc || 0) - (a.probabilities?.aigc || 0)))
   }
   return structuredReviewSections.value
 })
@@ -123,7 +123,7 @@ const reviewStatistics = computed(() => {
   let medium = 0
   let low = 0
   for (const s of sections) {
-    const score = s.confidence_score || 0
+    const score = s.probabilities?.aigc || 0
     if (score > 0.8) high++
     else if (score > 0.5) medium++
     else low++
@@ -191,7 +191,7 @@ const paperStatistics = computed(() => {
   let medium = 0
   let low = 0
   for (const s of sections) {
-    const score = s.confidence_score || 0
+    const score = s.probabilities?.aigc || 0
     if (score > 0.8) high++
     else if (score > 0.5) medium++
     else low++
@@ -202,7 +202,7 @@ const paperStatistics = computed(() => {
 // Top 5 high risk sections
 const topRiskSections = computed(() => {
   return [...structuredSections.value]
-    .sort((a, b) => (b.confidence_score || 0) - (a.confidence_score || 0))
+    .sort((a, b) => ((b.probabilities?.aigc || 0) - (a.probabilities?.aigc || 0)))
     .slice(0, 5)
 })
 
@@ -655,11 +655,11 @@ onMounted(async () => {
                   <div class="d-flex align-center justify-space-between">
                     <div class="d-flex align-center" style="min-width: 0; flex: 1;">
                       <v-icon
-                        :color="getProbabilityColor(section.confidence_score || 0)"
+                        :color="getProbabilityColor(section.probabilities?.aigc || 0)"
                         size="small"
                         class="mr-2 flex-shrink-0"
                       >
-                        {{ (section.confidence_score || 0) > 0.5 ? 'mdi-alert-circle' : 'mdi-check-circle' }}
+                        {{ (section.probabilities?.aigc || 0) > 0.5 ? 'mdi-alert-circle' : 'mdi-check-circle' }}
                       </v-icon>
                       <div style="min-width: 0; flex: 1;">
                         <div class="text-body-2 font-weight-medium text-truncate">
@@ -674,17 +674,17 @@ onMounted(async () => {
                       </div>
                     </div>
                     <v-chip
-                      :color="getProbabilityColor(section.confidence_score || 0)"
+                      :color="getProbabilityColor(section.probabilities?.aigc || 0)"
                       size="x-small"
                       class="ml-2 flex-shrink-0"
                     >
-                      {{ ((section.confidence_score || 0) * 100).toFixed(0) }}%
+                      {{ ((section.probabilities?.aigc || 0) * 100).toFixed(0) }}%
                     </v-chip>
                   </div>
                   <!-- Mini progress bar -->
                   <v-progress-linear
-                    :model-value="(section.confidence_score || 0) * 100"
-                    :color="getProbabilityColor(section.confidence_score || 0)"
+                    :model-value="(section.probabilities?.aigc || 0) * 100"
+                    :color="getProbabilityColor(section.probabilities?.aigc || 0)"
                     height="3"
                     rounded
                     class="mt-2"
@@ -711,12 +711,12 @@ onMounted(async () => {
             <v-card class="mb-6" elevation="2" rounded="lg">
               <v-card-title class="pa-6">
                 <div class="d-flex align-center flex-wrap gap-2">
-                  <v-icon :color="getProbabilityColor(selectedSection.confidence_score || 0)" class="mr-1">
-                    {{ (selectedSection.confidence_score || 0) > 0.5 ? 'mdi-alert-circle' : 'mdi-check-circle' }}
+                  <v-icon :color="getProbabilityColor(selectedSection.probabilities?.aigc || 0)" class="mr-1">
+                    {{ (selectedSection.probabilities?.aigc || 0) > 0.5 ? 'mdi-alert-circle' : 'mdi-check-circle' }}
                   </v-icon>
                   <span class="text-h6">{{ selectedSection.title || selectedSection.item_id }}</span>
-                  <v-chip :color="getProbabilityColor(selectedSection.confidence_score || 0)" size="small">
-                    {{ getProbabilityLevel(selectedSection.confidence_score || 0) }}
+                  <v-chip :color="getProbabilityColor(selectedSection.probabilities?.aigc || 0)" size="small">
+                    {{ getProbabilityLevel(selectedSection.probabilities?.aigc || 0) }}
                   </v-chip>
                   <v-chip v-if="selectedSection.is_aigc" color="error" size="small" variant="tonal">
                     <v-icon start size="x-small">mdi-robot</v-icon>
@@ -757,8 +757,8 @@ onMounted(async () => {
                   <v-col cols="12" md="6">
                     <div class="text-subtitle-2 font-weight-bold mb-2">AI生成置信度</div>
                     <v-progress-linear
-                      :model-value="(selectedSection.confidence_score || 0) * 100"
-                      :color="getProbabilityColor(selectedSection.confidence_score || 0)"
+                      :model-value="(selectedSection.probabilities?.aigc || 0) * 100"
+                      :color="getProbabilityColor(selectedSection.probabilities?.aigc || 0)"
                       height="28"
                       rounded
                     >
@@ -1234,11 +1234,11 @@ onMounted(async () => {
                   <div class="d-flex align-center justify-space-between">
                     <div class="d-flex align-center" style="min-width: 0; flex: 1;">
                       <v-icon
-                        :color="getProbabilityColor(section.confidence_score || 0)"
+                        :color="getProbabilityColor(section.probabilities?.aigc || 0)"
                         size="small"
                         class="mr-2 flex-shrink-0"
                       >
-                        {{ (section.confidence_score || 0) > 0.5 ? 'mdi-alert-circle' : 'mdi-check-circle' }}
+                        {{ (section.probabilities?.aigc || 0) > 0.5 ? 'mdi-alert-circle' : 'mdi-check-circle' }}
                       </v-icon>
                       <div style="min-width: 0; flex: 1;">
                         <div class="text-body-2 font-weight-medium text-truncate">
@@ -1253,17 +1253,17 @@ onMounted(async () => {
                       </div>
                     </div>
                     <v-chip
-                      :color="getProbabilityColor(section.confidence_score || 0)"
+                      :color="getProbabilityColor(section.probabilities?.aigc || 0)"
                       size="x-small"
                       class="ml-2 flex-shrink-0"
                     >
-                      {{ ((section.confidence_score || 0) * 100).toFixed(0) }}%
+                      {{ ((section.probabilities?.aigc || 0) * 100).toFixed(0) }}%
                     </v-chip>
                   </div>
                   <!-- Mini progress bar -->
                   <v-progress-linear
-                    :model-value="(section.confidence_score || 0) * 100"
-                    :color="getProbabilityColor(section.confidence_score || 0)"
+                    :model-value="(section.probabilities?.aigc || 0) * 100"
+                    :color="getProbabilityColor(section.probabilities?.aigc || 0)"
                     height="3"
                     rounded
                     class="mt-2"
@@ -1290,12 +1290,12 @@ onMounted(async () => {
             <v-card class="mb-6" elevation="2" rounded="lg">
               <v-card-title class="pa-6">
                 <div class="d-flex align-center flex-wrap gap-2">
-                  <v-icon :color="getProbabilityColor(selectedReviewSection.confidence_score || 0)" class="mr-1">
-                    {{ (selectedReviewSection.confidence_score || 0) > 0.5 ? 'mdi-alert-circle' : 'mdi-check-circle' }}
+                  <v-icon :color="getProbabilityColor(selectedReviewSection.probabilities?.aigc || 0)" class="mr-1">
+                    {{ (selectedReviewSection.probabilities?.aigc || 0) > 0.5 ? 'mdi-alert-circle' : 'mdi-check-circle' }}
                   </v-icon>
                   <span class="text-h6">{{ selectedReviewSection.title || selectedReviewSection.item_id }}</span>
-                  <v-chip :color="getProbabilityColor(selectedReviewSection.confidence_score || 0)" size="small">
-                    {{ getProbabilityLevel(selectedReviewSection.confidence_score || 0) }}
+                  <v-chip :color="getProbabilityColor(selectedReviewSection.probabilities?.aigc || 0)" size="small">
+                    {{ getProbabilityLevel(selectedReviewSection.probabilities?.aigc || 0) }}
                   </v-chip>
                   <v-chip v-if="selectedReviewSection.is_aigc" color="error" size="small" variant="tonal">
                     <v-icon start size="x-small">mdi-robot</v-icon>
@@ -1336,8 +1336,8 @@ onMounted(async () => {
                   <v-col cols="12" md="6">
                     <div class="text-subtitle-2 font-weight-bold mb-2">AI生成置信度</div>
                     <v-progress-linear
-                      :model-value="(selectedReviewSection.confidence_score || 0) * 100"
-                      :color="getProbabilityColor(selectedReviewSection.confidence_score || 0)"
+                      :model-value="(selectedReviewSection.probabilities?.aigc || 0) * 100"
+                      :color="getProbabilityColor(selectedReviewSection.probabilities?.aigc || 0)"
                       height="28"
                       rounded
                     >
@@ -1408,8 +1408,8 @@ onMounted(async () => {
     <v-dialog v-model="showParagraphDialog" max-width="800">
       <v-card v-if="selectedParagraph" rounded="lg">
         <v-card-title class="pa-6 d-flex align-center">
-          <v-icon :color="getProbabilityColor(selectedParagraph.confidence_score || 0)" class="mr-2">
-            {{ (selectedParagraph.confidence_score || 0) > 0.5 ? 'mdi-alert-circle' : 'mdi-information' }}
+          <v-icon :color="getProbabilityColor(selectedParagraph.probabilities?.aigc || 0)" class="mr-2">
+            {{ (selectedParagraph.probabilities?.aigc || 0) > 0.5 ? 'mdi-alert-circle' : 'mdi-information' }}
           </v-icon>
           <span class="text-h6">{{ selectedParagraph.title || selectedParagraph.item_id }} 详情</span>
           <v-spacer />
@@ -1419,16 +1419,16 @@ onMounted(async () => {
         <v-card-text class="pa-6">
           <!-- AI probability chips -->
           <div class="mb-4">
-            <v-chip :color="getProbabilityColor(selectedParagraph.confidence_score || 0)" size="large">
+            <v-chip :color="getProbabilityColor(selectedParagraph.probabilities?.aigc || 0)" size="large">
               <v-icon start>mdi-brain</v-icon>
-              AI生成置信度: {{ ((selectedParagraph.confidence_score || 0) * 100).toFixed(1) }}%
+              AI生成置信度: {{ ((selectedParagraph.probabilities?.aigc || 0) * 100).toFixed(1) }}%
             </v-chip>
             <v-chip
-              :color="getProbabilityColor(selectedParagraph.confidence_score || 0)"
+              :color="getProbabilityColor(selectedParagraph.probabilities?.aigc || 0)"
               size="large"
               class="ml-2"
             >
-              {{ getProbabilityLevel(selectedParagraph.confidence_score || 0) }}
+              {{ getProbabilityLevel(selectedParagraph.probabilities?.aigc || 0) }}
             </v-chip>
             <v-chip v-if="selectedParagraph.source_file" size="large" class="ml-2" variant="tonal">
               {{ selectedParagraph.source_file }}
@@ -1445,8 +1445,8 @@ onMounted(async () => {
           <div class="mb-4">
             <h3 class="text-h6 mb-2">AI生成概率可视化</h3>
             <v-progress-linear
-              :model-value="(selectedParagraph.confidence_score || 0) * 100"
-              :color="getProbabilityColor(selectedParagraph.confidence_score || 0)"
+              :model-value="(selectedParagraph.probabilities?.aigc || 0) * 100"
+              :color="getProbabilityColor(selectedParagraph.probabilities?.aigc || 0)"
               height="30"
             >
               <template #default="{ value }">
