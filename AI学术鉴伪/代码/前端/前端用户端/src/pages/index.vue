@@ -83,7 +83,7 @@
             :disabled="!item.detection_task_id || !canViewResult(item.detection_task_status)"
             @click="handleViewResult(item)"
           >
-            查看结果
+            {{ getActionLabel(item) }}
           </v-btn>
         </template>
       </v-data-table>
@@ -169,6 +169,15 @@ const fetchResources = async () => {
 const canViewResult = (status: string | null) => {
   if (!status) return false
   return ['completed', 'partially_completed', 'failed'].includes(status)
+}
+
+const getActionLabel = (item: ResourceContainer) => {
+  if (!item.detection_task_id) return '未检测'
+  if (canViewResult(item.detection_task_status)) return '查看结果'
+  if (item.detection_task_status === 'pending') return '排队中'
+  if (item.detection_task_status === 'in_progress') return '检测中'
+  if (item.detection_task_status === 'analyzing') return '分析中'
+  return '处理中'
 }
 
 const handleViewResult = (item: ResourceContainer) => {

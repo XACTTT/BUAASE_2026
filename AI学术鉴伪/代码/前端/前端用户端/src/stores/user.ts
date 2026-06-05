@@ -17,6 +17,30 @@ interface UserState {
 
 const API_BASE_URL = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000').replace(/\/$/, '');
 
+const normalizePermission = (permission: number | string | null | undefined): number | null => {
+  if (permission === null || permission === undefined) return null
+
+  const parsed = typeof permission === 'number' ? permission : Number.parseInt(String(permission), 10)
+  if (!Number.isFinite(parsed)) return null
+
+  const permissionString = String(parsed)
+  const isOldPermissionFormat =
+    parsed > 127 ||
+    (parsed > 0 && permissionString.length <= 4 && [...permissionString].every(char => char === '0' || char === '1'))
+
+  if (!isOldPermissionFormat) {
+    return parsed
+  }
+
+  const oldPermission = permissionString.padStart(4, '0')
+  let result = 0
+  if (oldPermission[0] === '1') result |= 64 | 32 | 16 | 8
+  if (oldPermission[1] === '1') result |= 4
+  if (oldPermission[2] === '1') result |= 2
+  if (oldPermission[3] === '1') result |= 1
+  return result
+}
+
 export const useUserStore = defineStore('user', {
   state: (): UserState => ({
     username: '',
@@ -44,7 +68,7 @@ export const useUserStore = defineStore('user', {
         this.id = response.data.id;
         this.organization = response.data.organization
         this.organization_name = response.data.organization_name
-        this.permission = response.data.permission ?? null
+        this.permission = normalizePermission(response.data.permission)
         return true;
       } catch (error) {
         console.error('获取用户信息失败:', error);

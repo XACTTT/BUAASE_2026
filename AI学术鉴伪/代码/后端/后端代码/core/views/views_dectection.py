@@ -183,6 +183,25 @@ def _build_text_resource_from_file(user, file_record, task_type, task_name):
     )
 
 
+def _file_has_extractable_text(file_record):
+    sections = ContentExtractionService.extract_text_sections_from_file(file_record)
+    return any(str(item.get('text') or '').strip() for item in sections)
+
+
+def _text_file_validation_error(files, material_label):
+    invalid_files = [
+        file_record.file_name
+        for file_record in files
+        if not _file_has_extractable_text(file_record)
+    ]
+    if invalid_files:
+        names = '、'.join(invalid_files[:3])
+        if len(invalid_files) > 3:
+            names += f'等{len(invalid_files)}个文件'
+        return f'{names} 未提取到可检测的{material_label}文本，请上传包含正文文本的 PDF、DOCX 或 TXT 文件'
+    return None
+
+
 def _submit_structured_detection(request, user, mode, task_name, cmd_block_size, urn_k, if_use_llm):
     detect_type, container_id, file_ids, review_text_ids = _normalize_structured_submit_payload(request)
 
@@ -208,12 +227,30 @@ def _submit_structured_detection(request, user, mode, task_name, cmd_block_size,
     if detect_type == 'paper':
         if not file_queryset.exists() and container is None:
             return Response({"message": "No valid paper files found"}, status=400)
+        paper_files = file_queryset
+        if not paper_files.exists() and container is not None:
+            paper_files = FileManagement.objects.filter(
+                container=container,
+                resource_role__in=StructuredDetectionService.PAPER_FILE_ROLES,
+            ).order_by('id')
+        validation_error = _text_file_validation_error(paper_files, '论文')
+        if validation_error:
+            return Response({"message": validation_error}, status=400)
 
     if detect_type == 'review':
         has_review_files = file_queryset.exists()
         has_review_texts = bool(review_text_ids)
         if not has_review_files and not has_review_texts and container is None:
             return Response({"message": "No valid review materials found"}, status=400)
+        review_files = file_queryset
+        if not review_files.exists() and container is not None:
+            review_files = FileManagement.objects.filter(
+                container=container,
+                resource_role__in=StructuredDetectionService.REVIEW_FILE_ROLES,
+            ).order_by('id')
+        validation_error = _text_file_validation_error(review_files, 'Review')
+        if validation_error:
+            return Response({"message": validation_error}, status=400)
 
     if detect_type == 'multi':
         if container is None:

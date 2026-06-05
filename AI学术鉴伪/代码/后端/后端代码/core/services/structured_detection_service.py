@@ -469,12 +469,14 @@ class StructuredDetectionService:
                                if (s.get('item_id') or '').startswith('multi_review')]
             review_scores = [s.get('probabilities', {}).get('aigc', 0) for s in review_sections]
             avg_review_score = sum(review_scores) / len(review_scores) if review_scores else 0
+            review_section_count = len(review_sections)
             material_cards.append({
                 'type': 'review',
                 'label': '评审材料',
-                'summary': f'{len(review_files)} 个评审文件，{len(review_texts)} 段评审文本',
+                'summary': f'{len(review_files)} 个评审文件，{review_section_count} 段评审文本',
                 'score': round(avg_review_score, 4),
                 'file_count': len(review_files) + len(review_texts),
+                'section_count': review_section_count,
                 'files': [
                     {'file_id': rf.get('file_id'), 'file_name': rf.get('file_name')}
                     for rf in review_files

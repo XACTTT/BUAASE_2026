@@ -36,7 +36,7 @@
         <v-card-text class="pa-0" :style="listBodyStyle">
           <v-list lines="two" class="content-scroll" :style="contentScrollStyle">
             <v-list-item
-              v-if="previewMode === 'file'"
+              v-if="showFilePreviewList"
               v-for="file in previewFiles"
               :key="`preview-${file.file_id}`"
               :class="{ 'selected-item': activePreviewFileId === file.file_id }"
@@ -54,7 +54,7 @@
             </v-list-item>
 
             <v-list-item
-              v-if="previewMode !== 'file'"
+              v-if="showTextList"
               v-for="(item, index) in pagedContents"
               :key="item.content_id"
               :class="{ 'selected-item': activeItem?.content_id === item.content_id }"
@@ -69,7 +69,7 @@
               <v-list-item-subtitle>{{ item.source || '提取内容' }}</v-list-item-subtitle>
             </v-list-item>
 
-            <v-list-item v-if="previewMode !== 'file' && !pagedContents.length" class="empty-list-item">
+            <v-list-item v-if="showEmptyTextState" class="empty-list-item">
               <template #prepend>
                 <v-avatar size="42" class="me-2" color="grey-lighten-3" variant="tonal">
                   <v-icon color="grey">mdi-file-remove-outline</v-icon>
@@ -187,6 +187,10 @@ const previewFiles = ref<PreviewFileItem[]>([])
 const activePreviewFileId = ref<number | null>(null)
 // 多材料复用时隐藏顶部输入区，启用紧凑模式
 const compactMode = computed(() => !props.showMetaControls)
+const hasTextContents = computed(() => contents.value.length > 0)
+const showTextList = computed(() => hasTextContents.value || previewMode.value !== 'file')
+const showFilePreviewList = computed(() => previewMode.value === 'file' && !hasTextContents.value)
+const showEmptyTextState = computed(() => !hasTextContents.value && previewMode.value !== 'file')
 
 // 列表分页：每页最多展示5条
 const itemsPerPage = 5
@@ -332,8 +336,16 @@ const loadContents = async () => {
       aggregatedTextItems.push(...normalizedItems)
     }
 
+    contents.value = aggregatedTextItems
     previewFiles.value = aggregatedPreviewFiles
-    if (previewFiles.value.length > 0) {
+    if (contents.value.length > 0) {
+      previewMode.value = 'text'
+      previewFileName.value = ''
+      previewFileExt.value = ''
+      previewUrl.value = ''
+      previewCanInline.value = true
+      activePreviewFileId.value = null
+    } else if (previewFiles.value.length > 0) {
       previewMode.value = 'file'
       selectPreviewFile(previewFiles.value[0])
     } else {
@@ -345,9 +357,8 @@ const loadContents = async () => {
       activePreviewFileId.value = null
     }
 
-    contents.value = aggregatedTextItems
     listPage.value = 1
-    if (previewMode.value !== 'file' && !contents.value.length) {
+    if (!contents.value.length && !previewFiles.value.length) {
       snackbar.showMessage(`当前文件暂无可展示的${props.moduleLabel}提取内容`, 'warning')
     }
     activeItem.value = previewMode.value === 'file' ? null : (compactMode.value ? null : (contents.value[0] || null))

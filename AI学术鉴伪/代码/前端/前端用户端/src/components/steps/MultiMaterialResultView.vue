@@ -12,6 +12,37 @@ interface Props {
   taskMeta: any
 }
 
+interface ProbabilityPair {
+  human?: number | string | null
+  aigc?: number | string | null
+}
+
+interface DetectionSectionLike {
+  item_id?: string
+  isAigc?: boolean
+  is_aigc?: boolean
+  labelName?: string
+  label_name?: string
+  confidence?: number | string | null
+  confidence_score?: number | string | null
+  aigcProb?: number | string | null
+  humanProb?: number | string | null
+  probabilities?: ProbabilityPair | null
+}
+
+interface MaterialCardLike {
+  type?: string
+  files?: unknown[]
+  file_count?: number
+  score?: number
+}
+
+interface DimensionLike {
+  name?: string
+  score?: number
+  summary?: string
+}
+
 const props = defineProps<Props>()
 const router = useRouter()
 const snackbar = useSnackbarStore()
@@ -19,6 +50,60 @@ const theme = useTheme()
 const userStore = useUserStore()
 
 const isDarkMode = computed(() => theme.global.current.value.dark)
+
+const clampProbability = (value: unknown): number => {
+  const num = Number(value)
+  if (!Number.isFinite(num)) return 0
+  return Math.min(1, Math.max(0, num))
+}
+
+function formatProbability(value: unknown, digits = 1): string {
+  return `${(clampProbability(value) * 100).toFixed(digits)}%`
+}
+
+function isAigcSection(section: DetectionSectionLike): boolean {
+  return section?.isAigc === true ||
+    section?.is_aigc === true ||
+    section?.labelName === 'aigc' ||
+    section?.label_name === 'aigc'
+}
+
+function getSectionAigcProbability(section?: DetectionSectionLike | null): number {
+  if (!section) return 0
+  const explicitAigc = Number(section.aigcProb ?? section.probabilities?.aigc)
+  if (Number.isFinite(explicitAigc)) return clampProbability(explicitAigc)
+
+  const confidence = Number(section.confidence ?? section.confidence_score)
+  if (!Number.isFinite(confidence)) return 0
+  return isAigcSection(section) ? clampProbability(confidence) : clampProbability(1 - confidence)
+}
+
+function getSectionHumanProbability(section?: DetectionSectionLike | null): number {
+  if (!section) return 0
+  const explicitHuman = Number(section.humanProb ?? section.probabilities?.human)
+  if (Number.isFinite(explicitHuman)) return clampProbability(explicitHuman)
+  return clampProbability(1 - getSectionAigcProbability(section))
+}
+
+function getPredictionConfidence(section?: DetectionSectionLike | null): number {
+  if (!section) return 0
+  const confidence = Number(section.confidence ?? section.confidence_score)
+  if (Number.isFinite(confidence)) return clampProbability(confidence)
+  return Math.max(getSectionHumanProbability(section), getSectionAigcProbability(section))
+}
+
+function getModelLabel(section?: DetectionSectionLike | null): string {
+  if (!section) return '未知'
+  if (isAigcSection(section)) return 'AI生成'
+  if (section.isAigc === false || section.is_aigc === false || section.labelName === 'human' || section.label_name === 'human') {
+    return '人类撰写'
+  }
+  return section.labelName || section.label_name || '未知'
+}
+
+function getPredictionConfidenceLabel(section?: DetectionSectionLike | null): string {
+  return getModelLabel(section) === 'AI生成' ? 'AI生成判定置信度' : '人类撰写判定置信度'
+}
 
 // --- Extract result payload ---
 const result = computed(() => props.taskMeta?.result || {})
@@ -29,19 +114,23 @@ const isFake = computed(() => {
   if (props.taskMeta?.overall_is_fake !== undefined) return props.taskMeta.overall_is_fake
   return overall.value?.is_fake ?? false
 })
-const confidenceScore = computed(() => {
-  if (props.taskMeta?.confidence_score !== undefined) return props.taskMeta.confidence_score
-  return overall.value?.confidence_score ?? 0
+const overallRiskScore = computed(() => {
+  if (props.taskMeta?.confidence_score !== undefined && props.taskMeta?.confidence_score !== null) {
+    return clampProbability(props.taskMeta.confidence_score)
+  }
+  return clampProbability(overall.value?.confidence_score)
 })
 const riskLevel = computed(() => overall.value?.risk_level || 'low')
 
 const overallConclusion = computed(() => {
-  const score = confidenceScore.value
+  const score = overallRiskScore.value
   const fake = isFake.value
   return {
     isFake: fake,
-    confidence: (score * 100).toFixed(1) + '%',
-    color: fake ? 'error' : 'success',
+    riskScore: score,
+    riskPercent: formatProbability(score),
+    metricLabel: '综合风险评分',
+    color: getProbabilityColor(score),
     label: fake ? '检测到学术不端风险' : '未检测到明显风险'
   }
 })
@@ -56,19 +145,9 @@ const llmAnalysis = computed(() => {
   return result.value?.llm_analysis || props.taskMeta?.ai_response?.llm_analysis || null
 })
 
-// Cross material analysis
-const crossMaterialAnalysis = computed(() => {
-  return result.value?.cross_material_analysis || null
-})
-
 // AI contribution
 const aiContribution = computed(() => {
   return result.value?.ai_contribution || []
-})
-
-// Material cards
-const materialCards = computed(() => {
-  return result.value?.material_cards || []
 })
 
 // Evidence
@@ -76,9 +155,117 @@ const evidence = computed(() => {
   return result.value?.evidence || null
 })
 
+const evidenceSections = computed(() => {
+  return evidence.value?.per_section || []
+})
+
+const getEvidenceSectionKind = (section: any): 'paper' | 'review' | null => {
+  const itemId = String(section?.item_id || '')
+  if (itemId.includes('paper')) return 'paper'
+  if (itemId.includes('review')) return 'review'
+  return null
+}
+
+const getEvidenceAigcScores = (kind: 'paper' | 'review') => {
+  return evidenceSections.value
+    .filter((section: any) => getEvidenceSectionKind(section) === kind)
+    .map((section: any) => getSectionAigcProbability(section))
+}
+
+const averageScore = (scores: number[]) => {
+  if (scores.length === 0) return 0
+  return scores.reduce((sum, score) => sum + score, 0) / scores.length
+}
+
+const countEvidenceSections = (kind: 'paper' | 'review') => {
+  return evidenceSections.value.filter((section: any) => getEvidenceSectionKind(section) === kind).length
+}
+
+const countAigcEvidenceSections = (kind: 'paper' | 'review') => {
+  return evidenceSections.value.filter((section: any) => {
+    return getEvidenceSectionKind(section) === kind && getSectionAigcProbability(section) > 0.5
+  }).length
+}
+
+const normalizeMaterialCard = (card: any) => {
+  if (card?.type === 'review') {
+    const reviewFileCount = Array.isArray(card.files) ? card.files.length : 0
+    const reviewSectionCount = countEvidenceSections('review')
+    const reviewScores = getEvidenceAigcScores('review')
+    return {
+      ...card,
+      summary: `${reviewFileCount} 个评审文件，${reviewSectionCount} 段评审文本`,
+      score: reviewScores.length > 0 ? averageScore(reviewScores) : card.score,
+      section_count: reviewSectionCount,
+    }
+  }
+
+  if (card?.type === 'paper') {
+    const paperFileCount = Array.isArray(card.files) ? card.files.length : (card.file_count || 0)
+    const paperSectionCount = countEvidenceSections('paper')
+    const paperScores = getEvidenceAigcScores('paper')
+    if (paperSectionCount > 0) {
+      return {
+        ...card,
+        summary: `${paperFileCount} 篇论文，共 ${paperSectionCount} 个章节`,
+        score: paperScores.length > 0 ? averageScore(paperScores) : card.score,
+        section_count: paperSectionCount,
+      }
+    }
+  }
+
+  return card
+}
+
+// Material cards
+const materialCards = computed(() => {
+  return (result.value?.material_cards || []).map(normalizeMaterialCard)
+})
+
+// Cross material analysis
+const crossMaterialAnalysis = computed(() => {
+  const analysis = result.value?.cross_material_analysis
+  if (!analysis) return null
+
+  const reviewTotal = countEvidenceSections('review')
+  const reviewAigc = countAigcEvidenceSections('review')
+  if (!reviewTotal) return analysis
+
+  const normalizedChecks = Array.isArray(analysis.cross_checks)
+    ? analysis.cross_checks.map((item: any) => {
+        if (typeof item === 'string' && item.includes('评审材料中')) {
+          const rate = Math.round((reviewAigc / reviewTotal) * 100)
+          return `评审材料中 ${reviewAigc}/${reviewTotal} 个段落被判定为AI生成（占比 ${rate}%）`
+        }
+        return item
+      })
+    : analysis.cross_checks
+
+  return {
+    ...analysis,
+    cross_checks: normalizedChecks,
+  }
+})
+
 // Dimensions
 const dimensions = computed(() => {
-  return result.value?.dimensions || []
+  const rawDimensions = result.value?.dimensions || []
+  if (!Array.isArray(rawDimensions)) return []
+
+  const textAigcScores = evidenceSections.value.map((section: any) => getSectionAigcProbability(section))
+  const maxTextAigc = textAigcScores.length > 0 ? Math.max(...textAigcScores) : null
+  const riskDimensionNames = new Set(['max_risk', 'peak_risk', 'max_section_risk'])
+
+  return rawDimensions.map((dim: any) => {
+    if (maxTextAigc !== null && riskDimensionNames.has(String(dim?.name || ''))) {
+      return {
+        ...dim,
+        score: maxTextAigc,
+        summary: '单段最高AI生成概率',
+      }
+    }
+    return dim
+  })
 })
 
 // Validation info
@@ -109,9 +296,9 @@ const paperParagraphs = computed(() => {
     .map((s: any) => ({
       id: s.item_id,
       isAigc: s.is_aigc,
-      confidence: s.confidence_score,
-      aigcProb: s.probabilities?.aigc || 0,
-      humanProb: s.probabilities?.human || 0,
+      confidence: getPredictionConfidence(s),
+      aigcProb: getSectionAigcProbability(s),
+      humanProb: getSectionHumanProbability(s),
       text: s.text || '',
       title: s.title || '',
       pageNumber: s.page_number ?? null,
@@ -134,7 +321,7 @@ function selectPaperParagraph(id: string) {
 }
 const selectedPaperParagraph = computed(() => {
   if (!selectedPaperId.value) return null
-  return paperParagraphs.value.find(p => p.id === selectedPaperId.value) || null
+  return paperParagraphs.value.find((p: any) => p.id === selectedPaperId.value) || null
 })
 
 const paperStatistics = computed(() => {
@@ -158,9 +345,9 @@ const reviewParagraphs = computed(() => {
     .map((s: any) => ({
       id: s.item_id,
       isAigc: s.is_aigc,
-      confidence: s.confidence_score,
-      aigcProb: s.probabilities?.aigc || 0,
-      humanProb: s.probabilities?.human || 0,
+      confidence: getPredictionConfidence(s),
+      aigcProb: getSectionAigcProbability(s),
+      humanProb: getSectionHumanProbability(s),
       text: s.text || '',
       title: s.title || '',
       pageNumber: s.page_number ?? null,
@@ -183,7 +370,7 @@ function selectReviewParagraph(id: string) {
 }
 const selectedReviewParagraph = computed(() => {
   if (!selectedReviewId.value) return null
-  return reviewParagraphs.value.find(p => p.id === selectedReviewId.value) || null
+  return reviewParagraphs.value.find((p: any) => p.id === selectedReviewId.value) || null
 })
 
 const avgReviewAigc = computed(() => {
@@ -649,16 +836,16 @@ onMounted(async () => {
               <div class="detection-summary">
                 <v-progress-circular
                   v-if="overallConclusion"
-                  :model-value="parseFloat(overallConclusion.confidence)"
+                  :model-value="overallConclusion.riskScore * 100"
                   :size="160"
                   :width="12"
                   :color="overallConclusion.color"
                   class="custom-progress"
                 >
                   <div class="progress-content">
-                    <div class="text-h4 font-weight-bold responsive-text">{{ overallConclusion.confidence }}</div>
+                    <div class="text-h4 font-weight-bold responsive-text">{{ overallConclusion.riskPercent }}</div>
                     <div class="text-subtitle-2 mt-1 responsive-text">
-                      {{ overallConclusion.isFake ? 'AI生成概率' : '可信度' }}
+                      {{ overallConclusion.metricLabel }}
                     </div>
                   </div>
                 </v-progress-circular>
@@ -871,10 +1058,13 @@ onMounted(async () => {
             :color="getProbabilityColor(card.score)"
             size="small"
           >
-            风险评分: {{ (card.score * 100).toFixed(1) }}%
+            AIGC评分: {{ formatProbability(card.score) }}
           </v-chip>
           <div v-if="card.file_count" class="text-caption text-grey mt-1">
             文件数: {{ card.file_count }}
+          </div>
+          <div v-if="card.section_count" class="text-caption text-grey mt-1">
+            文本段数: {{ card.section_count }}
           </div>
           <div v-if="card.files && card.files.length > 0" class="text-left mt-3">
             <div class="text-caption text-grey mb-1">包含文件：</div>
@@ -966,7 +1156,7 @@ onMounted(async () => {
               <v-icon color="primary" class="mr-2">mdi-file-document-edit</v-icon>
               <span class="text-h6">论文文本分析</span>
               <v-chip v-if="paperCard && paperCard.score !== undefined" :color="getProbabilityColor(paperCard.score)" size="small" class="ml-4">
-                AIGC评分: {{ (paperCard.score * 100).toFixed(1) }}%
+                AIGC评分: {{ formatProbability(paperCard.score) }}
               </v-chip>
             </v-card-title>
             <v-card-text class="pa-6">
@@ -975,27 +1165,27 @@ onMounted(async () => {
               <!-- Statistics row -->
               <v-row class="mb-4">
                 <v-col cols="12" md="3">
-                  <v-card variant="outlined" rounded="lg" class="text-center pa-3">
-                    <div class="text-h5 primary--text">{{ paperStatistics.total }}</div>
-                    <div class="text-caption text-grey">总段落数</div>
+                  <v-card variant="outlined" rounded="lg" class="paper-stat-card paper-stat-total text-center pa-3">
+                    <div class="text-h5 paper-stat-value">{{ paperStatistics.total }}</div>
+                    <div class="text-caption paper-stat-label">总段落数</div>
                   </v-card>
                 </v-col>
                 <v-col cols="12" md="3">
-                  <v-card variant="outlined" rounded="lg" class="text-center pa-3" color="red-lighten-5">
-                    <div class="text-h5 error--text">{{ paperStatistics.high }}</div>
-                    <div class="text-caption text-grey">高风险</div>
+                  <v-card variant="outlined" rounded="lg" class="paper-stat-card paper-stat-high text-center pa-3">
+                    <div class="text-h5 paper-stat-value">{{ paperStatistics.high }}</div>
+                    <div class="text-caption paper-stat-label">高风险</div>
                   </v-card>
                 </v-col>
                 <v-col cols="12" md="3">
-                  <v-card variant="outlined" rounded="lg" class="text-center pa-3" color="orange-lighten-5">
-                    <div class="text-h5 warning--text">{{ paperStatistics.medium }}</div>
-                    <div class="text-caption text-grey">中风险</div>
+                  <v-card variant="outlined" rounded="lg" class="paper-stat-card paper-stat-medium text-center pa-3">
+                    <div class="text-h5 paper-stat-value">{{ paperStatistics.medium }}</div>
+                    <div class="text-caption paper-stat-label">中风险</div>
                   </v-card>
                 </v-col>
                 <v-col cols="12" md="3">
-                  <v-card variant="outlined" rounded="lg" class="text-center pa-3" color="green-lighten-5">
-                    <div class="text-h5 success--text">{{ paperStatistics.low }}</div>
-                    <div class="text-caption text-grey">低风险</div>
+                  <v-card variant="outlined" rounded="lg" class="paper-stat-card paper-stat-low text-center pa-3">
+                    <div class="text-h5 paper-stat-value">{{ paperStatistics.low }}</div>
+                    <div class="text-caption paper-stat-label">低风险</div>
                   </v-card>
                 </v-col>
               </v-row>
@@ -1044,14 +1234,14 @@ onMounted(async () => {
                               class="flex-shrink-0 mr-1"
                               style="margin-top: 0; padding-top: 0;"
                             />
-                            <v-icon :color="getProbabilityColor(para.confidence)" class="mr-2" size="small">
-                              {{ para.confidence > 0.5 ? 'mdi-alert-circle' : 'mdi-check-circle' }}
+                            <v-icon :color="getProbabilityColor(para.aigcProb)" class="mr-2" size="small">
+                              {{ para.aigcProb > 0.5 ? 'mdi-alert-circle' : 'mdi-check-circle' }}
                             </v-icon>
                             <span class="text-body-2 font-weight-medium text-truncate flex-grow-1">
                               {{ para.title || para.id }}
                             </span>
                             <v-chip :color="getProbabilityColor(para.aigcProb)" size="x-small" class="ml-1">
-                              {{ (para.aigcProb * 100).toFixed(0) }}%
+                              {{ formatProbability(para.aigcProb, 0) }}
                             </v-chip>
                           </div>
                           <div v-if="para.sourceFile" class="text-caption text-grey text-truncate ml-6">
@@ -1075,12 +1265,12 @@ onMounted(async () => {
                       <!-- Detail header -->
                       <v-card variant="outlined" rounded="lg" class="mb-3">
                         <v-card-title class="d-flex align-center flex-wrap ga-2">
-                          <v-icon :color="getProbabilityColor(selectedPaperParagraph.confidence)">
-                            {{ selectedPaperParagraph.confidence > 0.5 ? 'mdi-alert-circle' : 'mdi-check-circle' }}
+                          <v-icon :color="getProbabilityColor(selectedPaperParagraph.aigcProb)">
+                            {{ selectedPaperParagraph.aigcProb > 0.5 ? 'mdi-alert-circle' : 'mdi-check-circle' }}
                           </v-icon>
                           <span class="text-h6">{{ selectedPaperParagraph.title || selectedPaperParagraph.id }}</span>
-                          <v-chip :color="getProbabilityColor(selectedPaperParagraph.confidence)" size="small">
-                            {{ getProbabilityLevel(selectedPaperParagraph.confidence) }}
+                          <v-chip :color="getProbabilityColor(selectedPaperParagraph.aigcProb)" size="small">
+                            {{ getProbabilityLevel(selectedPaperParagraph.aigcProb) }}
                           </v-chip>
                           <v-chip v-if="selectedPaperParagraph.isAigc" color="error" size="small">
                             <v-icon start size="x-small">mdi-robot</v-icon> AI生成
@@ -1103,10 +1293,10 @@ onMounted(async () => {
                       <v-card variant="outlined" rounded="lg" class="mb-3 pa-4">
                         <div class="text-subtitle-2 font-weight-bold mb-2">BERT检测结果</div>
                         <div class="mb-2">
-                          <div class="text-caption text-grey mb-1">AI生成置信度</div>
-                          <v-progress-linear :model-value="selectedPaperParagraph.confidence * 100" :color="getProbabilityColor(selectedPaperParagraph.confidence)" height="24" rounded>
+                          <div class="text-caption text-grey mb-1">AI生成概率</div>
+                          <v-progress-linear :model-value="selectedPaperParagraph.aigcProb * 100" :color="getProbabilityColor(selectedPaperParagraph.aigcProb)" height="24" rounded>
                             <template #default>
-                              <span class="text-caption font-weight-bold" style="color: white">{{ (selectedPaperParagraph.confidence * 100).toFixed(1) }}%</span>
+                              <span class="text-caption font-weight-bold" style="color: white">{{ formatProbability(selectedPaperParagraph.aigcProb) }}</span>
                             </template>
                           </v-progress-linear>
                         </div>
@@ -1114,16 +1304,22 @@ onMounted(async () => {
                           <v-col cols="6">
                             <div class="text-caption text-grey mb-1">人类撰写</div>
                             <v-progress-linear :model-value="selectedPaperParagraph.humanProb * 100" color="success" height="12" rounded />
-                            <div class="text-caption text-right mt-1">{{ (selectedPaperParagraph.humanProb * 100).toFixed(1) }}%</div>
+                            <div class="text-caption text-right mt-1">{{ formatProbability(selectedPaperParagraph.humanProb) }}</div>
                           </v-col>
                           <v-col cols="6">
                             <div class="text-caption text-grey mb-1">AI生成</div>
                             <v-progress-linear :model-value="selectedPaperParagraph.aigcProb * 100" color="error" height="12" rounded />
-                            <div class="text-caption text-right mt-1">{{ (selectedPaperParagraph.aigcProb * 100).toFixed(1) }}%</div>
+                            <div class="text-caption text-right mt-1">{{ formatProbability(selectedPaperParagraph.aigcProb) }}</div>
                           </v-col>
                         </v-row>
                         <div class="mt-2">
-                          <v-chip size="small">{{ selectedPaperParagraph.labelName }}</v-chip>
+                          <v-chip
+                            :color="selectedPaperParagraph.isAigc ? 'error' : 'success'"
+                            size="small"
+                            variant="tonal"
+                          >
+                            模型判定：{{ getModelLabel(selectedPaperParagraph) }}，{{ getPredictionConfidenceLabel(selectedPaperParagraph) }} {{ formatProbability(selectedPaperParagraph.confidence) }}
+                          </v-chip>
                         </div>
                       </v-card>
                       <!-- Original text -->
@@ -1162,7 +1358,7 @@ onMounted(async () => {
               <v-icon :color="templateLevel.color" class="mr-2">{{ templateLevel.icon }}</v-icon>
               <span class="text-h6">评审文本分析</span>
               <v-chip v-if="reviewCard && reviewCard.score !== undefined" :color="getProbabilityColor(reviewCard.score)" size="small" class="ml-4">
-                AIGC评分: {{ (reviewCard.score * 100).toFixed(1) }}%
+                AIGC评分: {{ formatProbability(reviewCard.score) }}
               </v-chip>
             </v-card-title>
             <v-card-text class="pa-6">
@@ -1247,14 +1443,14 @@ onMounted(async () => {
                               class="flex-shrink-0 mr-1"
                               style="margin-top: 0; padding-top: 0;"
                             />
-                            <v-icon :color="getProbabilityColor(para.confidence)" class="mr-2" size="small">
-                              {{ para.confidence > 0.5 ? 'mdi-alert-circle' : 'mdi-check-circle' }}
+                            <v-icon :color="getProbabilityColor(para.aigcProb)" class="mr-2" size="small">
+                              {{ para.aigcProb > 0.5 ? 'mdi-alert-circle' : 'mdi-check-circle' }}
                             </v-icon>
                             <span class="text-body-2 font-weight-medium text-truncate flex-grow-1">
                               {{ para.title || para.id }}
                             </span>
                             <v-chip :color="getProbabilityColor(para.aigcProb)" size="x-small" class="ml-1">
-                              {{ (para.aigcProb * 100).toFixed(0) }}%
+                              {{ formatProbability(para.aigcProb, 0) }}
                             </v-chip>
                           </div>
                           <div v-if="para.sourceFile" class="text-caption text-grey text-truncate ml-6">
@@ -1278,12 +1474,12 @@ onMounted(async () => {
                       <!-- Detail header -->
                       <v-card variant="outlined" rounded="lg" class="mb-3">
                         <v-card-title class="d-flex align-center flex-wrap ga-2">
-                          <v-icon :color="getProbabilityColor(selectedReviewParagraph.confidence)">
-                            {{ selectedReviewParagraph.confidence > 0.5 ? 'mdi-alert-circle' : 'mdi-check-circle' }}
+                          <v-icon :color="getProbabilityColor(selectedReviewParagraph.aigcProb)">
+                            {{ selectedReviewParagraph.aigcProb > 0.5 ? 'mdi-alert-circle' : 'mdi-check-circle' }}
                           </v-icon>
                           <span class="text-h6">{{ selectedReviewParagraph.title || selectedReviewParagraph.id }}</span>
-                          <v-chip :color="getProbabilityColor(selectedReviewParagraph.confidence)" size="small">
-                            {{ getProbabilityLevel(selectedReviewParagraph.confidence) }}
+                          <v-chip :color="getProbabilityColor(selectedReviewParagraph.aigcProb)" size="small">
+                            {{ getProbabilityLevel(selectedReviewParagraph.aigcProb) }}
                           </v-chip>
                           <v-chip v-if="selectedReviewParagraph.isAigc" color="error" size="small">
                             <v-icon start size="x-small">mdi-robot</v-icon> AI生成
@@ -1306,10 +1502,10 @@ onMounted(async () => {
                       <v-card variant="outlined" rounded="lg" class="mb-3 pa-4">
                         <div class="text-subtitle-2 font-weight-bold mb-2">BERT检测结果</div>
                         <div class="mb-2">
-                          <div class="text-caption text-grey mb-1">AI生成置信度</div>
-                          <v-progress-linear :model-value="selectedReviewParagraph.confidence * 100" :color="getProbabilityColor(selectedReviewParagraph.confidence)" height="24" rounded>
+                          <div class="text-caption text-grey mb-1">AI生成概率</div>
+                          <v-progress-linear :model-value="selectedReviewParagraph.aigcProb * 100" :color="getProbabilityColor(selectedReviewParagraph.aigcProb)" height="24" rounded>
                             <template #default>
-                              <span class="text-caption font-weight-bold" style="color: white">{{ (selectedReviewParagraph.confidence * 100).toFixed(1) }}%</span>
+                              <span class="text-caption font-weight-bold" style="color: white">{{ formatProbability(selectedReviewParagraph.aigcProb) }}</span>
                             </template>
                           </v-progress-linear>
                         </div>
@@ -1317,16 +1513,22 @@ onMounted(async () => {
                           <v-col cols="6">
                             <div class="text-caption text-grey mb-1">人类撰写</div>
                             <v-progress-linear :model-value="selectedReviewParagraph.humanProb * 100" color="success" height="12" rounded />
-                            <div class="text-caption text-right mt-1">{{ (selectedReviewParagraph.humanProb * 100).toFixed(1) }}%</div>
+                            <div class="text-caption text-right mt-1">{{ formatProbability(selectedReviewParagraph.humanProb) }}</div>
                           </v-col>
                           <v-col cols="6">
                             <div class="text-caption text-grey mb-1">AI生成</div>
                             <v-progress-linear :model-value="selectedReviewParagraph.aigcProb * 100" color="error" height="12" rounded />
-                            <div class="text-caption text-right mt-1">{{ (selectedReviewParagraph.aigcProb * 100).toFixed(1) }}%</div>
+                            <div class="text-caption text-right mt-1">{{ formatProbability(selectedReviewParagraph.aigcProb) }}</div>
                           </v-col>
                         </v-row>
                         <div class="mt-2">
-                          <v-chip size="small">{{ selectedReviewParagraph.labelName }}</v-chip>
+                          <v-chip
+                            :color="selectedReviewParagraph.isAigc ? 'error' : 'success'"
+                            size="small"
+                            variant="tonal"
+                          >
+                            模型判定：{{ getModelLabel(selectedReviewParagraph) }}，{{ getPredictionConfidenceLabel(selectedReviewParagraph) }} {{ formatProbability(selectedReviewParagraph.confidence) }}
+                          </v-chip>
                         </div>
                       </v-card>
                       <!-- Original text -->
@@ -1490,11 +1692,11 @@ onMounted(async () => {
                   <div class="text-subtitle-1 font-weight-bold mb-2">{{ dim.name || `维度 ${idx + 1}` }}</div>
                   <v-chip
                     v-if="dim.score !== undefined"
-                    :color="dim.score > 0.7 ? 'error' : dim.score > 0.4 ? 'warning' : 'success'"
+                    :color="getProbabilityColor(dim.score)"
                     size="small"
                     class="mb-2"
                   >
-                    评分: {{ (dim.score * 100).toFixed(1) }}%
+                    评分: {{ formatProbability(dim.score) }}
                   </v-chip>
                   <div v-if="dim.summary" class="text-body-2 text-grey">{{ dim.summary }}</div>
                 </v-card>
@@ -1956,6 +2158,57 @@ onMounted(async () => {
 
 .section-list-item.section-checked {
   border-left-color: #4caf50;
+}
+
+.paper-stat-card {
+  border-width: 1px !important;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.05);
+}
+
+.paper-stat-value {
+  font-weight: 700;
+  line-height: 1.15;
+}
+
+.paper-stat-label {
+  color: #4b5563;
+  font-weight: 500;
+}
+
+.paper-stat-total {
+  background: #f1f5ff;
+  border-color: #2563eb !important;
+}
+
+.paper-stat-total .paper-stat-value {
+  color: #1d4ed8;
+}
+
+.paper-stat-high {
+  background: #fff1f2;
+  border-color: #ef4444 !important;
+}
+
+.paper-stat-high .paper-stat-value {
+  color: #dc2626;
+}
+
+.paper-stat-medium {
+  background: #fff7ed;
+  border-color: #f59e0b !important;
+}
+
+.paper-stat-medium .paper-stat-value {
+  color: #d97706;
+}
+
+.paper-stat-low {
+  background: #ecfdf5;
+  border-color: #22c55e !important;
+}
+
+.paper-stat-low .paper-stat-value {
+  color: #16a34a;
 }
 
 .paragraph-detail-text {

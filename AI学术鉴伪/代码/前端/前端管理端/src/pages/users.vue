@@ -33,8 +33,8 @@
           创建管理员
         </v-btn> -->
         <v-btn v-if="currentUser?.admin_type === 'organization_admin'" color="primary" class="text-none ml-2"
-          prepend-icon="mdi-account-plus" @click="handleAddExpert">
-          添加组织内用户
+          prepend-icon="mdi-account-key" @click="handleAddExpert">
+          获取组织邀请码
         </v-btn>
       </v-col>
     </v-row>
