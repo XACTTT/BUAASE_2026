@@ -393,11 +393,10 @@ def submit_detection2(request):
 
     detect_type = (request.data.get('detect_type') or 'image').strip().lower()
 
-    # 全局鉴伪模型配置校验
-    from .views_model_management import get_global_detection_config
-    global_cfg = get_global_detection_config()
-    detect_cfg = global_cfg.get(detect_type)
-    if detect_cfg is None or not detect_cfg.get('enabled', False):
+    # 组织鉴伪模型配置校验：检查该组织的检测类型是否可用
+    from .views_model_management import get_org_detection_config
+    org_config = get_org_detection_config(user.organization_id)
+    if detect_type not in org_config or not org_config[detect_type]:
         return Response({'error': f'检测类型 "{detect_type}" 暂未启用，请联系管理员'}, status=400)
 
     # 兼容三种提交流程：image_ids（旧）/ file_id / file_ids（新）
@@ -746,10 +745,13 @@ def submit_text_detection(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def public_detection_methods(request):
-    from .views_model_management import get_global_detection_config, DETECTION_METHODS
-    config = get_global_detection_config()
+    from .views_model_management import get_org_detection_config, DETECTION_METHODS
+    user = request.user
+    if user.organization is None:
+        return Response({'error': '未绑定组织'}, status=400)
+    org_config = get_org_detection_config(user.organization_id)
     return Response({
-        'config': config,
+        'config': org_config,
         'methods': DETECTION_METHODS,
     })
 

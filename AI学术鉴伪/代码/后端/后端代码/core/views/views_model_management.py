@@ -8,7 +8,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAdminUser, IsAuthenticated
 from rest_framework.response import Response
 
-from core.models import AIModelSource, LLMAnalysisRun, OrganizationModelConfig, ProviderModel, User
+from core.models import AIModelSource, LLMAnalysisRun, OrganizationDetectionConfig, OrganizationModelConfig, ProviderModel, User
 from core.services.llm_service import build_chat_completion_payload, call_openai_compatible_chat
 from ..utils.log_utils import action_log
 
@@ -634,6 +634,7 @@ def chat_with_ai_model(request):
 
 GLOBAL_DETECTION_CONFIG_KEY = 'global_detection_config'
 
+# 每种检测类型可用的方法定义
 DETECTION_METHODS = {
     'image': [{'value': 'urn', 'label': 'URN'}],
     'paper': [
@@ -650,55 +651,149 @@ DETECTION_METHODS = {
     ],
 }
 
-DEFAULT_DETECTION_CONFIG = {
-    'image': {'enabled': True, 'method': 'urn'},
-    'paper': {'enabled': True, 'method': 'bert_text'},
-    'review': {'enabled': True, 'method': 'bert_text'},
-    'multi': {'enabled': True, 'method': 'bert_text'},
+# 全局默认可用方法池（每种类型至少一个）
+DEFAULT_AVAILABLE_METHODS = {
+    'image': ['urn'],
+    'paper': ['bert_text', 'fast_detect_gpt'],
+    'review': ['bert_text', 'fast_detect_gpt'],
+    'multi': ['bert_text', 'fast_detect_gpt'],
+}
+
+DETECT_TYPE_LABELS = {
+    'image': '图片检测',
+    'paper': '论文文本',
+    'review': '综述文本',
+    'multi': '多材料综合',
 }
 
 
-def get_global_detection_config():
+def get_global_available_methods():
+    """获取全局可用方法池，结构: {detect_type: [method, ...]}"""
     cfg = cache.get(GLOBAL_DETECTION_CONFIG_KEY)
     if cfg is None:
-        return dict(DEFAULT_DETECTION_CONFIG)
+        return dict(DEFAULT_AVAILABLE_METHODS)
+    # 兼容旧格式 {detect_type: {enabled, method}} → 新格式 {detect_type: [method, ...]}
+    sample = next(iter(cfg.values()), None)
+    if isinstance(sample, dict) and 'method' in sample:
+        migrated = {}
+        for detect_type, entry in cfg.items():
+            if isinstance(entry, dict) and entry.get('enabled') and entry.get('method'):
+                migrated[detect_type] = [entry['method']]
+            else:
+                migrated[detect_type] = DEFAULT_AVAILABLE_METHODS.get(detect_type, [])
+        cache.set(GLOBAL_DETECTION_CONFIG_KEY, migrated, timeout=None)
+        return migrated
     return cfg
 
 
-def set_global_detection_config(config):
+def set_global_available_methods(config):
     cache.set(GLOBAL_DETECTION_CONFIG_KEY, config, timeout=None)
+
+
+def get_org_detection_config(org_id: int) -> dict:
+    """获取组织每种检测类型的当前选择，无记录时用全局可用池第一个作为默认"""
+    available = get_global_available_methods()
+    org_configs = OrganizationDetectionConfig.objects.filter(organization_id=org_id)
+    org_map = {c.detect_type: c.method for c in org_configs}
+
+    result = {}
+    for detect_type, methods in available.items():
+        if detect_type in org_map and org_map[detect_type] in methods:
+            result[detect_type] = org_map[detect_type]
+        else:
+            result[detect_type] = methods[0] if methods else ''
+    return result
 
 
 @api_view(['GET'])
 @permission_classes([IsAdminUser])
 def detection_methods_list(request):
-    config = get_global_detection_config()
+    """获取全局可用方法池"""
+    available = get_global_available_methods()
     return Response({
-        'config': config,
-        'methods': DETECTION_METHODS,
+        'available_methods': available,
+        'method_definitions': DETECTION_METHODS,
     })
 
 
 @api_view(['PUT'])
 @permission_classes([IsAdminUser])
 def detection_methods_update(request):
+    """软件管理员更新全局可用方法池"""
     if not _is_software_admin(request.user):
         return Response({'error': '仅软件管理员可修改全局鉴伪配置'}, status=403)
 
     payload = request.data
-    config = get_global_detection_config()
+    available = get_global_available_methods()
 
     for detect_type in DETECTION_METHODS:
         if detect_type in payload:
-            entry = payload[detect_type]
-            if isinstance(entry, dict):
-                config[detect_type] = {
-                    'enabled': bool(entry.get('enabled', True)),
-                    'method': str(entry.get('method', DEFAULT_DETECTION_CONFIG[detect_type]['method'])),
-                }
+            methods = payload[detect_type]
+            if isinstance(methods, list) and len(methods) > 0:
+                valid_methods = [m['value'] for m in DETECTION_METHODS[detect_type]]
+                methods = [m for m in methods if m in valid_methods]
+                if len(methods) == 0:
+                    return Response({
+                        'error': f'{DETECT_TYPE_LABELS.get(detect_type, detect_type)}至少需要保留一个可用方法'
+                    }, status=400)
+                available[detect_type] = methods
 
-    set_global_detection_config(config)
+    set_global_available_methods(available)
     return Response({
         'message': '全局鉴伪配置已更新',
-        'config': config,
+        'available_methods': available,
+    })
+
+
+# ── 组织鉴伪模型配置（MySQL 存储） ──
+
+@api_view(['GET'])
+@permission_classes([IsAdminUser])
+def org_detection_config_list(request):
+    """组织管理员获取本组织每种检测类型的当前选择"""
+    user = request.user
+    if not _is_organization_admin(user):
+        return Response({'error': '仅组织管理员可查看'}, status=403)
+
+    org_id = user.organization_id
+    available = get_global_available_methods()
+    org_config = get_org_detection_config(org_id)
+
+    return Response({
+        'available_methods': available,
+        'method_definitions': DETECTION_METHODS,
+        'org_config': org_config,
+    })
+
+
+@api_view(['PUT'])
+@permission_classes([IsAdminUser])
+def org_detection_config_update(request):
+    """组织管理员更新本组织某种检测类型的方法选择"""
+    user = request.user
+    if not _is_organization_admin(user):
+        return Response({'error': '仅组织管理员可修改'}, status=403)
+
+    org_id = user.organization_id
+    detect_type = (request.data.get('detect_type') or '').strip()
+    method = (request.data.get('method') or '').strip()
+
+    if detect_type not in DETECTION_METHODS:
+        return Response({'error': f'无效的检测类型: {detect_type}'}, status=400)
+
+    available = get_global_available_methods()
+    allowed_methods = available.get(detect_type, [])
+    if method not in allowed_methods:
+        return Response({'error': f'方法 "{method}" 不在当前可用池中'}, status=400)
+
+    OrganizationDetectionConfig.objects.update_or_create(
+        organization_id=org_id,
+        detect_type=detect_type,
+        defaults={'method': method},
+    )
+
+    org_config = get_org_detection_config(org_id)
+    return Response({
+        'message': '组织鉴伪配置已更新',
+        'org_config': org_config,
     })

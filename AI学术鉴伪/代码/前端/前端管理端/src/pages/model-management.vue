@@ -14,7 +14,7 @@
             </v-chip>
           </div>
           <p class="text-body-2 text-medium-emphasis">
-            软件管理员负责维护模型源，组织管理员负责选择组织实际启用的模型并调整参数。
+            软件管理员维护模型源并设定本地鉴伪模型的可用范围，组织管理员选择本组织启用的LLM模型和本地检测方法。
           </p>
         </div>
       </v-col>
@@ -32,7 +32,7 @@
     </v-row>
 
     <v-alert class="mb-6" type="info" variant="tonal" border="start">
-      软件管理员可新增、删除和维护模型源；组织管理员可在已配置模型中启用模型并调整参数。
+      软件管理员可新增、删除和维护模型源，并设定本地鉴伪模型的可用范围；组织管理员可为本组织选择 LLM 模型和本地检测方法。
     </v-alert>
 
     <v-row align="stretch">
@@ -367,35 +367,74 @@
       </v-col>
     </v-row>
 
+    <!-- ==================== 软件管理员：全局可用方法池 ==================== -->
     <v-row v-if="canManageSources" class="mt-6">
       <v-col cols="12" md="8" lg="9" offset-md="4" offset-lg="3">
         <v-card variant="outlined" rounded="lg" class="pa-4">
-          <div class="d-flex align-center gap-2 mb-4">
-            <v-icon color="primary">mdi-shield-check</v-icon>
-            <span class="text-subtitle-1 font-weight-bold">全局鉴伪模型</span>
-            <v-chip size="x-small" color="primary" variant="tonal">软件管理员</v-chip>
+          <div class="d-flex align-center justify-space-between mb-4">
+            <div class="d-flex align-center gap-2">
+              <v-icon color="primary">mdi-shield-check</v-icon>
+              <span class="text-subtitle-1 font-weight-bold">全局鉴伪方法池</span>
+              <v-chip size="x-small" color="primary" variant="tonal">软件管理员</v-chip>
+            </div>
+            <v-btn
+              color="primary"
+              size="small"
+              variant="tonal"
+              prepend-icon="mdi-content-save"
+              :disabled="!detectionDirty"
+              @click="saveSoftwareDetectionConfig"
+            >
+              保存
+            </v-btn>
           </div>
-          <div class="text-body-2 text-medium-emphasis mb-4">控制各检测类型是否可用及使用哪种鉴伪方式，对所有组织生效。</div>
 
           <v-row dense>
-            <v-col v-for="item in detectionConfigItems" :key="item.type" cols="12" sm="6" md="4">
+            <v-col v-for="item in softwareDetectionItems" :key="item.type" cols="12" sm="6" md="4">
               <v-card variant="flat" border class="pa-3">
-                <div class="d-flex align-center justify-space-between mb-2">
-                  <span class="font-weight-medium">{{ item.label }}</span>
-                  <v-switch v-model="item.enabled" color="primary" density="compact" hide-details @update:model-value="onDetectionConfigChange" />
-                </div>
-                <div class="text-caption text-medium-emphasis mb-2" v-if="item.disabledHint">始终使用 URN</div>
+                <div class="font-weight-medium mb-3">{{ item.label }}</div>
+                <v-checkbox
+                  v-for="m in item.allMethods"
+                  :key="m.value"
+                  :model-value="item.checkedMethods"
+                  :label="m.label"
+                  :value="m.value"
+                  color="primary"
+                  density="compact"
+                  hide-details
+                  @update:model-value="(val: string[] | null) => onSoftwareCheckboxChange(item, val ?? [])"
+                />
+              </v-card>
+            </v-col>
+          </v-row>
+        </v-card>
+      </v-col>
+    </v-row>
+
+    <!-- ==================== 组织管理员：本组织检测方法选择 ==================== -->
+    <v-row v-if="canConfigureOrganizationModels" class="mt-6">
+      <v-col cols="12" md="8" lg="9" offset-md="4" offset-lg="3">
+        <v-card variant="outlined" rounded="lg" class="pa-4">
+          <div class="d-flex align-center gap-2 mb-4">
+            <v-icon color="info">mdi-cog</v-icon>
+            <span class="text-subtitle-1 font-weight-bold">本组织鉴伪模型</span>
+            <v-chip size="x-small" color="info" variant="tonal">组织管理员</v-chip>
+          </div>
+          <div class="text-body-2 text-medium-emphasis mb-4">选择本组织每种检测类型实际使用的模型，下拉选项来自软件管理员设定的可用池。</div>
+
+          <v-row dense>
+            <v-col v-for="item in orgDetectionItems" :key="item.type" cols="12" sm="6" md="4">
+              <v-card variant="flat" border class="pa-3">
+                <div class="font-weight-medium mb-3">{{ item.label }}</div>
                 <v-select
-                  v-else
-                  v-model="item.method"
-                  :items="item.methods"
+                  v-model="item.selectedMethod"
+                  :items="item.methodOptions"
                   item-title="label"
                   item-value="value"
                   density="compact"
                   variant="outlined"
                   hide-details
-                  :disabled="!item.enabled"
-                  @update:model-value="onDetectionConfigChange"
+                  @update:model-value="onOrgDetectionConfigChange(item.type, $event)"
                 />
               </v-card>
             </v-col>
@@ -604,46 +643,92 @@ const DETECTION_TYPE_LABELS: Record<string, string> = {
   multi: '多材料综合检测',
 }
 
-interface DetectionConfigItem {
+// ── 软件管理员：可用方法池 ──
+interface SoftwareDetectionItem {
   type: string
   label: string
-  enabled: boolean
-  method: string
-  methods: { value: string; label: string }[]
-  disabledHint?: string
+  allMethods: { value: string; label: string }[]
+  checkedMethods: string[]
 }
 
-const detectionConfigItems = ref<DetectionConfigItem[]>([])
+const softwareDetectionItems = ref<SoftwareDetectionItem[]>([])
 
-async function loadDetectionConfig() {
+async function loadSoftwareDetectionConfig() {
   try {
     const res = await modelApi.getDetectionMethods()
-    const config = (res.data as any).config || {}
-    const methods = (res.data as any).methods || {}
-    detectionConfigItems.value = Object.keys(DETECTION_TYPE_LABELS).map((type) => {
-      const cfg = config[type] || { enabled: false, method: '' }
-      const availableMethods = methods[type] || []
-      return {
-        type,
-        label: DETECTION_TYPE_LABELS[type],
-        enabled: cfg.enabled !== false,
-        method: cfg.method || (availableMethods[0]?.value ?? ''),
-        methods: availableMethods,
-        disabledHint: availableMethods.length === 1 ? `始终使用 ${availableMethods[0]?.label ?? ''}` : undefined,
-      }
-    })
+    const available = (res.data as any).available_methods || {}
+    const definitions = (res.data as any).method_definitions || {}
+    softwareDetectionItems.value = Object.keys(DETECTION_TYPE_LABELS).map((type) => ({
+      type,
+      label: DETECTION_TYPE_LABELS[type],
+      allMethods: definitions[type] || [],
+      checkedMethods: available[type] || [],
+    }))
   } catch {
-    // fallback: all disabled
+    // fallback: empty
   }
 }
 
-function onDetectionConfigChange() {
-  const payload: Record<string, { enabled: boolean; method: string }> = {}
-  detectionConfigItems.value.forEach((item) => {
-    payload[item.type] = { enabled: item.enabled, method: item.method }
+const detectionDirty = ref(false)
+
+function onSoftwareCheckboxChange(item: SoftwareDetectionItem, newValue: string[]) {
+  if (newValue.length === 0) {
+    snackbar.showMessage('每种检测类型至少需要保留一个可用方法', 'warning')
+    return
+  }
+  item.checkedMethods = newValue
+  detectionDirty.value = true
+}
+
+function saveSoftwareDetectionConfig() {
+  const payload: Record<string, string[]> = {}
+  softwareDetectionItems.value.forEach((item) => {
+    payload[item.type] = item.checkedMethods
   })
   modelApi.updateDetectionMethods(payload).then(() => {
     snackbar.showMessage('全局鉴伪配置已更新', 'success')
+    detectionDirty.value = false
+  }).catch(() => {
+    snackbar.showMessage('保存失败，请重试', 'error')
+  })
+}
+
+// ── 组织管理员：本组织方法选择 ──
+interface OrgDetectionItem {
+  type: string
+  label: string
+  methodOptions: { value: string; label: string }[]
+  selectedMethod: string
+}
+
+const orgDetectionItems = ref<OrgDetectionItem[]>([])
+
+async function loadOrgDetectionConfig() {
+  try {
+    const res = await modelApi.getOrgDetectionConfig()
+    const available = (res.data as any).available_methods || {}
+    const definitions = (res.data as any).method_definitions || {}
+    const orgConfig = (res.data as any).org_config || {}
+    orgDetectionItems.value = Object.keys(DETECTION_TYPE_LABELS).map((type) => {
+      const allowedValues = available[type] || []
+      const methodOptions = (definitions[type] || []).filter(
+        (m: { value: string; label: string }) => allowedValues.includes(m.value)
+      )
+      return {
+        type,
+        label: DETECTION_TYPE_LABELS[type],
+        methodOptions,
+        selectedMethod: orgConfig[type] || (methodOptions[0]?.value ?? ''),
+      }
+    })
+  } catch {
+    // fallback: empty
+  }
+}
+
+function onOrgDetectionConfigChange(detectType: string, method: string) {
+  modelApi.updateOrgDetectionConfig(detectType, method).then(() => {
+    snackbar.showMessage(`${DETECTION_TYPE_LABELS[detectType] || detectType} 方法已更新`, 'success')
   }).catch(() => {
     snackbar.showMessage('保存失败，请重试', 'error')
   })
@@ -736,7 +821,9 @@ onMounted(async () => {
   }
   await loadSources()
   if (canManageSources.value) {
-    await loadDetectionConfig()
+    await loadSoftwareDetectionConfig()
+  } else if (canConfigureOrganizationModels.value) {
+    await loadOrgDetectionConfig()
   }
 })
 
