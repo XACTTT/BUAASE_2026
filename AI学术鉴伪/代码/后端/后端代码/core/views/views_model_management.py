@@ -672,17 +672,29 @@ def get_global_available_methods():
     cfg = cache.get(GLOBAL_DETECTION_CONFIG_KEY)
     if cfg is None:
         return dict(DEFAULT_AVAILABLE_METHODS)
-    # 兼容旧格式 {detect_type: {enabled, method}} → 新格式 {detect_type: [method, ...]}
+
     sample = next(iter(cfg.values()), None)
     if isinstance(sample, dict) and 'method' in sample:
+        # 旧格式 {detect_type: {enabled, method}} → 新格式 {detect_type: [method, ...]}
         migrated = {}
-        for detect_type, entry in cfg.items():
+        for detect_type in DEFAULT_AVAILABLE_METHODS:
+            entry = cfg.get(detect_type)
             if isinstance(entry, dict) and entry.get('enabled') and entry.get('method'):
                 migrated[detect_type] = [entry['method']]
             else:
-                migrated[detect_type] = DEFAULT_AVAILABLE_METHODS.get(detect_type, [])
+                migrated[detect_type] = list(DEFAULT_AVAILABLE_METHODS[detect_type])
         cache.set(GLOBAL_DETECTION_CONFIG_KEY, migrated, timeout=None)
         return migrated
+
+    # 补全新格式中可能缺失的检测类型
+    dirty = False
+    for detect_type, methods in DEFAULT_AVAILABLE_METHODS.items():
+        if detect_type not in cfg or not cfg[detect_type]:
+            cfg[detect_type] = list(methods)
+            dirty = True
+
+    if dirty:
+        cache.set(GLOBAL_DETECTION_CONFIG_KEY, cfg, timeout=None)
     return cfg
 
 
