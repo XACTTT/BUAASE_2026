@@ -808,8 +808,8 @@ def process_single_text_result(tr_pk: int, text_content: str, is_review: bool) -
             tr.template_analysis_reason = None
         else:
             tr.factual_fake_reason = None
-            tr.template_tendency_score = summary["overall_score"]
-            tr.template_analysis_reason = reason
+            tr.template_tendency_score = None
+            tr.template_analysis_reason = None
 
         tr.detection_time = timezone.now()
         tr.status = "completed"
@@ -914,8 +914,8 @@ def process_single_fast_detect_gpt_result(tr_pk: int, text_content: str, is_revi
             tr.template_analysis_reason = None
         else:
             tr.factual_fake_reason = None
-            tr.template_tendency_score = summary["overall_score"]
-            tr.template_analysis_reason = reason
+            tr.template_tendency_score = None
+            tr.template_analysis_reason = None
 
         tr.detection_time = timezone.now()
         tr.status = "completed"

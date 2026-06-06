@@ -349,6 +349,21 @@ const reviewStatistics = computed(() => {
   return { total, high, medium, low }
 })
 
+const reviewAigcScores = computed(() => {
+  return structuredReviewSections.value.map(section => getAigcProbability(section))
+})
+
+const avgReviewAigcProbability = computed(() => {
+  if (reviewAigcScores.value.length === 0) return 0
+  const sum = reviewAigcScores.value.reduce((acc, score) => acc + score, 0)
+  return sum / reviewAigcScores.value.length
+})
+
+const maxReviewAigcProbability = computed(() => {
+  if (reviewAigcScores.value.length === 0) return 0
+  return Math.max(...reviewAigcScores.value)
+})
+
 // --- Paragraph detail dialog (for TOP5 clicks) ---
 const showParagraphDialog = ref(false)
 const selectedParagraph = ref<SectionItem | null>(null)
@@ -418,6 +433,26 @@ const paperStatistics = computed(() => {
   return { total, high, medium, low }
 })
 
+const paperAigcScores = computed(() => {
+  return structuredSections.value.map(section => getAigcProbability(section))
+})
+
+const avgPaperAigcProbability = computed(() => {
+  if (paperAigcScores.value.length === 0) return 0
+  const sum = paperAigcScores.value.reduce((acc, score) => acc + score, 0)
+  return sum / paperAigcScores.value.length
+})
+
+const maxPaperAigcProbability = computed(() => {
+  if (paperAigcScores.value.length === 0) return 0
+  return Math.max(...paperAigcScores.value)
+})
+
+const paperAigcSectionRatio = computed(() => {
+  if (paperAigcScores.value.length === 0) return 0
+  return paperAigcScores.value.filter(score => score > 0.5).length / paperAigcScores.value.length
+})
+
 // Top 5 high risk sections
 const topRiskSections = computed(() => {
   return [...structuredSections.value]
@@ -439,11 +474,14 @@ const factualFakeReasons = computed(() => {
 
 // Review text: aggregated template data
 const reviewTemplateData = computed(() => {
+  if (!props.taskMeta?.review_template_metric_available) {
+    return []
+  }
   const data: { score: number; reason: string; resource_id: number }[] = []
   // For structured tasks, template data comes from textDetails (fetched per resource)
   for (const item of reviewResults.value) {
     const detail = textDetails.value.get(item.resource_id)
-    if (detail && detail.template_tendency_score !== undefined) {
+    if (detail && detail.template_tendency_score !== undefined && detail.template_tendency_score !== null) {
       data.push({
         score: detail.template_tendency_score,
         reason: detail.template_analysis_reason || '',
@@ -473,6 +511,10 @@ const avgTemplateScore = computed(() => {
   return sum / reviewTemplateData.value.length
 })
 
+const hasIndependentReviewTemplateMetric = computed(() => {
+  return props.taskMeta?.review_template_metric_available === true && reviewTemplateData.value.length > 0
+})
+
 const templateLevel = computed(() => {
   const score = avgTemplateScore.value
   if (score > 0.7) return { level: '高度模板化', color: 'error', icon: 'mdi-alert-octagon' }
@@ -487,7 +529,90 @@ const llmAnalysis = computed(() => {
 
 // Dimensions
 const dimensions = computed(() => {
-  return props.taskMeta?.result?.dimensions || null
+  const rawDimensions = props.taskMeta?.result?.dimensions
+  if (!Array.isArray(rawDimensions)) return null
+
+  if (taskType.value === 'paper_text') {
+    return rawDimensions.map((dim: any) => {
+      if (dim?.name === 'aigc_generation') {
+        return {
+          ...dim,
+          score: avgPaperAigcProbability.value,
+          summary: 'BERT AI生成概率（论文全文段落汇总）',
+        }
+      }
+
+      if (dim?.name === 'aigc_section_ratio') {
+        return {
+          ...dim,
+          score: paperAigcSectionRatio.value,
+          summary: `${paperStatistics.value.high + paperStatistics.value.medium}/${paperStatistics.value.total} 个段落被分类为AI生成`,
+        }
+      }
+
+      if (dim?.name === 'max_section_risk') {
+        return {
+          ...dim,
+          score: maxPaperAigcProbability.value,
+          summary: '单段落最高AI生成概率，用于提示最需要复核的位置。',
+        }
+      }
+
+      return dim
+    })
+  }
+
+  if (taskType.value !== 'review_text') {
+    return rawDimensions
+  }
+
+  const normalizedDimensions = rawDimensions
+    .filter((dim: any) => dim?.name !== 'template_tendency')
+    .map((dim: any) => {
+      if (dim?.name === 'aigc_generation') {
+        return {
+          ...dim,
+          score: avgReviewAigcProbability.value,
+          summary: 'BERT AI生成概率（评审文本汇总）',
+        }
+      }
+
+      if (dim?.name === 'aigc_section_ratio') {
+        return {
+          ...dim,
+          score: reviewStatistics.value.total > 0 ? (reviewStatistics.value.high + reviewStatistics.value.medium) / reviewStatistics.value.total : 0,
+          summary: `${reviewStatistics.value.high + reviewStatistics.value.medium}/${reviewStatistics.value.total} 个评审段落被分类为AI生成`,
+        }
+      }
+
+      if (dim?.name === 'peak_risk') {
+        return {
+          ...dim,
+          score: maxReviewAigcProbability.value,
+          summary: '单份评审文本中出现的最高AI生成概率，用于提示最需要复核的位置。',
+        }
+      }
+
+      return dim
+    })
+
+  const hasAigcSectionRatio = normalizedDimensions.some((dim: any) => dim?.name === 'aigc_section_ratio')
+  if (!hasAigcSectionRatio) {
+    normalizedDimensions.splice(2, 0, {
+      name: 'aigc_section_ratio',
+      score: reviewStatistics.value.total > 0 ? (reviewStatistics.value.high + reviewStatistics.value.medium) / reviewStatistics.value.total : 0,
+      summary: `${reviewStatistics.value.high + reviewStatistics.value.medium}/${reviewStatistics.value.total} 个评审段落被分类为AI生成`,
+    })
+  }
+
+  const reviewDimensionOrder = ['aigc_generation', 'cross_text_consistency', 'aigc_section_ratio', 'peak_risk']
+  return [...normalizedDimensions].sort((a: any, b: any) => {
+    const aIndex = reviewDimensionOrder.indexOf(String(a?.name || ''))
+    const bIndex = reviewDimensionOrder.indexOf(String(b?.name || ''))
+    const safeAIndex = aIndex === -1 ? Number.MAX_SAFE_INTEGER : aIndex
+    const safeBIndex = bIndex === -1 ? Number.MAX_SAFE_INTEGER : bIndex
+    return safeAIndex - safeBIndex
+  })
 })
 
 type DimensionDirection = 'risk' | 'consistency' | 'neutral'
@@ -1385,8 +1510,16 @@ onMounted(async () => {
 
     <!-- ========== Review Text Section (Redesigned) ========== -->
     <template v-if="hasReviewResults && (taskType === 'review_text' || taskType === 'multi_material')">
+      <!-- <v-row v-if="!hasIndependentReviewTemplateMetric">
+        <v-col cols="12">
+          <v-alert color="info" variant="tonal" class="mb-6" rounded="lg">
+            当前模型暂无独立模板化指标，页面已停止将判定置信度展示为“模板化倾向”。
+          </v-alert>
+        </v-col>
+      </v-row> -->
+
       <!-- Review-specific: Template Tendency Analysis -->
-      <v-row>
+      <v-row v-if="hasIndependentReviewTemplateMetric">
         <!-- Left Column: Gauge + Reasons -->
         <v-col cols="12" md="8">
           <v-card class="mb-6" elevation="2" rounded="lg">
