@@ -1461,6 +1461,11 @@ def _serialize_structured_task_result(
         'ai_response': ai_response,
     }
 
+    # Strip internal-only _relevance_data from the nested result payload
+    clean_result = response_payload.get('result')
+    if isinstance(clean_result, dict):
+        clean_result.pop('_relevance_data', None)
+
     if include_evidence:
         response_payload['evidence'] = payload.get('evidence') or {}
         response_payload['sections'] = _serialize_structured_sections(task, payload)

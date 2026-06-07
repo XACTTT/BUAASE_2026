@@ -1,6 +1,5 @@
 import json
 import logging
-import time
 import zipfile
 from pathlib import Path
 
@@ -161,8 +160,6 @@ class StructuredDetectionService:
         file_ids = task.extra_payload.get('file_ids', [])
         review_text_ids = task.extra_payload.get('review_text_ids', [])
 
-        USER_IMAGE_KINDS = StructuredDetectionService.USER_IMAGE_KINDS
-
         if file_ids:
             paper_files = FileManagement.objects.filter(
                 id__in=file_ids,
@@ -174,7 +171,7 @@ class StructuredDetectionService:
             ).order_by('id')
             images = ImageUpload.objects.filter(
                 file_management_id__in=file_ids,
-                source_kind__in=USER_IMAGE_KINDS,
+                source_kind__in=('direct_image', 'zip_image'),
             ).order_by('id')
         else:
             paper_files = FileManagement.objects.filter(
@@ -187,7 +184,7 @@ class StructuredDetectionService:
             ).order_by('id')
             images = ImageUpload.objects.filter(
                 container=task.container,
-                source_kind__in=USER_IMAGE_KINDS,
+                source_kind__in=('direct_image', 'zip_image'),
             ).order_by('id')
 
         if review_text_ids:
@@ -486,18 +483,11 @@ class StructuredDetectionService:
         if images:
             image_ids = [img.get('image_id') for img in images if img.get('image_id')]
             detection_map = {}
-            sub_map = {}
             if image_ids:
                 for dr in DetectionResult.objects.filter(
-                    image_upload_id__in=image_ids
-                ).order_by('-id'):
-                    if dr.image_upload_id not in detection_map:
-                        detection_map[dr.image_upload_id] = dr
-                for sub in SubDetectionResult.objects.filter(
-                    detection_result__image_upload_id__in=image_ids
-                ).select_related('detection_result'):
-                    dr_id = sub.detection_result_id
-                    sub_map.setdefault(dr_id, []).append(sub)
+                    image_upload_id__in=image_ids, status='completed'
+                ):
+                    detection_map[dr.image_upload_id] = dr
 
             image_items = []
             for img in images:
@@ -510,23 +500,6 @@ class StructuredDetectionService:
                     item['result_id'] = dr.id
                     item['is_fake'] = dr.is_fake
                     item['confidence'] = float(dr.confidence_score) if dr.confidence_score else 0
-                    item['status'] = dr.status
-                    item['has_ela'] = bool(dr.ela_image)
-                    item['has_llm'] = bool(dr.llm_judgment)
-                    item['exif_flags'] = {
-                        'photoshop': dr.exif_photoshop,
-                        'time_modified': dr.exif_time_modified,
-                    }
-                    subs = sub_map.get(dr.id, [])
-                    if subs:
-                        item['sub_methods'] = [
-                            {
-                                'method': s.method,
-                                'probability': float(s.probability) if s.probability is not None else 0,
-                                'has_mask': bool(s.mask_image),
-                            }
-                            for s in subs
-                        ]
                 image_items.append(item)
 
             material_cards.append({
@@ -544,6 +517,7 @@ class StructuredDetectionService:
             'material_cards': material_cards,
             'cross_material_analysis': None,
             'ai_contribution': [],
+            'dimensions': ai_response.get('dimensions', []),
             'evidence': ai_response.get('evidence') or snapshot,
             'summary': ai_response.get('summary'),
         }
@@ -592,15 +566,62 @@ class StructuredDetectionService:
         if not prompt:
             return None
 
+        # Strip text from ai_response to reduce payload size
+        ai_response_stripped = dict(ai_response)
+        evidence_stripped = dict(ai_response_stripped.get('evidence', {}))
+        if 'per_section' in evidence_stripped:
+            evidence_stripped['per_section'] = [
+                {k: v for k, v in s.items() if k != 'text'}
+                for s in evidence_stripped['per_section']
+            ]
+        ai_response_stripped['evidence'] = evidence_stripped
+
+        # Strip text from result_payload evidence
+        result_payload_stripped = dict(result_payload)
+        evidence_rp = dict(result_payload_stripped.get('evidence', {}))
+        if 'per_section' in evidence_rp:
+            evidence_rp['per_section'] = [
+                {k: v for k, v in s.items() if k != 'text'}
+                for s in evidence_rp['per_section']
+            ]
+        result_payload_stripped['evidence'] = evidence_rp
+
+        # Build targeted text payload instead of full original_texts
+        targeted_texts = {}
+        if text_items:
+            paper_items = [t for t in text_items if t['id'].startswith('multi_paper')]
+            review_items = [t for t in text_items if t['id'].startswith('multi_review')]
+            # Paper: abstract + conclusion only
+            paper_summary = []
+            for item in paper_items:
+                text_start = item.get('text', '')[:80].lower()
+                if any(kw in text_start for kw in ['摘要', 'abstract', '引言', 'introduction',
+                                                     '结论', 'conclusion', '总结', 'summary']):
+                    paper_summary.append({'id': item['id'], 'text': item['text'][:2000]})
+            if not paper_summary:
+                paper_summary = [{'id': item['id'], 'text': item['text'][:1000]}
+                                 for item in paper_items[:10] + paper_items[-10:]]
+            targeted_texts = {
+                'paper_summary': paper_summary,
+                'review_texts': [{'id': t['id'], 'text': t['text'][:2000]} for t in review_items],
+                'bert_score_summary': {
+                    'paper_avg_aigc': result_payload_stripped.get('material_cards', [{}])[0].get('score', 0)
+                    if any(c.get('type') == 'paper' for c in result_payload_stripped.get('material_cards', []))
+                    else 0,
+                    'review_avg_aigc': next((c.get('score', 0) for c in result_payload_stripped.get('material_cards', [])
+                                            if c.get('type') == 'review'), 0),
+                },
+            }
+
         input_payload = {
             'task_id': task.id,
             'task_name': task.task_name,
             'detect_type': task.detect_type,
-            'result_payload': result_payload,
-            'ai_response': ai_response,
+            'result_payload': result_payload_stripped,
+            'ai_response': ai_response_stripped,
         }
-        if text_items:
-            input_payload['original_texts'] = text_items
+        if targeted_texts:
+            input_payload['targeted_texts'] = targeted_texts
 
         messages = [
             {'role': 'system', 'content': prompt},
@@ -631,7 +652,7 @@ class StructuredDetectionService:
                 base_url=source.base_url,
                 api_key=source.api_key,
                 payload=payload,
-                timeout=int(source.timeout or 30),
+                timeout=max(int(source.timeout or 30), 90) if task.detect_type == 'multi' else int(source.timeout or 30),
             )
         except (OSError, ValueError) as exc:
             run_record.status = 'failed'
@@ -671,7 +692,7 @@ class StructuredDetectionService:
         return parsed if isinstance(parsed, dict) else {'raw_text': content}
 
     @staticmethod
-    def _build_basic_cross_analysis(result_payload, ai_response):
+    def _build_basic_cross_analysis(result_payload, ai_response, text_items=None, snapshot=None):
         """当LLM不可用时，从BERT结果生成基础交叉分析。"""
         evidence = result_payload.get('evidence') or ai_response.get('evidence') or {}
         per_section = evidence.get('per_section', [])
@@ -704,11 +725,51 @@ class StructuredDetectionService:
         if not cross_checks:
             cross_checks.append('各材料BERT文本分类均未发现明显AI生成痕迹')
 
-        return {
+        # --- Enhanced correlation analysis ---
+        relevance_data = result_payload.get('_relevance_data')
+        if relevance_data:
+            topic = relevance_data.get('topic_overlap')
+            refs = relevance_data.get('content_references')
+            if topic:
+                cos_sim = topic.get('cosine_similarity', 0)
+                if cos_sim < 0.15:
+                    cross_checks.append(
+                        f'论文与评审文本的主题相关性极低（余弦相似度 {cos_sim:.2f}），评审可能未针对该论文的具体内容')
+                elif cos_sim > 0.4:
+                    cross_checks.append(
+                        f'论文与评审文本主题相关性较高（余弦相似度 {cos_sim:.2f}）')
+                else:
+                    cross_checks.append(
+                        f'论文与评审文本主题相关性中等（余弦相似度 {cos_sim:.2f}）')
+            if refs and refs.get('reference_count', 0) == 0:
+                mismatches.append('评审意见中未检测到对论文具体图表、方法、章节的引用，评审可能缺乏针对性')
+            elif refs and refs.get('reference_count', 0) > 0:
+                cross_checks.append(f'评审意见中检测到 {refs["reference_count"]} 处对论文内容的引用')
+
+        # AIGC distribution comparison
+        paper_sections = [s for s in per_section if (s.get('item_id') or '').startswith('multi_paper')]
+        review_sections = [s for s in per_section if (s.get('item_id') or '').startswith('multi_review')]
+        if paper_sections and review_sections:
+            from core.services.text_relevance_service import TextRelevanceService
+            dist = TextRelevanceService.compute_aigc_distribution(paper_sections, review_sections)
+            if dist['distribution_divergence'] > 0.5:
+                mismatches.append(
+                    f'论文与评审的AIGC分布差异较大（偏离度 {dist["distribution_divergence"]:.2f}），'
+                    f'论文AIGC均值 {dist["paper_mean"]:.2f}，评审AIGC均值 {dist["review_mean"]:.2f}')
+        else:
+            dist = None
+
+        result = {
             'cross_checks': cross_checks,
             'mismatches': mismatches,
             'recommendations': recommendations,
         }
+        if relevance_data:
+            result['topic_overlap'] = relevance_data.get('topic_overlap')
+            result['content_references'] = relevance_data.get('content_references')
+        if dist:
+            result['aigc_distribution'] = dist
+        return result
 
     @staticmethod
     @transaction.atomic
@@ -802,29 +863,15 @@ class StructuredDetectionService:
         )
 
         # 3. Call GPU server (with retry)
-        results = None
+        results = get_result(zip_path, data_path)
         retry_count = 0
-        while retry_count < 4:
-            try:
-                raw = get_result(zip_path, data_path)
-                if raw is None:
-                    raise RuntimeError('GPU server returned None')
-                # Validate result structure: need at least results[1][1] for ELA
-                _ = raw[1][1]
-                if len(raw[1][1]) == len(detection_results):
-                    results = raw
-                    break
-                logger.warning(
-                    'Image detection result count mismatch for task %s: got %s, expected %s',
-                    task.id, len(raw[1][1]), len(detection_results),
-                )
-            except (TypeError, IndexError, KeyError, RuntimeError) as exc:
-                logger.warning('Image detection GPU call attempt %d failed for task %s: %s', retry_count + 1, task.id, exc)
+        while (results is None or len(results[1][1]) != len(detection_results)) and retry_count < 3:
             reconnect()
             retry_count += 1
+            results = get_result(zip_path, data_path)
 
         if results is None:
-            logger.warning('Image detection GPU server unreachable after retries for task %s', task.id)
+            logger.warning('Image detection GPU server unreachable for task %s', task.id)
             for dr in detection_results:
                 dr.status = 'failed'
                 dr.save(update_fields=['status'])
@@ -910,84 +957,8 @@ class StructuredDetectionService:
 
         return detection_results
 
-    # source_kind values that represent user-intended image uploads (not auto-extracted)
-    USER_IMAGE_KINDS = {'direct_image', 'zip_image'}
-
-    @staticmethod
-    def _wait_for_image_uploads(task: DetectionTask, timeout: int = 180, interval: int = 3):
-        """Poll until user-uploaded ImageUpload records stabilize, or timeout.
-
-        Only waits for images with source_kind in USER_IMAGE_KINDS (direct_image, zip_image).
-        Auto-extracted images from PDF/DOCX are ignored — they are not real image materials.
-        parse_uploaded_file_task runs async and may not have finished yet.
-        Waits until ALL FileManagement records finish parsing AND the image count
-        is stable (same across multiple consecutive checks).
-        """
-        file_ids = task.extra_payload.get('file_ids', [])
-        container_id = task.extra_payload.get('container_id')
-
-        target_file_ids = set(int(fid) for fid in file_ids if fid)
-
-        def _count_images():
-            q = dict(source_kind__in=StructuredDetectionService.USER_IMAGE_KINDS)
-            if target_file_ids:
-                return ImageUpload.objects.filter(file_management_id__in=target_file_ids, **q).count()
-            if container_id:
-                return ImageUpload.objects.filter(container_id=container_id, **q).count()
-            return 0
-
-        def _all_files_parsed():
-            if not target_file_ids:
-                return True
-            try:
-                return not FileManagement.objects.filter(
-                    id__in=target_file_ids
-                ).exclude(
-                    parse_status__in=['parsed', 'failed']
-                ).exists()
-            except Exception:
-                logger.exception('Error checking parse status for files %s', target_file_ids)
-                return False
-
-        # Quick check: if there are no user-uploaded images at all, skip waiting
-        initial_count = _count_images()
-        if initial_count == 0 and _all_files_parsed():
-            logger.info('No user-uploaded images for task %s, skipping image wait', task.id)
-            return 0
-
-        elapsed = 0
-        last_count = initial_count
-        stable_rounds = 0
-        while elapsed < timeout:
-            count = _count_images()
-            all_parsed = _all_files_parsed()
-
-            if count > 0 and count == last_count and all_parsed:
-                stable_rounds += 1
-                if stable_rounds >= 3:
-                    logger.info('ImageUpload records stable for task %s after %ds (%d images, all parsed)',
-                                task.id, elapsed, count)
-                    return count
-            else:
-                stable_rounds = 0
-            last_count = count
-            time.sleep(interval)
-            elapsed += interval
-
-        if last_count > 0:
-            logger.warning('ImageUpload records for task %s not fully stable after %ds, proceeding with %d images',
-                           task.id, timeout, last_count)
-            return last_count
-
-        logger.warning('No user-uploaded images found for task %s after %ds wait', task.id, timeout)
-        return 0
-
     @staticmethod
     def execute_task(task: DetectionTask):
-        # For multi-material tasks, wait for async file parsing to create ImageUpload records
-        if task.detect_type == 'multi':
-            StructuredDetectionService._wait_for_image_uploads(task)
-
         snapshot = StructuredDetectionService.build_input_snapshot(task)
 
         if task.detect_type == 'multi':
@@ -996,14 +967,9 @@ class StructuredDetectionService:
                 raise ValueError(validation.get('message') or '多材料校验失败')
 
             # Run image detection for multi-material tasks (before text analysis)
-            # Wrap in try-except so image detection failure does not crash the entire task
             images = snapshot.get('images', [])
             if images:
-                try:
-                    StructuredDetectionService._run_image_detection(task, snapshot)
-                except Exception as exc:
-                    logger.exception('Image detection failed for multi task %s, continuing with text analysis',
-                                    task.id, exc_info=exc)
+                StructuredDetectionService._run_image_detection(task, snapshot)
 
         text_items = StructuredDetectionService._extract_text_items_from_snapshot(snapshot, task.detect_type)
         if not text_items:
@@ -1013,6 +979,44 @@ class StructuredDetectionService:
             batch_response, task.detect_type, snapshot, text_items
         )
         result_payload = StructuredDetectionService.normalize_result_payload(task, snapshot, ai_response)
+
+        # --- Compute text relevance for multi-material tasks ---
+        if task.detect_type == 'multi' and text_items:
+            try:
+                from core.services.text_relevance_service import TextRelevanceService
+                paper_texts = [t['text'] for t in text_items if t['id'].startswith('multi_paper')]
+                review_texts_list = [t['text'] for t in text_items if t['id'].startswith('multi_review')]
+                if paper_texts and review_texts_list:
+                    topic = TextRelevanceService.compute_topic_overlap(
+                        ' '.join(paper_texts), ' '.join(review_texts_list))
+                    refs = TextRelevanceService.detect_content_references(
+                        ' '.join(paper_texts), ' '.join(review_texts_list))
+
+                    result_payload['dimensions'].append({
+                        'name': 'topic_overlap',
+                        'score': round(topic['cosine_similarity'], 4),
+                        'summary': (f'论文与评审TF-IDF余弦相似度 {topic["cosine_similarity"]:.2f}，'
+                                    f'共享关键词 {len(topic["shared_keywords"])} 个'),
+                    })
+
+                    for card in result_payload.get('material_cards', []):
+                        if card['type'] == 'paper':
+                            card['relevance'] = {
+                                'to_review': round(topic['cosine_similarity'], 4),
+                                'shared_keywords': topic['shared_keywords'][:10],
+                            }
+                        elif card['type'] == 'review':
+                            card['relevance'] = {
+                                'to_paper': round(topic['cosine_similarity'], 4),
+                                'content_references': refs,
+                            }
+
+                    result_payload['_relevance_data'] = {
+                        'topic_overlap': topic,
+                        'content_references': refs,
+                    }
+            except Exception as e:
+                logger.warning(f'Relevance computation failed: {e}')
 
         # 标记"大模型分析中"
         task.status = 'analyzing'
@@ -1038,6 +1042,13 @@ class StructuredDetectionService:
                 for key in ('cross_checks', 'mismatches', 'recommendations'):
                     if key in llm_result:
                         cross_analysis[key] = llm_result[key]
+                # Preserve relevance data from earlier computation
+                relevance_data = result_payload.get('_relevance_data')
+                if relevance_data:
+                    if relevance_data.get('topic_overlap'):
+                        cross_analysis['topic_overlap'] = relevance_data['topic_overlap']
+                    if relevance_data.get('content_references'):
+                        cross_analysis['content_references'] = relevance_data['content_references']
                 if cross_analysis:
                     result_payload['cross_material_analysis'] = cross_analysis
                 ai_contribution = []
@@ -1050,7 +1061,7 @@ class StructuredDetectionService:
         # 如果LLM未成功，为multi类型生成基础交叉分析
         if task.detect_type == 'multi' and result_payload.get('cross_material_analysis') is None:
             result_payload['cross_material_analysis'] = StructuredDetectionService._build_basic_cross_analysis(
-                result_payload, ai_response
+                result_payload, ai_response, text_items=text_items, snapshot=snapshot
             )
         StructuredDetectionService.store_result(task, result_payload, ai_response)
         return result_payload

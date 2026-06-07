@@ -508,6 +508,7 @@ function getChineseLabel(key: string): string {
     mismatches: '不匹配项',
     recommendations: '建议',
     suspicious_patterns: '可疑模式',
+    topic_overlap: '主题重叠度',
   }
   return map[key] || key
 }
@@ -876,6 +877,9 @@ onMounted(async () => {
           <div v-if="card.file_count" class="text-caption text-grey mt-1">
             文件数: {{ card.file_count }}
           </div>
+          <v-chip v-if="card.relevance" size="small" variant="tonal" color="info" class="mt-1">
+            相关度: {{ ((card.relevance.to_review || card.relevance.to_paper || 0) * 100).toFixed(1) }}%
+          </v-chip>
           <div v-if="card.files && card.files.length > 0" class="text-left mt-3">
             <div class="text-caption text-grey mb-1">包含文件：</div>
             <div v-for="(file, fi) in card.files" :key="fi" class="d-flex align-center mb-1">
@@ -896,6 +900,53 @@ onMounted(async () => {
             <span class="text-h6">交叉验证分析</span>
           </v-card-title>
           <v-card-text class="pa-6">
+            <!-- Numeric correlation metrics -->
+            <v-row v-if="crossMaterialAnalysis?.topic_overlap || crossMaterialAnalysis?.content_references" class="mb-4">
+              <v-col v-if="crossMaterialAnalysis.topic_overlap" cols="12" md="4">
+                <v-card variant="outlined" rounded="lg" class="text-center pa-3">
+                  <div class="text-caption text-grey mb-1">余弦相似度</div>
+                  <div class="text-h5" :class="crossMaterialAnalysis.topic_overlap.cosine_similarity > 0.3 ? 'text-success' : crossMaterialAnalysis.topic_overlap.cosine_similarity > 0.15 ? 'text-warning' : 'text-error'">
+                    {{ (crossMaterialAnalysis.topic_overlap.cosine_similarity * 100).toFixed(1) }}%
+                  </div>
+                </v-card>
+              </v-col>
+              <v-col v-if="crossMaterialAnalysis.topic_overlap" cols="12" md="4">
+                <v-card variant="outlined" rounded="lg" class="text-center pa-3">
+                  <div class="text-caption text-grey mb-1">Jaccard相似度</div>
+                  <div class="text-h5 text-info">
+                    {{ (crossMaterialAnalysis.topic_overlap.jaccard_similarity * 100).toFixed(1) }}%
+                  </div>
+                </v-card>
+              </v-col>
+              <v-col v-if="crossMaterialAnalysis.topic_overlap" cols="12" md="4">
+                <v-card variant="outlined" rounded="lg" class="text-center pa-3">
+                  <div class="text-caption text-grey mb-1">共享关键词</div>
+                  <div class="text-h5 text-primary">{{ crossMaterialAnalysis.topic_overlap.shared_keywords?.length || 0 }}</div>
+                </v-card>
+              </v-col>
+            </v-row>
+
+            <!-- Content references detection -->
+            <v-row v-if="crossMaterialAnalysis?.content_references" class="mb-4">
+              <v-col cols="12">
+                <v-alert :color="crossMaterialAnalysis.content_references.reference_count > 0 ? 'success' : 'warning'" variant="tonal" density="compact">
+                  <div class="d-flex align-center">
+                    <v-icon class="mr-2" size="small">{{ crossMaterialAnalysis.content_references.reference_count > 0 ? 'mdi-link-variant' : 'mdi-link-off' }}</v-icon>
+                    <span>
+                      {{ crossMaterialAnalysis.content_references.reference_count > 0
+                         ? `评审中检测到 ${crossMaterialAnalysis.content_references.reference_count} 处对论文内容的引用`
+                         : '评审中未检测到对论文具体内容的引用，建议人工核查评审针对性' }}
+                    </span>
+                  </div>
+                  <div v-if="crossMaterialAnalysis.content_references.reference_details?.length" class="mt-2">
+                    <v-chip v-for="(ref, i) in crossMaterialAnalysis.content_references.reference_details.slice(0, 10)" :key="i" size="x-small" class="mr-1 mb-1">
+                      {{ ref }}
+                    </v-chip>
+                  </div>
+                </v-alert>
+              </v-col>
+            </v-row>
+
             <!-- cross_checks -->
             <div v-if="crossMaterialAnalysis.cross_checks && crossMaterialAnalysis.cross_checks.length > 0" class="mb-4">
               <div class="text-subtitle-1 font-weight-bold mb-2">交叉验证发现</div>

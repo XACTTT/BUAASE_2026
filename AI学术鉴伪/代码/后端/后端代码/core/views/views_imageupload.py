@@ -139,6 +139,7 @@ def extract_images_from_pdf(file_management, file_path):
                         file_management=file_management,
                         image=relative_image_path,
                         extracted_from_pdf=True,
+                        source_kind='pdf_extracted',
                         page_number=page_number + 1,
                         isDetect=False,
                         isReview=False,
