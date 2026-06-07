@@ -1003,6 +1003,38 @@ class OrganizationModelConfig(models.Model):
         return f"{self.organization.name} - {self.provider_model.model_id}"
 
 
+class OrganizationDetectionConfig(models.Model):
+    """组织本地鉴伪模型配置：每种检测类型选一个方法"""
+    DETECT_TYPE_CHOICES = [
+        ('image', '图片检测'),
+        ('paper', '论文文本'),
+        ('review', '综述文本'),
+        ('multi', '多材料综合'),
+    ]
+    METHOD_CHOICES = [
+        ('urn', 'URN'),
+        ('bert_text', 'BERT'),
+        ('fast_detect_gpt', 'Fast-DetectGPT'),
+    ]
+
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='detection_configs')
+    detect_type = models.CharField(max_length=20, choices=DETECT_TYPE_CHOICES)
+    method = models.CharField(max_length=40, choices=METHOD_CHOICES)
+    updated_at = models.DateTimeField(default=timezone.localtime)
+
+    class Meta:
+        db_table = 'organization_detection_config'
+        unique_together = ('organization', 'detect_type')
+        ordering = ['detect_type']
+
+    def save(self, *args, **kwargs):
+        self.updated_at = timezone.localtime()
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.organization.name} - {self.detect_type} - {self.method}"
+
+
 class LLMAnalysisRun(models.Model):
     STATUS_CHOICES = [
         ('pending', 'Pending'),

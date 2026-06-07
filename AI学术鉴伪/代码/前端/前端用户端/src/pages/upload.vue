@@ -605,7 +605,7 @@ async function checkDetectionEnabled(): Promise<boolean> {
     const config = (res.data as any).config || {}
     const type = selectedModule.value
     const cfg = config[type]
-    if (!cfg || !cfg.enabled) {
+    if (!cfg) {
       const labels: Record<string, string> = {
         image: '图片检测',
         paper: '论文检测',

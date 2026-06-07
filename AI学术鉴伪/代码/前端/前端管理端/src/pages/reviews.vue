@@ -63,11 +63,11 @@
 
         <template v-slot:item.task_type="{ item }">
           <v-chip
-            :color="getTaskTypeColor(item.task_type || 'image')"
+            :color="getTaskTypeColor(item.task_type)"
             size="small"
             variant="tonal"
           >
-            {{ getTaskTypeName(item.task_type || 'image') }}
+            {{ item.task_type_label || getTaskTypeName(item.task_type) }}
           </v-chip>
         </template>
 
@@ -344,7 +344,7 @@
                     <v-chip size="x-small" class="ml-2">{{ reviewDetails.review_texts.length }}</v-chip>
                   </div>
                   <div class="d-flex flex-column gap-2">
-                    <div v-for="rt in reviewDetails.review_texts" :key="rt.review_text_id" class="pa-2 rounded bg-grey-lighten-4">
+                    <div v-for="(rt, rtIndex) in reviewDetails.review_texts" :key="rt.review_text_id ?? rtIndex" class="pa-2 rounded bg-grey-lighten-4">
                       <div class="d-flex align-center mb-1">
                         <v-chip size="x-small" :color="rt.source_type === 'paste' ? 'info' : 'secondary'" class="mr-2">
                           {{ getSourceTypeName(rt.source_type) }}
@@ -1076,25 +1076,25 @@ const viewDetectionResult = async () => {
 }
 
 // 任务类型名称映射
-const getTaskTypeName = (type: string): string => {
+const getTaskTypeName = (type?: string): string => {
   const map: Record<string, string> = {
     'image': '图片检测',
     'paper_text': '论文文本检测',
     'review_text': '审稿文本检测',
     'multi_material': '综合材料检测'
   }
-  return map[type] || type
+  return type ? (map[type] || '未知类型') : '未知类型'
 }
 
 // 任务类型颜色映射
-const getTaskTypeColor = (type: string): string => {
+const getTaskTypeColor = (type?: string): string => {
   const map: Record<string, string> = {
     'image': 'blue',
     'paper_text': 'teal',
     'review_text': 'purple',
     'multi_material': 'orange'
   }
-  return map[type] || 'grey'
+  return type ? (map[type] || 'grey') : 'grey'
 }
 
 // 来源类型名称映射

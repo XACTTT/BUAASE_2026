@@ -42,11 +42,11 @@
 
         <template v-slot:item.task_type="{ item }">
           <v-chip
-            :color="getTaskTypeColor(item.task_type || 'image')"
+            :color="getTaskTypeColor(item.task_type)"
             size="small"
             variant="tonal"
           >
-            {{ getTaskTypeName(item.task_type || 'image') }}
+            {{ item.task_type_label || getTaskTypeName(item.task_type) }}
           </v-chip>
         </template>
 
@@ -230,7 +230,7 @@ const timeRangeOptions = [
   { title: '最近一年', value: '365d' }
 ]
 
-const getTaskTypeColor = (type: string) => {
+const getTaskTypeColor = (type?: string) => {
   switch (type) {
     case 'image': return 'blue'
     case 'paper_text': return 'teal'
@@ -240,13 +240,13 @@ const getTaskTypeColor = (type: string) => {
   }
 }
 
-const getTaskTypeName = (type: string) => {
+const getTaskTypeName = (type?: string) => {
   switch (type) {
     case 'image': return '图像'
     case 'paper_text': return '论文'
     case 'review_text': return '审稿'
     case 'multi_material': return '综合'
-    default: return type
+    default: return type || '未知'
   }
 }
 

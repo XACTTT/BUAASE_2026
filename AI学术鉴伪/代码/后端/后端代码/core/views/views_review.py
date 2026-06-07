@@ -60,12 +60,111 @@ def _resolve_detection_task(review_request):
     return detection_task
 
 
+def _normalize_task_type(task_type):
+    mapping = {
+        'paper': 'paper_text',
+        'review': 'review_text',
+        'multi': 'multi_material',
+        'text': 'review_text',
+    }
+    return mapping.get(task_type, task_type)
+
+
 def _resolve_task_type(review_request):
     """从 ReviewRequest 解析标准化 task_type (image/paper_text/review_text/multi_material)"""
     detection_task = _resolve_detection_task(review_request)
     if detection_task:
-        return detection_task.task_type or detection_task.detect_type
+        return _normalize_task_type(detection_task.task_type or detection_task.detect_type)
+
+    selected_ids = [str(item) for item in (review_request.selected_section_ids or [])]
+    if any(item.startswith('multi_') for item in selected_ids):
+        return 'multi_material'
+    if any('_paper_' in item or item.startswith('paper_') for item in selected_ids):
+        return 'paper_text'
+    if any('_review_' in item or item.startswith('review_') for item in selected_ids):
+        return 'review_text'
+
+    if review_request.imgs.exists() and review_request.text_resources.exists():
+        return 'multi_material'
+    if review_request.imgs.exists():
+        return 'image'
+    if review_request.text_resources.exists():
+        for text in review_request.text_resources.all()[:5]:
+            marker = str(text.normalized_text or text.raw_text or '')
+            if '_paper_' in marker or marker.startswith('paper_'):
+                return 'paper_text'
+            if '_review_' in marker or marker.startswith('review_'):
+                return 'review_text'
+        return 'review_text'
+
     return 'unknown'
+
+
+def _review_request_structured_section_count(review_request, task_type):
+    task = _resolve_detection_task(review_request)
+    if not task:
+        return 0
+
+    structured = StructuredDetectionResult.objects.filter(detection_task=task).first()
+    if not structured:
+        return 0
+
+    per_section = ((structured.result_payload or {}).get('evidence') or {}).get('per_section') or []
+    selected_ids = set(review_request.selected_section_ids or [])
+    if selected_ids:
+        per_section = [item for item in per_section if item.get('item_id') in selected_ids]
+
+    def _is_paper(item):
+        item_id = str(item.get('item_id') or '')
+        return '_paper_' in item_id or item_id.startswith('paper_') or item_id.startswith('multi_paper')
+
+    def _is_review(item):
+        item_id = str(item.get('item_id') or '')
+        return '_review_' in item_id or item_id.startswith('review_') or item_id.startswith('multi_review')
+
+    if task_type == 'paper_text':
+        return sum(1 for item in per_section if _is_paper(item))
+    if task_type == 'review_text':
+        return sum(1 for item in per_section if _is_review(item))
+    return len(per_section)
+
+
+def _manual_review_material_counts(manual_review, task_type):
+    review_request = manual_review.review_request
+    image_count = manual_review.imgs.count() or review_request.imgs.count()
+    text_count = manual_review.text_resources.count() or review_request.text_resources.count()
+    file_count = 0
+
+    task = _resolve_detection_task(review_request)
+    if task and task.container_id:
+        if task_type == 'paper_text':
+            file_count = task.container.files.filter(
+                resource_role__in=('paper_main', 'paper_supplementary', 'paper_revision')
+            ).count()
+        elif task_type == 'review_text':
+            file_count = task.container.files.filter(
+                resource_role__in=('review_main', 'review_attachment')
+            ).count()
+        elif task_type == 'multi_material':
+            file_count = task.container.files.count()
+
+    structured_section_count = _review_request_structured_section_count(review_request, task_type)
+    if text_count == 0 and structured_section_count:
+        text_count = structured_section_count
+
+    if task_type == 'image':
+        material_count = image_count
+    elif task_type in ('paper_text', 'review_text'):
+        material_count = text_count or file_count
+    else:
+        material_count = image_count + (text_count or structured_section_count) + file_count
+
+    return {
+        'image_count': image_count,
+        'text_count': text_count,
+        'file_count': file_count,
+        'material_count': material_count,
+    }
 
 
 def _resolve_ai_detection_result(review_request):
@@ -1168,8 +1267,8 @@ def get_reviewer_manual_request(request):
     for manual_review in page_obj.object_list:
         review_request = manual_review.review_request
         publisher = review_request.user
-        image_count = review_request.imgs.count()
         task_type = _resolve_task_type(review_request)
+        counts = _manual_review_material_counts(manual_review, task_type)
 
         results.append({
             'manual_review_id': manual_review.id,
@@ -1177,7 +1276,7 @@ def get_reviewer_manual_request(request):
             if manual_review.review_time else None,
             'publisher_username': publisher.username,
             'publisher_avatar': _safe_avatar_url(publisher),
-            'image_count': image_count,
+            **counts,
             'status': manual_review.status,
             'task_type': task_type,
             'task_type_label': get_task_type_label(task_type),

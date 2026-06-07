@@ -183,6 +183,25 @@ def _build_text_resource_from_file(user, file_record, task_type, task_name):
     )
 
 
+def _file_has_extractable_text(file_record):
+    sections = ContentExtractionService.extract_text_sections_from_file(file_record)
+    return any(str(item.get('text') or '').strip() for item in sections)
+
+
+def _text_file_validation_error(files, material_label):
+    invalid_files = [
+        file_record.file_name
+        for file_record in files
+        if not _file_has_extractable_text(file_record)
+    ]
+    if invalid_files:
+        names = '、'.join(invalid_files[:3])
+        if len(invalid_files) > 3:
+            names += f'等{len(invalid_files)}个文件'
+        return f'{names} 未提取到可检测的{material_label}文本，请上传包含正文文本的 PDF、DOCX 或 TXT 文件'
+    return None
+
+
 def _submit_structured_detection(request, user, mode, task_name, cmd_block_size, urn_k, if_use_llm):
     detect_type, container_id, file_ids, review_text_ids = _normalize_structured_submit_payload(request)
 
@@ -208,12 +227,30 @@ def _submit_structured_detection(request, user, mode, task_name, cmd_block_size,
     if detect_type == 'paper':
         if not file_queryset.exists() and container is None:
             return Response({"message": "No valid paper files found"}, status=400)
+        paper_files = file_queryset
+        if not paper_files.exists() and container is not None:
+            paper_files = FileManagement.objects.filter(
+                container=container,
+                resource_role__in=StructuredDetectionService.PAPER_FILE_ROLES,
+            ).order_by('id')
+        validation_error = _text_file_validation_error(paper_files, '论文')
+        if validation_error:
+            return Response({"message": validation_error}, status=400)
 
     if detect_type == 'review':
         has_review_files = file_queryset.exists()
         has_review_texts = bool(review_text_ids)
         if not has_review_files and not has_review_texts and container is None:
             return Response({"message": "No valid review materials found"}, status=400)
+        review_files = file_queryset
+        if not review_files.exists() and container is not None:
+            review_files = FileManagement.objects.filter(
+                container=container,
+                resource_role__in=StructuredDetectionService.REVIEW_FILE_ROLES,
+            ).order_by('id')
+        validation_error = _text_file_validation_error(review_files, 'Review')
+        if validation_error:
+            return Response({"message": validation_error}, status=400)
 
     if detect_type == 'multi':
         if container is None:
@@ -356,11 +393,10 @@ def submit_detection2(request):
 
     detect_type = (request.data.get('detect_type') or 'image').strip().lower()
 
-    # 全局鉴伪模型配置校验
-    from .views_model_management import get_global_detection_config
-    global_cfg = get_global_detection_config()
-    detect_cfg = global_cfg.get(detect_type)
-    if detect_cfg is None or not detect_cfg.get('enabled', False):
+    # 组织鉴伪模型配置校验：检查该组织的检测类型是否可用
+    from .views_model_management import get_org_detection_config
+    org_config = get_org_detection_config(user.organization_id)
+    if detect_type not in org_config or not org_config[detect_type]:
         return Response({'error': f'检测类型 "{detect_type}" 暂未启用，请联系管理员'}, status=400)
 
     # 兼容三种提交流程：image_ids（旧）/ file_id / file_ids（新）
@@ -709,10 +745,13 @@ def submit_text_detection(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def public_detection_methods(request):
-    from .views_model_management import get_global_detection_config, DETECTION_METHODS
-    config = get_global_detection_config()
+    from .views_model_management import get_org_detection_config, DETECTION_METHODS
+    user = request.user
+    if user.organization is None:
+        return Response({'error': '未绑定组织'}, status=400)
+    org_config = get_org_detection_config(user.organization_id)
     return Response({
-        'config': config,
+        'config': org_config,
         'methods': DETECTION_METHODS,
     })
 
@@ -736,6 +775,9 @@ def get_text_detection_result(request, resource_id):
                     "message": "大模型文本检测正在进行，请稍等"
                 })
 
+            detect_type = _resolve_task_detect_type(tdr.detection_task)
+            has_independent_template_metric = detect_type not in {'review', 'multi'}
+
             # 返回检测已完成的数据
             return Response({
                 "resource_id": tdr.text_resource.id,
@@ -744,8 +786,9 @@ def get_text_detection_result(request, resource_id):
                 "confidence_score": tdr.confidence_score,
                 "ai_generated_paragraphs": tdr.ai_generated_paragraphs,
                 "factual_fake_reason": tdr.factual_fake_reason,
-                "template_tendency_score": tdr.template_tendency_score,
-                "template_analysis_reason": tdr.template_analysis_reason,
+                "template_tendency_score": tdr.template_tendency_score if has_independent_template_metric else None,
+                "template_analysis_reason": tdr.template_analysis_reason if has_independent_template_metric else '',
+                "review_template_metric_available": has_independent_template_metric,
                 "detection_time": timezone.localtime(tdr.detection_time) if tdr.detection_time else None
             })
 
@@ -795,8 +838,6 @@ def get_text_detection_result(request, resource_id):
 
         # Build response from structured data
         section = matching_sections[0] if matching_sections else {}
-        template_dim = next((d for d in dimensions if d.get('name') == 'template_tendency'), None)
-
         return Response({
             "resource_id": resource_id,
             "status": "检测已完成",
@@ -804,8 +845,9 @@ def get_text_detection_result(request, resource_id):
             "confidence_score": section.get('confidence_score', 0),
             "ai_generated_paragraphs": [],
             "factual_fake_reason": '',
-            "template_tendency_score": template_dim.get('score', 0) if template_dim else 0,
-            "template_analysis_reason": template_dim.get('summary', '') if template_dim else '',
+            "template_tendency_score": None,
+            "template_analysis_reason": '',
+            "review_template_metric_available": False,
             "detection_time": timezone.localtime(task.updated_at) if task.updated_at else None
         })
 
@@ -1437,18 +1479,110 @@ def _serialize_structured_task_result(
     material_summary = payload.get('material_summary') or {}
     llm_analysis = payload.get('llm_analysis')
     ai_response = structured_result.ai_response or {}
+    detect_type = _resolve_task_detect_type(task)
+    review_template_metric_available = False if detect_type in {'review', 'multi'} else True
+    dimensions = payload.get('dimensions') or []
+
+    if detect_type in {'paper', 'review'} and isinstance(dimensions, list):
+        per_section = ((payload.get('evidence') or {}).get('per_section') or [])
+        section_marker = '_paper_' if detect_type == 'paper' else '_review_'
+        matched_sections = [
+            section for section in per_section
+            if section_marker in str(section.get('item_id') or '')
+        ]
+
+        def _clamp_probability(value):
+            try:
+                return max(0.0, min(1.0, float(value)))
+            except (TypeError, ValueError):
+                return 0.0
+
+        def _resolve_aigc_probability(section):
+            probabilities = section.get('probabilities') or {}
+            if probabilities.get('aigc') is not None:
+                return _clamp_probability(probabilities.get('aigc'))
+
+            confidence = section.get('confidence_score')
+            if confidence is None:
+                return 0.0
+
+            confidence = _clamp_probability(confidence)
+            if section.get('is_aigc') or section.get('label_name') == 'aigc':
+                return confidence
+            return 1.0 - confidence
+
+        if matched_sections:
+            aigc_scores = [_resolve_aigc_probability(section) for section in matched_sections]
+            avg_aigc = sum(aigc_scores) / len(aigc_scores) if aigc_scores else 0.0
+            peak_aigc = max(aigc_scores) if aigc_scores else 0.0
+            aigc_like_count = sum(1 for score in aigc_scores if score > 0.5)
+            aigc_ratio = (
+                aigc_like_count / len(aigc_scores)
+                if aigc_scores else 0.0
+            )
+
+            normalized_dimensions = []
+            has_aigc_ratio_dimension = False
+
+            for dim in dimensions:
+                name = dim.get('name')
+                if detect_type == 'review' and name == 'template_tendency':
+                    continue
+                if name == 'aigc_generation':
+                    normalized_dimensions.append({
+                        **dim,
+                        'score': round(avg_aigc, 4),
+                        'summary': 'BERT AI生成概率（论文全文段落汇总）' if detect_type == 'paper' else 'BERT AI生成概率（评审文本汇总）',
+                    })
+                    continue
+                if name == 'aigc_section_ratio':
+                    has_aigc_ratio_dimension = True
+                    normalized_dimensions.append({
+                        **dim,
+                        'score': round(aigc_ratio, 4),
+                        'summary': (
+                            f'{aigc_like_count}/{len(aigc_scores)} 个段落被分类为AI生成'
+                            if detect_type == 'paper'
+                            else f'{aigc_like_count}/{len(aigc_scores)} 个评审段落被分类为AI生成'
+                        ),
+                    })
+                    continue
+                if name == 'max_section_risk':
+                    normalized_dimensions.append({
+                        **dim,
+                        'score': round(peak_aigc, 4),
+                        'summary': '单段落最高AI生成概率',
+                    })
+                    continue
+                if name == 'peak_risk':
+                    normalized_dimensions.append({
+                        **dim,
+                        'score': round(peak_aigc, 4),
+                        'summary': '单份评审文本中出现的最高AI生成概率',
+                    })
+                    continue
+                normalized_dimensions.append(dim)
+
+            if detect_type == 'review' and not has_aigc_ratio_dimension:
+                normalized_dimensions.insert(1, {
+                    'name': 'aigc_section_ratio',
+                    'score': round(aigc_ratio, 4),
+                    'summary': f'{aigc_like_count}/{len(aigc_scores)} 个评审段落被分类为AI生成',
+                })
+
+            dimensions = normalized_dimensions
 
     response_payload = {
         'task_id': task.id,
         'task_name': task.task_name,
-        'detect_type': _resolve_task_detect_type(task),
+        'detect_type': detect_type,
         'task_type': task.task_type,
         'status': task.status,
         'failure_reason': task.failure_reason,
         'container_id': task.container_id,
         'overall': overall,
         'material_summary': material_summary,
-        'dimensions': payload.get('dimensions') or [],
+        'dimensions': dimensions,
         'summary': structured_result.summary or payload.get('summary'),
         'confidence_score': structured_result.confidence_score,
         'overall_is_fake': structured_result.overall_is_fake,
@@ -1457,6 +1591,7 @@ def _serialize_structured_task_result(
         'material_cards': payload.get('material_cards') or [],
         'cross_material_analysis': payload.get('cross_material_analysis') or {},
         'ai_contribution': payload.get('ai_contribution') or [],
+        'review_template_metric_available': review_template_metric_available,
         'result': payload,
         'ai_response': ai_response,
     }

@@ -183,11 +183,15 @@ const canRecharge = computed(() => {
 })
 
 const getImgUrl=(logo:any)=>{
+  if (!logo) return ''
+  if (String(logo).startsWith('http://') || String(logo).startsWith('https://')) return logo
   return import.meta.env.VITE_API_URL+logo
 }
 
 const formatTime = (data: string) => {
+  if (!data) return '-'
   const timestamp = new Date(data).getTime()
+  if (Number.isNaN(timestamp)) return '-'
   const date = new Date(timestamp)
   const year = date.getFullYear()
   const month = String(date.getMonth() + 1).padStart(2, '0')
@@ -210,7 +214,12 @@ const fetchOrganizationInfo = async () => {
   try {
     const res = await userApi.getUserInfo()
     currentUser.value = res.data
-    const response = await organization.getOrgDetail({ organization_id: userStore.organization })
+    const organizationId = res.data?.organization || userStore.organization
+    if (!organizationId) {
+      snackbar.showMessage('当前账号未绑定组织', 'warning')
+      return
+    }
+    const response = await organization.getOrgDetail({ organization_id: organizationId })
     organizationInfo.value = response.data
     // 获取组织配额信息
     await fetchOrganizationQuota()

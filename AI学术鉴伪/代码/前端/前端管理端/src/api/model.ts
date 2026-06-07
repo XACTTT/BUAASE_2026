@@ -158,10 +158,25 @@ export default {
   },
 
   getDetectionMethods() {
-    return http.get('/admin/models/detection-methods/')
+    return http.get<{
+      available_methods: Record<string, string[]>
+      method_definitions: Record<string, { value: string; label: string }[]>
+    }>('/admin/models/detection-methods/')
   },
 
-  updateDetectionMethods(data: Record<string, { enabled: boolean; method: string }>) {
+  updateDetectionMethods(data: Record<string, string[]>) {
     return http.put('/admin/models/detection-methods/update/', data)
+  },
+
+  getOrgDetectionConfig() {
+    return http.get<{
+      available_methods: Record<string, string[]>
+      method_definitions: Record<string, { value: string; label: string }[]>
+      org_config: Record<string, string>
+    }>('/admin/models/org-detection-config/')
+  },
+
+  updateOrgDetectionConfig(detect_type: string, method: string) {
+    return http.put('/admin/models/org-detection-config/update/', { detect_type, method })
   }
 }

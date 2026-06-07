@@ -72,6 +72,53 @@ interface SectionItem {
   source_file: string
 }
 
+const clampProbability = (value: number): number => {
+  if (!Number.isFinite(value)) return 0
+  return Math.min(1, Math.max(0, value))
+}
+
+const getAigcProbability = (section?: SectionItem | null): number => {
+  if (!section) return 0
+  const aigcProbability = Number(section.probabilities?.aigc)
+  if (Number.isFinite(aigcProbability)) {
+    return clampProbability(aigcProbability)
+  }
+
+  const confidence = Number(section.confidence_score)
+  if (!Number.isFinite(confidence)) return 0
+  if (section.is_aigc || section.label_name === 'aigc') {
+    return clampProbability(confidence)
+  }
+  return clampProbability(1 - confidence)
+}
+
+const getPredictionConfidence = (section?: SectionItem | null): number => {
+  if (!section) return 0
+  const confidence = Number(section.confidence_score)
+  if (Number.isFinite(confidence)) {
+    return clampProbability(confidence)
+  }
+  return Math.max(
+    clampProbability(Number(section.probabilities?.human)),
+    clampProbability(Number(section.probabilities?.aigc))
+  )
+}
+
+const getModelLabel = (section?: SectionItem | null): string => {
+  if (!section) return '未知'
+  if (section.is_aigc || section.label_name === 'aigc') return 'AI生成'
+  if (section.label_name === 'human') return '人类撰写'
+  return section.label_name || '未知'
+}
+
+const getPredictionConfidenceLabel = (section?: SectionItem | null): string => {
+  return getModelLabel(section) === 'AI生成' ? 'AI生成判定置信度' : '人类撰写判定置信度'
+}
+
+const formatProbability = (value: number, digits = 1): string => {
+  return `${(clampProbability(value) * 100).toFixed(digits)}%`
+}
+
 const structuredSections = computed<SectionItem[]>(() => {
   const sections = props.taskMeta?.result?.evidence?.per_section
   if (!Array.isArray(sections)) return []
@@ -80,7 +127,7 @@ const structuredSections = computed<SectionItem[]>(() => {
 
 const sortedSections = computed(() => {
   if (sortMode.value === 'risk') {
-    return [...structuredSections.value].sort((a, b) => ((b.probabilities?.aigc || 0) - (a.probabilities?.aigc || 0)))
+    return [...structuredSections.value].sort((a, b) => getAigcProbability(b) - getAigcProbability(a))
   }
   return structuredSections.value
 })
@@ -102,7 +149,7 @@ const structuredReviewSections = computed<SectionItem[]>(() => {
 
 const sortedReviewSections = computed(() => {
   if (reviewSortMode.value === 'risk') {
-    return [...structuredReviewSections.value].sort((a, b) => ((b.probabilities?.aigc || 0) - (a.probabilities?.aigc || 0)))
+    return [...structuredReviewSections.value].sort((a, b) => getAigcProbability(b) - getAigcProbability(a))
   }
   return structuredReviewSections.value
 })
@@ -123,7 +170,7 @@ const reviewStatistics = computed(() => {
   let medium = 0
   let low = 0
   for (const s of sections) {
-    const score = s.probabilities?.aigc || 0
+    const score = getAigcProbability(s)
     if (score > 0.8) high++
     else if (score > 0.5) medium++
     else low++
@@ -176,6 +223,7 @@ const overallConclusion = computed(() => {
     return {
       isFake,
       confidence: (score * 100).toFixed(1) + '%',
+      metricLabel: 'AI生成概率',
       color: isFake ? 'error' : 'success',
       label: isFake ? '检测到AI生成内容' : '未检测到AI生成内容'
     }
@@ -191,7 +239,7 @@ const paperStatistics = computed(() => {
   let medium = 0
   let low = 0
   for (const s of sections) {
-    const score = s.probabilities?.aigc || 0
+    const score = getAigcProbability(s)
     if (score > 0.8) high++
     else if (score > 0.5) medium++
     else low++
@@ -202,7 +250,7 @@ const paperStatistics = computed(() => {
 // Top 5 high risk sections
 const topRiskSections = computed(() => {
   return [...structuredSections.value]
-    .sort((a, b) => ((b.probabilities?.aigc || 0) - (a.probabilities?.aigc || 0)))
+    .sort((a, b) => getAigcProbability(b) - getAigcProbability(a))
     .slice(0, 5)
 })
 
@@ -257,10 +305,195 @@ const dimensions = computed(() => {
   return props.taskMeta?.result?.dimensions || null
 })
 
+type DimensionDirection = 'risk' | 'consistency' | 'neutral'
+
+interface DimensionMeta {
+  title: string
+  metricLabel: string
+  description: string
+  direction: DimensionDirection
+  icon: string
+}
+
+const dimensionMetaMap: Record<string, DimensionMeta> = {
+  academic_misconduct: {
+    title: '学术不端线索',
+    metricLabel: '风险指数',
+    description: '基于规则提取的抄袭、异常引用等学术不端线索综合估计。',
+    direction: 'risk',
+    icon: 'mdi-school-outline'
+  },
+  aigc_generation: {
+    title: 'AI生成倾向',
+    metricLabel: 'AI生成概率',
+    description: '模型对文本由AI生成可能性的综合估计，数值越高越需要关注。',
+    direction: 'risk',
+    icon: 'mdi-robot-outline'
+  },
+  section_consistency: {
+    title: '段落判定一致性',
+    metricLabel: '一致性',
+    description: '衡量各段落模型判定是否集中。数值高表示结果更稳定，不代表风险更高。',
+    direction: 'consistency',
+    icon: 'mdi-vector-combine'
+  },
+  cross_text_consistency: {
+    title: '评审文本判定一致性',
+    metricLabel: '一致性',
+    description: '衡量多份评审文本检测结果是否集中。数值高表示结果更稳定，不代表风险更高。',
+    direction: 'consistency',
+    icon: 'mdi-vector-combine'
+  },
+  cross_material_consistency: {
+    title: '材料间判定一致性',
+    metricLabel: '一致性',
+    description: '衡量论文与评审材料之间的检测结果是否集中。数值高表示结果更稳定，不代表风险更高。',
+    direction: 'consistency',
+    icon: 'mdi-vector-link'
+  },
+  aigc_section_ratio: {
+    title: 'AI生成段落占比',
+    metricLabel: '占比',
+    description: '被判为AI生成的段落在全文中的占比，数值越高说明涉及范围越大。',
+    direction: 'risk',
+    icon: 'mdi-chart-pie'
+  },
+  aigc_ratio: {
+    title: 'AI生成文本占比',
+    metricLabel: '占比',
+    description: '被判为AI生成的文本在全部材料中的占比，数值越高说明涉及范围越大。',
+    direction: 'risk',
+    icon: 'mdi-chart-pie'
+  },
+  max_section_risk: {
+    title: '最高单段风险',
+    metricLabel: '最高AI生成概率',
+    description: '单个段落中出现的最高AI生成概率，用于提示最需要复核的位置。',
+    direction: 'risk',
+    icon: 'mdi-alert-decagram-outline'
+  },
+  max_risk: {
+    title: '最高文本风险',
+    metricLabel: '最高AI生成概率',
+    description: '全部材料中出现的最高AI生成概率，用于提示最需要复核的位置。',
+    direction: 'risk',
+    icon: 'mdi-alert-decagram-outline'
+  },
+  peak_risk: {
+    title: '最高单文本风险',
+    metricLabel: '最高AI生成概率',
+    description: '单份评审文本中出现的最高AI生成概率，用于提示最需要复核的位置。',
+    direction: 'risk',
+    icon: 'mdi-alert-decagram-outline'
+  },
+  template_tendency: {
+    title: '模板化倾向',
+    metricLabel: '模板化指数',
+    description: '衡量评审文本套话或模板化表达的倾向，数值越高越需要关注。',
+    direction: 'risk',
+    icon: 'mdi-text-box-search-outline'
+  },
+  text_tampering: {
+    title: '文本篡改线索',
+    metricLabel: '风险指数',
+    description: '基于文本结构和内容异常提取的篡改线索综合估计。',
+    direction: 'risk',
+    icon: 'mdi-file-edit-outline'
+  },
+  data_chart_fabrication_hint: {
+    title: '数据图表异常线索',
+    metricLabel: '风险指数',
+    description: '基于数值、图表和文本一致性线索估计的数据图表异常风险。',
+    direction: 'risk',
+    icon: 'mdi-chart-line-variant'
+  }
+}
+
 // Evidence
 const evidence = computed(() => {
   return props.taskMeta?.result?.evidence || null
 })
+
+interface RiskStats {
+  total: number
+  high: number
+  medium: number
+  low: number
+}
+
+function getRiskDistributionItems(stats: RiskStats) {
+  const total = stats.total || 0
+  return [
+    {
+      key: 'high',
+      label: '高风险段落',
+      count: stats.high || 0,
+      percent: total > 0 ? ((stats.high || 0) / total) * 100 : 0,
+      color: 'error',
+      note: 'AI生成概率高于 80%'
+    },
+    {
+      key: 'medium',
+      label: '中风险段落',
+      count: stats.medium || 0,
+      percent: total > 0 ? ((stats.medium || 0) / total) * 100 : 0,
+      color: 'warning',
+      note: 'AI生成概率介于 50% 到 80%'
+    },
+    {
+      key: 'low',
+      label: '低风险段落',
+      count: stats.low || 0,
+      percent: total > 0 ? ((stats.low || 0) / total) * 100 : 0,
+      color: 'success',
+      note: 'AI生成概率不高于 50%'
+    }
+  ]
+}
+
+function getDimensionMeta(dim: any, index: number): DimensionMeta {
+  const name = String(dim?.name || '')
+  return dimensionMetaMap[name] || {
+    title: `检测指标 ${index + 1}`,
+    metricLabel: '指标值',
+    description: '模型返回的辅助检测指标，请结合段落明细一并判断。',
+    direction: 'neutral',
+    icon: 'mdi-chart-box-outline'
+  }
+}
+
+function getDimensionScore(dim: any): number {
+  return clampProbability(Number(dim?.score))
+}
+
+function getDimensionLevel(dim: any, index: number) {
+  const score = getDimensionScore(dim)
+  const meta = getDimensionMeta(dim, index)
+
+  if (meta.direction === 'consistency') {
+    if (score >= 0.7) return { text: '结果较稳定', color: 'info', icon: 'mdi-check-circle-outline' }
+    if (score >= 0.4) return { text: '存在一定分歧', color: 'warning', icon: 'mdi-alert-outline' }
+    return { text: '分歧较大', color: 'warning', icon: 'mdi-alert-circle-outline' }
+  }
+
+  if (meta.direction === 'risk') {
+    if (score > 0.8) return { text: '高风险', color: 'error', icon: 'mdi-alert-octagon-outline' }
+    if (score > 0.5) return { text: '中风险', color: 'warning', icon: 'mdi-alert-outline' }
+    return { text: '风险较低', color: 'success', icon: 'mdi-check-circle-outline' }
+  }
+
+  return { text: '参考指标', color: 'primary', icon: 'mdi-information-outline' }
+}
+
+function formatDimensionScore(dim: any): string {
+  if (dim?.score === undefined || dim?.score === null) return '暂无数据'
+  return formatProbability(getDimensionScore(dim))
+}
+
+function getDimensionSummary(dim: any, index: number): string {
+  const meta = getDimensionMeta(dim, index)
+  return meta.description || dim?.summary || '模型返回的辅助检测指标，请结合段落明细一并判断。'
+}
 
 // --- Helpers ---
 function getProbabilityColor(probability: number): string {
@@ -433,7 +666,7 @@ onMounted(async () => {
                   <div class="progress-content">
                     <div class="text-h4 font-weight-bold responsive-text">{{ overallConclusion.confidence }}</div>
                     <div class="text-subtitle-2 mt-1 responsive-text">
-                      {{ overallConclusion.isFake ? 'AI生成概率' : '可信度' }}
+                      {{ overallConclusion.metricLabel }}
                     </div>
                   </div>
                 </v-progress-circular>
@@ -532,52 +765,54 @@ onMounted(async () => {
 
       <!-- Combined Risk Distribution + Dimensions Card -->
       <v-card class="mb-6" elevation="2" rounded="lg">
-        <v-card-title class="pa-6">
-          <v-icon color="primary" class="mr-2">mdi-chart-box</v-icon>
-          <span class="text-h6">风险分析与维度评估</span>
+        <v-card-title class="pa-6 pb-4">
+          <div class="d-flex align-center flex-wrap gap-2">
+            <v-icon color="primary" class="mr-2">mdi-chart-box</v-icon>
+            <span class="text-h6">风险分析与维度评估</span>
+            <v-chip color="primary" size="small" variant="tonal">AI生成概率口径</v-chip>
+          </div>
         </v-card-title>
         <v-card-text class="pa-6 pt-0">
-          <v-row>
+          <v-row class="align-stretch">
             <v-col cols="12" md="4">
-              <div class="text-subtitle-2 font-weight-bold mb-4">风险分布</div>
-              <v-progress-linear
-                v-if="paperStatistics.total > 0"
-                :model-value="(paperStatistics.high / paperStatistics.total) * 100"
-                color="error"
-                height="25"
-                class="mb-4"
-              >
-                <template #default="{ value }">
-                  <strong>高风险: {{ paperStatistics.high }} ({{ value.toFixed(0) }}%)</strong>
+              <div class="analysis-panel pa-4 rounded-lg h-100">
+                <div class="d-flex align-center justify-space-between mb-2">
+                  <div class="text-subtitle-2 font-weight-bold">风险分布</div>
+                  <v-chip size="small" color="primary" variant="tonal">{{ paperStatistics.total }} 段</v-chip>
+                </div>
+                <div class="text-caption text-grey mb-4">
+                  按段落 AI 生成概率分层，红色表示需要重点复核，绿色表示当前风险较低。
+                </div>
+                <template v-if="paperStatistics.total > 0">
+                  <div
+                    v-for="item in getRiskDistributionItems(paperStatistics)"
+                    :key="item.key"
+                    class="risk-distribution-row"
+                  >
+                    <div class="d-flex justify-space-between align-center gap-2">
+                      <span class="text-body-2 font-weight-medium">{{ item.label }}</span>
+                      <span class="text-body-2 font-weight-bold">{{ item.count }} 段 · {{ item.percent.toFixed(0) }}%</span>
+                    </div>
+                    <v-progress-linear
+                      :model-value="item.percent"
+                      :color="item.color"
+                      height="10"
+                      rounded
+                      class="my-2"
+                    />
+                    <div class="text-caption text-grey">{{ item.note }}</div>
+                  </div>
                 </template>
-              </v-progress-linear>
-              <v-progress-linear
-                v-if="paperStatistics.total > 0"
-                :model-value="(paperStatistics.medium / paperStatistics.total) * 100"
-                color="warning"
-                height="25"
-                class="mb-4"
-              >
-                <template #default="{ value }">
-                  <strong>中风险: {{ paperStatistics.medium }} ({{ value.toFixed(0) }}%)</strong>
-                </template>
-              </v-progress-linear>
-              <v-progress-linear
-                v-if="paperStatistics.total > 0"
-                :model-value="(paperStatistics.low / paperStatistics.total) * 100"
-                color="success"
-                height="25"
-              >
-                <template #default="{ value }">
-                  <strong>低风险: {{ paperStatistics.low }} ({{ value.toFixed(0) }}%)</strong>
-                </template>
-              </v-progress-linear>
-              <div v-if="paperStatistics.total === 0" class="text-center text-grey py-4">
-                暂无风险分布数据
+                <div v-else class="text-center text-grey py-4">
+                  暂无风险分布数据
+                </div>
               </div>
             </v-col>
             <v-col cols="12" md="8" v-if="dimensions && Array.isArray(dimensions) && dimensions.length > 0">
-              <div class="text-subtitle-2 font-weight-bold mb-4">检测维度</div>
+              <div class="d-flex align-center justify-space-between mb-4">
+                <div class="text-subtitle-2 font-weight-bold">检测维度</div>
+                <div class="text-caption text-grey">指标值不等同于风险结论，请看右侧状态标签</div>
+              </div>
               <v-row>
                 <v-col
                   v-for="(dim, idx) in dimensions"
@@ -585,17 +820,38 @@ onMounted(async () => {
                   cols="12"
                   sm="6"
                 >
-                  <v-card variant="outlined" rounded="lg" class="pa-4">
-                    <div class="text-subtitle-1 font-weight-bold mb-2">{{ dim.name || `维度 ${idx + 1}` }}</div>
-                    <v-chip
-                      v-if="dim.score !== undefined"
-                      :color="dim.score > 0.7 ? 'error' : dim.score > 0.4 ? 'warning' : 'success'"
-                      size="small"
-                      class="mb-2"
-                    >
-                      评分: {{ (dim.score * 100).toFixed(1) }}%
-                    </v-chip>
-                    <div v-if="dim.summary" class="text-body-2 text-grey">{{ dim.summary }}</div>
+                  <v-card variant="outlined" rounded="lg" class="dimension-card pa-4 h-100">
+                    <div class="d-flex align-start justify-space-between gap-3 mb-3">
+                      <div class="d-flex align-start" style="min-width: 0;">
+                        <v-icon :color="getDimensionLevel(dim, idx).color" size="22" class="mr-2 mt-1">
+                          {{ getDimensionMeta(dim, idx).icon }}
+                        </v-icon>
+                        <div style="min-width: 0;">
+                          <div class="text-subtitle-1 font-weight-bold">{{ getDimensionMeta(dim, idx).title }}</div>
+                          <div class="text-caption text-grey">{{ getDimensionMeta(dim, idx).metricLabel }}</div>
+                        </div>
+                      </div>
+                      <v-chip
+                        :color="getDimensionLevel(dim, idx).color"
+                        size="small"
+                        variant="tonal"
+                        class="flex-shrink-0"
+                      >
+                        <v-icon start size="x-small">{{ getDimensionLevel(dim, idx).icon }}</v-icon>
+                        {{ getDimensionLevel(dim, idx).text }}
+                      </v-chip>
+                    </div>
+                    <div class="dimension-score-row mb-2">
+                      <span class="dimension-score">{{ formatDimensionScore(dim) }}</span>
+                    </div>
+                    <v-progress-linear
+                      :model-value="getDimensionScore(dim) * 100"
+                      :color="getDimensionLevel(dim, idx).color"
+                      height="8"
+                      rounded
+                      class="mb-3"
+                    />
+                    <div class="text-body-2 text-grey">{{ getDimensionSummary(dim, idx) }}</div>
                   </v-card>
                 </v-col>
               </v-row>
@@ -655,11 +911,11 @@ onMounted(async () => {
                   <div class="d-flex align-center justify-space-between">
                     <div class="d-flex align-center" style="min-width: 0; flex: 1;">
                       <v-icon
-                        :color="getProbabilityColor(section.probabilities?.aigc || 0)"
+                        :color="getProbabilityColor(getAigcProbability(section))"
                         size="small"
                         class="mr-2 flex-shrink-0"
                       >
-                        {{ (section.probabilities?.aigc || 0) > 0.5 ? 'mdi-alert-circle' : 'mdi-check-circle' }}
+                        {{ getAigcProbability(section) > 0.5 ? 'mdi-alert-circle' : 'mdi-check-circle' }}
                       </v-icon>
                       <div style="min-width: 0; flex: 1;">
                         <div class="text-body-2 font-weight-medium text-truncate">
@@ -674,17 +930,17 @@ onMounted(async () => {
                       </div>
                     </div>
                     <v-chip
-                      :color="getProbabilityColor(section.probabilities?.aigc || 0)"
+                      :color="getProbabilityColor(getAigcProbability(section))"
                       size="x-small"
                       class="ml-2 flex-shrink-0"
                     >
-                      {{ ((section.probabilities?.aigc || 0) * 100).toFixed(0) }}%
+                      {{ formatProbability(getAigcProbability(section), 0) }}
                     </v-chip>
                   </div>
                   <!-- Mini progress bar -->
                   <v-progress-linear
-                    :model-value="(section.probabilities?.aigc || 0) * 100"
-                    :color="getProbabilityColor(section.probabilities?.aigc || 0)"
+                    :model-value="getAigcProbability(section) * 100"
+                    :color="getProbabilityColor(getAigcProbability(section))"
                     height="3"
                     rounded
                     class="mt-2"
@@ -711,12 +967,12 @@ onMounted(async () => {
             <v-card class="mb-6" elevation="2" rounded="lg">
               <v-card-title class="pa-6">
                 <div class="d-flex align-center flex-wrap gap-2">
-                  <v-icon :color="getProbabilityColor(selectedSection.probabilities?.aigc || 0)" class="mr-1">
-                    {{ (selectedSection.probabilities?.aigc || 0) > 0.5 ? 'mdi-alert-circle' : 'mdi-check-circle' }}
+                  <v-icon :color="getProbabilityColor(getAigcProbability(selectedSection))" class="mr-1">
+                    {{ getAigcProbability(selectedSection) > 0.5 ? 'mdi-alert-circle' : 'mdi-check-circle' }}
                   </v-icon>
                   <span class="text-h6">{{ selectedSection.title || selectedSection.item_id }}</span>
-                  <v-chip :color="getProbabilityColor(selectedSection.probabilities?.aigc || 0)" size="small">
-                    {{ getProbabilityLevel(selectedSection.probabilities?.aigc || 0) }}
+                  <v-chip :color="getProbabilityColor(getAigcProbability(selectedSection))" size="small">
+                    {{ getProbabilityLevel(getAigcProbability(selectedSection)) }}
                   </v-chip>
                   <v-chip v-if="selectedSection.is_aigc" color="error" size="small" variant="tonal">
                     <v-icon start size="x-small">mdi-robot</v-icon>
@@ -755,10 +1011,10 @@ onMounted(async () => {
               <v-card-text class="pa-6 pt-0">
                 <v-row>
                   <v-col cols="12" md="6">
-                    <div class="text-subtitle-2 font-weight-bold mb-2">AI生成置信度</div>
+                    <div class="text-subtitle-2 font-weight-bold mb-2">AI生成概率</div>
                     <v-progress-linear
-                      :model-value="(selectedSection.probabilities?.aigc || 0) * 100"
-                      :color="getProbabilityColor(selectedSection.probabilities?.aigc || 0)"
+                      :model-value="getAigcProbability(selectedSection) * 100"
+                      :color="getProbabilityColor(getAigcProbability(selectedSection))"
                       height="28"
                       rounded
                     >
@@ -798,7 +1054,7 @@ onMounted(async () => {
                     :color="selectedSection.is_aigc ? 'error' : 'success'"
                     variant="tonal"
                   >
-                    模型判定：{{ selectedSection.label_name }}
+                    模型判定：{{ getModelLabel(selectedSection) }}，{{ getPredictionConfidenceLabel(selectedSection) }} {{ formatProbability(getPredictionConfidence(selectedSection)) }}
                   </v-chip>
                 </div>
               </v-card-text>
@@ -1111,52 +1367,54 @@ onMounted(async () => {
 
       <!-- Review: Risk Distribution + Dimensions -->
       <v-card class="mb-6" elevation="2" rounded="lg">
-        <v-card-title class="pa-6">
-          <v-icon color="primary" class="mr-2">mdi-chart-box</v-icon>
-          <span class="text-h6">风险分析与维度评估</span>
+        <v-card-title class="pa-6 pb-4">
+          <div class="d-flex align-center flex-wrap gap-2">
+            <v-icon color="primary" class="mr-2">mdi-chart-box</v-icon>
+            <span class="text-h6">风险分析与维度评估</span>
+            <v-chip color="primary" size="small" variant="tonal">AI生成概率口径</v-chip>
+          </div>
         </v-card-title>
         <v-card-text class="pa-6 pt-0">
-          <v-row>
+          <v-row class="align-stretch">
             <v-col cols="12" md="4">
-              <div class="text-subtitle-2 font-weight-bold mb-4">风险分布</div>
-              <v-progress-linear
-                v-if="reviewStatistics.total > 0"
-                :model-value="(reviewStatistics.high / reviewStatistics.total) * 100"
-                color="error"
-                height="25"
-                class="mb-4"
-              >
-                <template #default="{ value }">
-                  <strong>高风险: {{ reviewStatistics.high }} ({{ value.toFixed(0) }}%)</strong>
+              <div class="analysis-panel pa-4 rounded-lg h-100">
+                <div class="d-flex align-center justify-space-between mb-2">
+                  <div class="text-subtitle-2 font-weight-bold">风险分布</div>
+                  <v-chip size="small" color="primary" variant="tonal">{{ reviewStatistics.total }} 段</v-chip>
+                </div>
+                <div class="text-caption text-grey mb-4">
+                  按文本 AI 生成概率分层，红色表示需要重点复核，绿色表示当前风险较低。
+                </div>
+                <template v-if="reviewStatistics.total > 0">
+                  <div
+                    v-for="item in getRiskDistributionItems(reviewStatistics)"
+                    :key="item.key"
+                    class="risk-distribution-row"
+                  >
+                    <div class="d-flex justify-space-between align-center gap-2">
+                      <span class="text-body-2 font-weight-medium">{{ item.label }}</span>
+                      <span class="text-body-2 font-weight-bold">{{ item.count }} 段 · {{ item.percent.toFixed(0) }}%</span>
+                    </div>
+                    <v-progress-linear
+                      :model-value="item.percent"
+                      :color="item.color"
+                      height="10"
+                      rounded
+                      class="my-2"
+                    />
+                    <div class="text-caption text-grey">{{ item.note }}</div>
+                  </div>
                 </template>
-              </v-progress-linear>
-              <v-progress-linear
-                v-if="reviewStatistics.total > 0"
-                :model-value="(reviewStatistics.medium / reviewStatistics.total) * 100"
-                color="warning"
-                height="25"
-                class="mb-4"
-              >
-                <template #default="{ value }">
-                  <strong>中风险: {{ reviewStatistics.medium }} ({{ value.toFixed(0) }}%)</strong>
-                </template>
-              </v-progress-linear>
-              <v-progress-linear
-                v-if="reviewStatistics.total > 0"
-                :model-value="(reviewStatistics.low / reviewStatistics.total) * 100"
-                color="success"
-                height="25"
-              >
-                <template #default="{ value }">
-                  <strong>低风险: {{ reviewStatistics.low }} ({{ value.toFixed(0) }}%)</strong>
-                </template>
-              </v-progress-linear>
-              <div v-if="reviewStatistics.total === 0" class="text-center text-grey py-4">
-                暂无风险分布数据
+                <div v-else class="text-center text-grey py-4">
+                  暂无风险分布数据
+                </div>
               </div>
             </v-col>
             <v-col cols="12" md="8" v-if="dimensions && Array.isArray(dimensions) && dimensions.length > 0">
-              <div class="text-subtitle-2 font-weight-bold mb-4">检测维度</div>
+              <div class="d-flex align-center justify-space-between mb-4">
+                <div class="text-subtitle-2 font-weight-bold">检测维度</div>
+                <div class="text-caption text-grey">指标值不等同于风险结论，请看右侧状态标签</div>
+              </div>
               <v-row>
                 <v-col
                   v-for="(dim, idx) in dimensions"
@@ -1164,17 +1422,38 @@ onMounted(async () => {
                   cols="12"
                   sm="6"
                 >
-                  <v-card variant="outlined" rounded="lg" class="pa-4">
-                    <div class="text-subtitle-1 font-weight-bold mb-2">{{ dim.name || `维度 ${idx + 1}` }}</div>
-                    <v-chip
-                      v-if="dim.score !== undefined"
-                      :color="dim.score > 0.7 ? 'error' : dim.score > 0.4 ? 'warning' : 'success'"
-                      size="small"
-                      class="mb-2"
-                    >
-                      评分: {{ (dim.score * 100).toFixed(1) }}%
-                    </v-chip>
-                    <div v-if="dim.summary" class="text-body-2 text-grey">{{ dim.summary }}</div>
+                  <v-card variant="outlined" rounded="lg" class="dimension-card pa-4 h-100">
+                    <div class="d-flex align-start justify-space-between gap-3 mb-3">
+                      <div class="d-flex align-start" style="min-width: 0;">
+                        <v-icon :color="getDimensionLevel(dim, idx).color" size="22" class="mr-2 mt-1">
+                          {{ getDimensionMeta(dim, idx).icon }}
+                        </v-icon>
+                        <div style="min-width: 0;">
+                          <div class="text-subtitle-1 font-weight-bold">{{ getDimensionMeta(dim, idx).title }}</div>
+                          <div class="text-caption text-grey">{{ getDimensionMeta(dim, idx).metricLabel }}</div>
+                        </div>
+                      </div>
+                      <v-chip
+                        :color="getDimensionLevel(dim, idx).color"
+                        size="small"
+                        variant="tonal"
+                        class="flex-shrink-0"
+                      >
+                        <v-icon start size="x-small">{{ getDimensionLevel(dim, idx).icon }}</v-icon>
+                        {{ getDimensionLevel(dim, idx).text }}
+                      </v-chip>
+                    </div>
+                    <div class="dimension-score-row mb-2">
+                      <span class="dimension-score">{{ formatDimensionScore(dim) }}</span>
+                    </div>
+                    <v-progress-linear
+                      :model-value="getDimensionScore(dim) * 100"
+                      :color="getDimensionLevel(dim, idx).color"
+                      height="8"
+                      rounded
+                      class="mb-3"
+                    />
+                    <div class="text-body-2 text-grey">{{ getDimensionSummary(dim, idx) }}</div>
                   </v-card>
                 </v-col>
               </v-row>
@@ -1234,11 +1513,11 @@ onMounted(async () => {
                   <div class="d-flex align-center justify-space-between">
                     <div class="d-flex align-center" style="min-width: 0; flex: 1;">
                       <v-icon
-                        :color="getProbabilityColor(section.probabilities?.aigc || 0)"
+                        :color="getProbabilityColor(getAigcProbability(section))"
                         size="small"
                         class="mr-2 flex-shrink-0"
                       >
-                        {{ (section.probabilities?.aigc || 0) > 0.5 ? 'mdi-alert-circle' : 'mdi-check-circle' }}
+                        {{ getAigcProbability(section) > 0.5 ? 'mdi-alert-circle' : 'mdi-check-circle' }}
                       </v-icon>
                       <div style="min-width: 0; flex: 1;">
                         <div class="text-body-2 font-weight-medium text-truncate">
@@ -1253,17 +1532,17 @@ onMounted(async () => {
                       </div>
                     </div>
                     <v-chip
-                      :color="getProbabilityColor(section.probabilities?.aigc || 0)"
+                      :color="getProbabilityColor(getAigcProbability(section))"
                       size="x-small"
                       class="ml-2 flex-shrink-0"
                     >
-                      {{ ((section.probabilities?.aigc || 0) * 100).toFixed(0) }}%
+                      {{ formatProbability(getAigcProbability(section), 0) }}
                     </v-chip>
                   </div>
                   <!-- Mini progress bar -->
                   <v-progress-linear
-                    :model-value="(section.probabilities?.aigc || 0) * 100"
-                    :color="getProbabilityColor(section.probabilities?.aigc || 0)"
+                    :model-value="getAigcProbability(section) * 100"
+                    :color="getProbabilityColor(getAigcProbability(section))"
                     height="3"
                     rounded
                     class="mt-2"
@@ -1290,12 +1569,12 @@ onMounted(async () => {
             <v-card class="mb-6" elevation="2" rounded="lg">
               <v-card-title class="pa-6">
                 <div class="d-flex align-center flex-wrap gap-2">
-                  <v-icon :color="getProbabilityColor(selectedReviewSection.probabilities?.aigc || 0)" class="mr-1">
-                    {{ (selectedReviewSection.probabilities?.aigc || 0) > 0.5 ? 'mdi-alert-circle' : 'mdi-check-circle' }}
+                  <v-icon :color="getProbabilityColor(getAigcProbability(selectedReviewSection))" class="mr-1">
+                    {{ getAigcProbability(selectedReviewSection) > 0.5 ? 'mdi-alert-circle' : 'mdi-check-circle' }}
                   </v-icon>
                   <span class="text-h6">{{ selectedReviewSection.title || selectedReviewSection.item_id }}</span>
-                  <v-chip :color="getProbabilityColor(selectedReviewSection.probabilities?.aigc || 0)" size="small">
-                    {{ getProbabilityLevel(selectedReviewSection.probabilities?.aigc || 0) }}
+                  <v-chip :color="getProbabilityColor(getAigcProbability(selectedReviewSection))" size="small">
+                    {{ getProbabilityLevel(getAigcProbability(selectedReviewSection)) }}
                   </v-chip>
                   <v-chip v-if="selectedReviewSection.is_aigc" color="error" size="small" variant="tonal">
                     <v-icon start size="x-small">mdi-robot</v-icon>
@@ -1334,10 +1613,10 @@ onMounted(async () => {
               <v-card-text class="pa-6 pt-0">
                 <v-row>
                   <v-col cols="12" md="6">
-                    <div class="text-subtitle-2 font-weight-bold mb-2">AI生成置信度</div>
+                    <div class="text-subtitle-2 font-weight-bold mb-2">AI生成概率</div>
                     <v-progress-linear
-                      :model-value="(selectedReviewSection.probabilities?.aigc || 0) * 100"
-                      :color="getProbabilityColor(selectedReviewSection.probabilities?.aigc || 0)"
+                      :model-value="getAigcProbability(selectedReviewSection) * 100"
+                      :color="getProbabilityColor(getAigcProbability(selectedReviewSection))"
                       height="28"
                       rounded
                     >
@@ -1377,7 +1656,7 @@ onMounted(async () => {
                     :color="selectedReviewSection.is_aigc ? 'error' : 'success'"
                     variant="tonal"
                   >
-                    模型判定：{{ selectedReviewSection.label_name }}
+                    模型判定：{{ getModelLabel(selectedReviewSection) }}，{{ getPredictionConfidenceLabel(selectedReviewSection) }} {{ formatProbability(getPredictionConfidence(selectedReviewSection)) }}
                   </v-chip>
                 </div>
               </v-card-text>
@@ -1408,8 +1687,8 @@ onMounted(async () => {
     <v-dialog v-model="showParagraphDialog" max-width="800">
       <v-card v-if="selectedParagraph" rounded="lg">
         <v-card-title class="pa-6 d-flex align-center">
-          <v-icon :color="getProbabilityColor(selectedParagraph.probabilities?.aigc || 0)" class="mr-2">
-            {{ (selectedParagraph.probabilities?.aigc || 0) > 0.5 ? 'mdi-alert-circle' : 'mdi-information' }}
+          <v-icon :color="getProbabilityColor(getAigcProbability(selectedParagraph))" class="mr-2">
+            {{ getAigcProbability(selectedParagraph) > 0.5 ? 'mdi-alert-circle' : 'mdi-information' }}
           </v-icon>
           <span class="text-h6">{{ selectedParagraph.title || selectedParagraph.item_id }} 详情</span>
           <v-spacer />
@@ -1419,16 +1698,16 @@ onMounted(async () => {
         <v-card-text class="pa-6">
           <!-- AI probability chips -->
           <div class="mb-4">
-            <v-chip :color="getProbabilityColor(selectedParagraph.probabilities?.aigc || 0)" size="large">
+            <v-chip :color="getProbabilityColor(getAigcProbability(selectedParagraph))" size="large">
               <v-icon start>mdi-brain</v-icon>
-              AI生成置信度: {{ ((selectedParagraph.probabilities?.aigc || 0) * 100).toFixed(1) }}%
+              AI生成概率: {{ formatProbability(getAigcProbability(selectedParagraph)) }}
             </v-chip>
             <v-chip
-              :color="getProbabilityColor(selectedParagraph.probabilities?.aigc || 0)"
+              :color="getProbabilityColor(getAigcProbability(selectedParagraph))"
               size="large"
               class="ml-2"
             >
-              {{ getProbabilityLevel(selectedParagraph.probabilities?.aigc || 0) }}
+              {{ getProbabilityLevel(getAigcProbability(selectedParagraph)) }}
             </v-chip>
             <v-chip v-if="selectedParagraph.source_file" size="large" class="ml-2" variant="tonal">
               {{ selectedParagraph.source_file }}
@@ -1445,8 +1724,8 @@ onMounted(async () => {
           <div class="mb-4">
             <h3 class="text-h6 mb-2">AI生成概率可视化</h3>
             <v-progress-linear
-              :model-value="(selectedParagraph.probabilities?.aigc || 0) * 100"
-              :color="getProbabilityColor(selectedParagraph.probabilities?.aigc || 0)"
+              :model-value="getAigcProbability(selectedParagraph) * 100"
+              :color="getProbabilityColor(getAigcProbability(selectedParagraph))"
               height="30"
             >
               <template #default="{ value }">
@@ -1534,6 +1813,39 @@ onMounted(async () => {
 
 .info-item-dark {
   background-color: rgba(255, 255, 255, 0.05);
+}
+
+.analysis-panel {
+  background-color: rgba(var(--v-theme-surface-variant), 0.28);
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
+}
+
+.risk-distribution-row:not(:last-child) {
+  margin-bottom: 18px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid rgba(var(--v-theme-on-surface), 0.08);
+}
+
+.dimension-card {
+  min-height: 176px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.dimension-card:hover {
+  border-color: rgba(var(--v-theme-primary), 0.35);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
+}
+
+.dimension-score-row {
+  display: flex;
+  align-items: baseline;
+  min-height: 32px;
+}
+
+.dimension-score {
+  font-size: 1.45rem;
+  font-weight: 700;
+  line-height: 1.2;
 }
 
 /* Section list styles */

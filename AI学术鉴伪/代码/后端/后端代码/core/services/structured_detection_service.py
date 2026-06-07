@@ -274,6 +274,7 @@ class StructuredDetectionService:
         aigc_probs = [r.get('probabilities', {}).get('aigc', 0) for r in batch_results]
         aigc_count = sum(1 for r in batch_results if r.get('is_aigc'))
         avg_aigc = aggregate.get('mean_aigc_probability', sum(aigc_probs) / n if n else 0)
+        max_aigc = max(aigc_probs) if aigc_probs else 0
         risk_level = 'high' if avg_aigc >= 0.75 else 'medium' if avg_aigc >= 0.45 else 'low'
         is_fake = avg_aigc >= 0.60
 
@@ -334,8 +335,8 @@ class StructuredDetectionService:
                  'summary': '各段落预测结果的一致性'},
                 {'name': 'aigc_section_ratio', 'score': round(aigc_count / n, 4) if n else 0,
                  'summary': f'{aigc_count}/{n} 个段落被分类为AI生成'},
-                {'name': 'max_section_risk', 'score': round(max(scores) if scores else 0, 4),
-                 'summary': '单段落最高AI生成置信度'},
+                {'name': 'max_section_risk', 'score': round(max_aigc, 4),
+                 'summary': '单段落最高AI生成概率'},
             ]
             material_summary = {
                 'paper_file_count': len(snapshot.get('paper_files', [])),
@@ -346,12 +347,12 @@ class StructuredDetectionService:
             dimensions = [
                 {'name': 'aigc_generation', 'score': round(avg_aigc, 4),
                  'summary': 'BERT AI生成概率（评审文本汇总）'},
-                {'name': 'template_tendency', 'score': round(aggregate.get('mean_confidence', 0), 4),
-                 'summary': '模型置信度（模板化/套话检测代理指标）'},
+                {'name': 'aigc_section_ratio', 'score': round(aigc_count / n, 4) if n else 0,
+                 'summary': f'{aigc_count}/{n} 个评审段落被分类为AI生成'},
                 {'name': 'cross_text_consistency', 'score': round(consistency, 4),
                  'summary': '各评审来源预测结果的一致性'},
-                {'name': 'peak_risk', 'score': round(max(scores) if scores else 0, 4),
-                 'summary': '单文本最高AI生成风险'},
+                {'name': 'peak_risk', 'score': round(max_aigc, 4),
+                 'summary': '单份评审文本中出现的最高AI生成概率'},
             ]
             material_summary = {
                 'review_file_count': len(snapshot.get('review_files', [])),
@@ -366,8 +367,8 @@ class StructuredDetectionService:
                  'summary': '论文与评审文本预测结果的一致性'},
                 {'name': 'aigc_ratio', 'score': round(aigc_count / n, 4) if n else 0,
                  'summary': f'{aigc_count}/{n} 个文本段被分类为AI生成'},
-                {'name': 'max_risk', 'score': round(max(scores) if scores else 0, 4),
-                 'summary': '单段最高AI生成风险'},
+                {'name': 'max_risk', 'score': round(max_aigc, 4),
+                 'summary': '单段最高AI生成概率'},
             ]
             material_summary = {
                 'paper_file_count': len(snapshot.get('paper_files', [])),
@@ -466,12 +467,14 @@ class StructuredDetectionService:
                                if (s.get('item_id') or '').startswith('multi_review')]
             review_scores = [s.get('probabilities', {}).get('aigc', 0) for s in review_sections]
             avg_review_score = sum(review_scores) / len(review_scores) if review_scores else 0
+            review_section_count = len(review_sections)
             material_cards.append({
                 'type': 'review',
                 'label': '评审材料',
-                'summary': f'{len(review_files)} 个评审文件，{len(review_texts)} 段评审文本',
+                'summary': f'{len(review_files)} 个评审文件，{review_section_count} 段评审文本',
                 'score': round(avg_review_score, 4),
                 'file_count': len(review_files) + len(review_texts),
+                'section_count': review_section_count,
                 'files': [
                     {'file_id': rf.get('file_id'), 'file_name': rf.get('file_name')}
                     for rf in review_files

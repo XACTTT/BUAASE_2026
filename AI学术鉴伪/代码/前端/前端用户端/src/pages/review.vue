@@ -81,6 +81,10 @@
             </v-chip>
           </template>
 
+          <template v-slot:item.material_count="{ item }">
+            {{ getMaterialCount(item) }}
+          </template>
+
           <template v-slot:item.actions="{ item }">
             <v-btn
               icon
@@ -189,6 +193,9 @@ interface Task {
   publisher_username: string
   publisher_avatar: string
   image_count: number
+  text_count?: number
+  file_count?: number
+  material_count?: number
   status: string
   task_type?: string
   task_type_label?: string
@@ -199,7 +206,7 @@ const headers = [
   { title: '头像', key: 'publisher_avatar', align: 'center', sortable: false },
   { title: '出版社', key: 'publisher_username', align: 'start' },
   { title: '任务类型', key: 'task_type', align: 'center', sortable: false },
-  { title: '图片数量', key: 'image_count', align: 'start' },
+  { title: '材料数量', key: 'material_count', align: 'start', sortable: false },
   { title: '状态', key: 'status', align: 'center' },
   { title: '提交时间', key: 'manual_review_time', align: 'center' },
   { title: '操作', key: 'actions', align: 'center', sortable: false },
@@ -292,6 +299,26 @@ const getTaskTypeName = (taskType?: string) => {
       return '多材料检测'
     default:
       return taskType || '未知'
+  }
+}
+
+const getMaterialCount = (task: Task) => {
+  const imageCount = Number(task.image_count || 0)
+  const textCount = Number(task.text_count || 0)
+  const fileCount = Number(task.file_count || 0)
+  const materialCount = Number(task.material_count || 0)
+
+  switch (task.task_type) {
+    case 'image':
+      return `${imageCount} 张图片`
+    case 'paper_text':
+      return `${textCount || fileCount || materialCount} 段论文文本`
+    case 'review_text':
+      return `${textCount || fileCount || materialCount} 段审稿文本`
+    case 'multi_material':
+      return `${materialCount || imageCount + textCount + fileCount} 个材料`
+    default:
+      return materialCount || textCount || imageCount || 0
   }
 }
 
@@ -409,6 +436,9 @@ const fetchTasks = async (page: number, pageSize: number) => {
       publisher_username: task.publisher_username,
       publisher_avatar: task.publisher_avatar ? import.meta.env.VITE_API_URL + task.publisher_avatar : '',
       image_count: task.image_count,
+      text_count: task.text_count,
+      file_count: task.file_count,
+      material_count: task.material_count,
       status: task.status,
       task_type: task.task_type || 'unknown',
       task_type_label: task.task_type_label || '',

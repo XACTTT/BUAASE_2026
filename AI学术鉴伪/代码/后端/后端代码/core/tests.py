@@ -16,6 +16,7 @@ from core.models import (
     ImageUpload,
     Organization,
     ResourceContainer,
+    ReviewRequest,
     ReviewTextResource,
     StructuredDetectionResult,
     TextDetectionResult,
@@ -776,6 +777,84 @@ class ResourceManagementApiTests(TestCase):
         self.assertEqual(result_resp.status_code, 200)
         self.assertEqual(result_resp.data['detect_type'], 'paper')
         self.assertIn('dimensions', result_resp.data['result'])
+
+    @patch('core.views.views_review.send_mail')
+    def test_create_review_request_for_selected_sections_creates_missing_container(self, mocked_send_mail):
+        admin = get_user_model().objects.create_user(
+            username='admin',
+            email='admin@example.com',
+            password='pass1234',
+            organization=self.organization,
+            role='admin',
+        )
+        self.organization.admin_user = admin
+        self.organization.save(update_fields=['admin_user'])
+
+        reviewer = get_user_model().objects.create_user(
+            username='reviewer',
+            email='reviewer@example.com',
+            password='pass1234',
+            organization=self.organization,
+            role='reviewer',
+        )
+        file_record = FileManagement.objects.create(
+            user=self.user,
+            organization=self.organization,
+            file_name='paper.txt',
+            file_size=32,
+            file_type='text/plain',
+            file_ext='txt',
+            resource_role='paper_main',
+        )
+        task = DetectionTask.objects.create(
+            organization=self.organization,
+            user=self.user,
+            task_name='paper-without-container',
+            detect_type='paper',
+            task_type='paper_text',
+            status='completed',
+            extra_payload={'file_ids': [file_record.id], 'container_id': None},
+        )
+        StructuredDetectionResult.objects.create(
+            detection_task=task,
+            result_payload={
+                'evidence': {
+                    'per_section': [
+                        {
+                            'item_id': 'paper_paper_0_0',
+                            'text': '需要人工审核的段落',
+                            'title': '第一段',
+                        },
+                    ],
+                },
+            },
+        )
+
+        response = self.client.post(
+            '/api/create_review_task_with_admin_check/',
+            {
+                'task_id': task.id,
+                'task_type': 'paper_text',
+                'review_type': 'text',
+                'file_ids': [file_record.id],
+                'selected_section_ids': ['paper_paper_0_0'],
+                'reviewers': [reviewer.id],
+                'reason': 'check selected section',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 201)
+        task.refresh_from_db()
+        file_record.refresh_from_db()
+        self.assertIsNotNone(task.container_id)
+        self.assertEqual(file_record.container_id, task.container_id)
+
+        review_request = ReviewRequest.objects.get(id=response.data['review_request_id'])
+        self.assertEqual(review_request.detection_task_id, task.id)
+        self.assertEqual(review_request.selected_section_ids, ['paper_paper_0_0'])
+        self.assertEqual(review_request.text_resources.count(), 1)
+        self.assertTrue(review_request.reviewers.filter(id=reviewer.id).exists())
 
     def test_structured_result_for_review_text_task_uses_container_type_as_text_type(self):
         review_container = ResourceContainer.objects.create(
