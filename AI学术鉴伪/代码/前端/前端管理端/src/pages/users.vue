@@ -982,17 +982,21 @@ const activeInviteTab = ref('publisher')
 const publisherInviteCode = ref('')
 const reviewerInviteCode = ref('')
 
+interface InvitationCode {
+  code: string
+  role: 'publisher' | 'reviewer'
+  expires_at: string
+}
+
 // 获取邀请码
 const getInviteCode = async () => {
   try {
     const response = await userApi.getInviteCode({
       organization_id: currentUser.value?.organization,
     })
-    if (activeInviteTab.value === 'publisher') {
-      publisherInviteCode.value = response.data[0].code
-    } else {
-      reviewerInviteCode.value = response.data[1].code
-    }
+    const codes = Array.isArray(response.data) ? response.data as InvitationCode[] : []
+    publisherInviteCode.value = codes.find(code => code.role === 'publisher')?.code || ''
+    reviewerInviteCode.value = codes.find(code => code.role === 'reviewer')?.code || ''
   } catch (error) {
     console.error('获取邀请码失败:', error)
     snackbar.showMessage('获取邀请码失败', 'error')

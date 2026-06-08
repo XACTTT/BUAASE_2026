@@ -6,6 +6,7 @@ from rest_framework.response import Response
 from core.models import Organization, InvitationCode, User, OrganizationApplication
 import random
 import string
+from datetime import timedelta
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAdminUser
 from core.models import Organization
@@ -13,6 +14,35 @@ from django.core.paginator import Paginator
 from django.db.models import Count
 from django.db import models
 from django.db.models import Count, F
+
+INVITATION_CODE_VALID_DAYS = 365
+
+
+def _generate_unique_invitation_code():
+    while True:
+        code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+        if not InvitationCode.objects.filter(code=code).exists():
+            return code
+
+
+def _get_or_create_valid_invitation_code(organization, role):
+    now = timezone.now()
+    code = InvitationCode.objects.filter(
+        organization=organization,
+        role=role,
+        is_used=False,
+        expires_at__gt=now,
+    ).order_by('-expires_at').first()
+
+    if code:
+        return code
+
+    return InvitationCode.objects.create(
+        code=_generate_unique_invitation_code(),
+        organization=organization,
+        role=role,
+        expires_at=now + timedelta(days=INVITATION_CODE_VALID_DAYS),
+    )
 
 
 class CreateOrganizationApplicationView(views.APIView):
@@ -183,22 +213,18 @@ def approve_organization_application(request, app_id):
         admin_user.organization = organization
         admin_user.save(update_fields=['organization'])
 
-        # 生成邀请码
-        def generate_code():
-            return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
-
         InvitationCode.objects.create(
-            code=generate_code(),
+            code=_generate_unique_invitation_code(),
             organization=organization,
             role='publisher',
-            expires_at=timezone.now() + timezone.timedelta(days=7)
+            expires_at=timezone.now() + timedelta(days=INVITATION_CODE_VALID_DAYS)
         )
 
         InvitationCode.objects.create(
-            code=generate_code(),
+            code=_generate_unique_invitation_code(),
             organization=organization,
             role='reviewer',
-            expires_at=timezone.now() + timezone.timedelta(days=7)
+            expires_at=timezone.now() + timedelta(days=INVITATION_CODE_VALID_DAYS)
         )
 
         # 发送邮件通知
@@ -296,22 +322,18 @@ def create_organization_root(request):
         admin_user.organization = organization
         admin_user.save(update_fields=['organization'])
 
-        # 生成邀请码
-        def generate_code():
-            return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
-
         InvitationCode.objects.create(
-            code=generate_code(),
+            code=_generate_unique_invitation_code(),
             organization=organization,
             role='publisher',
-            expires_at=timezone.now() + timezone.timedelta(days=7)
+            expires_at=timezone.now() + timedelta(days=INVITATION_CODE_VALID_DAYS)
         )
 
         InvitationCode.objects.create(
-            code=generate_code(),
+            code=_generate_unique_invitation_code(),
             organization=organization,
             role='reviewer',
-            expires_at=timezone.now() + timezone.timedelta(days=7)
+            expires_at=timezone.now() + timedelta(days=INVITATION_CODE_VALID_DAYS)
         )
 
         # 发送邮件通知
@@ -347,7 +369,10 @@ class GetInvitationCodesView(views.APIView):
             if request.user != organization.admin_user:
                 return Response({"message": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
 
-            codes = organization.invitationcode_set.all()
+            codes = [
+                _get_or_create_valid_invitation_code(organization, 'publisher'),
+                _get_or_create_valid_invitation_code(organization, 'reviewer'),
+            ]
             data = [{"code": c.code, "role": c.role, "expires_at": c.expires_at} for c in codes]
             return Response(data)
         except Organization.DoesNotExist:

@@ -50,8 +50,13 @@
                   </template>
 
                   <template v-slot:item.logo="{ item }">
-                    <v-avatar size="40">
-                      <v-img :src="getImgUrl(item.logo)" :alt="item.name"></v-img>
+                    <v-avatar size="40" color="blue-lighten-5" class="organization-logo-cell">
+                      <v-img v-if="getImgUrl(item.logo)" :src="getImgUrl(item.logo)" :alt="item.name" cover>
+                        <template v-slot:error>
+                          <v-icon color="primary" size="24">mdi-office-building</v-icon>
+                        </template>
+                      </v-img>
+                      <v-icon v-else color="primary" size="24">mdi-office-building</v-icon>
                     </v-avatar>
                   </template>
 
@@ -135,8 +140,13 @@
           <v-container>
             <v-row>
               <v-col cols="12" class="d-flex justify-center">
-                <v-avatar size="200" class="mb-6 organization-logo">
-                  <v-img :src="getImgUrl(selectedItem.logo)" alt="组织Logo"></v-img>
+                <v-avatar size="200" class="mb-6 organization-logo" color="blue-lighten-5">
+                  <v-img v-if="getImgUrl(selectedItem.logo)" :src="getImgUrl(selectedItem.logo)" alt="组织Logo" cover>
+                    <template v-slot:error>
+                      <v-icon color="primary" size="96">mdi-office-building</v-icon>
+                    </template>
+                  </v-img>
+                  <v-icon v-else color="primary" size="96">mdi-office-building</v-icon>
                 </v-avatar>
               </v-col>
               <v-col cols="12">
@@ -359,6 +369,7 @@ import { useSnackbarStore } from '@/stores/snackbar'
 import organization from '@/api/organization'
 import type { DataTableHeader } from 'vuetify'
 import { useUserStore } from '@/stores/user'
+import { resolveApiAssetUrl } from '@/utils/preview-url'
 
 const snackbar = useSnackbarStore()
 
@@ -483,8 +494,8 @@ const formatTime = (data: string) => {
 }
 
 
-const getImgUrl = (logo: any) => {
-  return import.meta.env.VITE_API_URL + logo
+const getImgUrl = (logo?: string | null) => {
+  return resolveApiAssetUrl(logo)
 }
 
 // 获取组织列表
@@ -801,6 +812,10 @@ onMounted(() => {
 .organization-logo {
   border: 4px solid rgb(var(--v-theme-primary));
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.organization-logo-cell {
+  border: 1px solid rgba(var(--v-theme-primary), 0.18);
 }
 
 .documents-card {

@@ -400,9 +400,15 @@ const isFormValid = computed(() => {
       /.+@.+\..+/.test(email.value) &&
       password.value.length >= 6
   } else {
-    return registerFormData.value.email &&
+    return registerFormData.value.username &&
+      registerFormData.value.email &&
+      registerFormData.value.password &&
+      registerFormData.value.confirmPassword &&
       registerFormData.value.inviteCode &&
+      registerFormData.value.username.length >= 1 &&
       /.+@.+\..+/.test(registerFormData.value.email) &&
+      registerFormData.value.password.length >= 6 &&
+      registerFormData.value.confirmPassword === registerFormData.value.password &&
       registerFormData.value.inviteCode.length >= 6
   }
 })
@@ -456,7 +462,20 @@ const handleSubmit = async () => {
           const errorMessages = []
 
           if (errors.email) errorMessages.push(`邮箱已存在`)
-          if (errors.inviteCode) errorMessages.push(`邀请码已存在`)
+          if (errors.username) errorMessages.push(`用户名已存在`)
+          if (errors.password) errorMessages.push(`密码格式不正确`)
+          if (errors.role) errorMessages.push(`请选择正确的注册身份`)
+          if (errors.invitation_code) {
+            const inviteError = Array.isArray(errors.invitation_code)
+              ? errors.invitation_code.join(';')
+              : String(errors.invitation_code)
+            if (inviteError.includes('not')) {
+              errorMessages.push(`邀请码与当前选择的身份不匹配`)
+            } else {
+              errorMessages.push(`邀请码无效或已过期`)
+            }
+          }
+          if (errors.non_field_errors) errorMessages.push(String(errors.non_field_errors))
 
           errorMessage = errorMessages.length > 0 ? errorMessages.join(';') : '请检查输入信息'
         }

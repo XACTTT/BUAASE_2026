@@ -31,13 +31,27 @@ class UserRegisterSerializer(serializers.ModelSerializer):
     class Meta:
         model = get_user_model()
         fields = ['username', 'email', 'password', 'organization', 'role', 'invitation_code']
+        extra_kwargs = {
+            'password': {'write_only': True},
+            'organization': {'required': False, 'read_only': True},
+        }
 
     def validate_invitation_code(self, value):
+        value = value.strip().upper()
         try:
             code_obj = InvitationCode.objects.get(code=value, is_used=False, expires_at__gt=timezone.now())
         except InvitationCode.DoesNotExist:
             raise serializers.ValidationError("Invalid or expired invitation code.")
         return code_obj
+
+    def validate(self, attrs):
+        invitation_code = attrs.get('invitation_code')
+        role = attrs.get('role')
+        if invitation_code and role and invitation_code.role != role:
+            raise serializers.ValidationError({
+                'invitation_code': f"This invitation code is for {invitation_code.role}, not {role}."
+            })
+        return attrs
 
     def create(self, validated_data):
         invitation_code = validated_data.pop('invitation_code')
