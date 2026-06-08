@@ -1806,17 +1806,44 @@ def get_user_tasks(request):
     except Exception:
         return Response({'error': 'Invalid page number'}, status=400)
 
-    # 预取材料信息：按 container 批量查 FileManagement
+    # 预取材料信息：文本/综合任务通常通过 container 关联文件；图像任务可能只通过
+    # DetectionResult -> ImageUpload -> FileManagement 关联上传源文件。
+    task_ids = [task.id for task in page_obj.object_list]
     container_ids = [task.container_id for task in page_obj.object_list if task.container_id]
     file_map = {}  # container_id -> list of {file_name, tag}
     subject_map = {}  # container_id -> tag (取第一个非空 tag)
     if container_ids:
-        from ..models import FileManagement
         files = FileManagement.objects.filter(container_id__in=container_ids).order_by('id').values_list('container_id', 'file_name', 'tag')
         for cid, fname, ftag in files:
             file_map.setdefault(cid, []).append({'file_name': fname, 'tag': ftag})
             if cid not in subject_map and ftag:
                 subject_map[cid] = ftag
+
+    image_file_map = {}  # task_id -> list of {file_name, tag}
+    image_subject_map = {}  # task_id -> tag (取第一个非空 tag)
+    image_seen = {}
+    if task_ids:
+        image_files = (
+            DetectionResult.objects
+            .filter(detection_task_id__in=task_ids)
+            .order_by('detection_task_id', 'image_upload__file_management_id')
+            .values_list(
+                'detection_task_id',
+                'image_upload__file_management_id',
+                'image_upload__file_management__file_name',
+                'image_upload__file_management__tag',
+            )
+        )
+        for task_id, file_id, fname, ftag in image_files:
+            if not fname:
+                continue
+            key = (task_id, file_id or fname)
+            if key in image_seen:
+                continue
+            image_seen[key] = True
+            image_file_map.setdefault(task_id, []).append({'file_name': fname, 'tag': ftag})
+            if task_id not in image_subject_map and ftag:
+                image_subject_map[task_id] = ftag
 
     task_data = [
         {
@@ -1829,8 +1856,16 @@ def get_user_tasks(request):
             'status': task.status,
             'failure_reason': task.failure_reason,
             'completion_time': timezone.localtime(task.completion_time).strftime('%Y-%m-%d %H:%M:%S') if task.completion_time else None,
-            'subject': subject_map.get(task.container_id, '') if task.container_id else '',
-            'materials': [f['file_name'] for f in file_map.get(task.container_id, [])] if task.container_id else [],
+            'subject': (
+                subject_map.get(task.container_id)
+                if task.container_id and subject_map.get(task.container_id)
+                else image_subject_map.get(task.id, '')
+            ),
+            'materials': (
+                [f['file_name'] for f in file_map.get(task.container_id, [])]
+                if task.container_id and file_map.get(task.container_id)
+                else [f['file_name'] for f in image_file_map.get(task.id, [])]
+            ),
         } for task in page_obj.object_list
     ]
 
