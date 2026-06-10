@@ -1,8 +1,10 @@
 import base64
 import json
 import os
+import shlex
 import tempfile
 import time
+import uuid
 from pathlib import Path
 
 import paramiko
@@ -113,7 +115,7 @@ class FastDetectGPTAIDetectionBridge:
         raise FastDetectGPTAITransientError(f"read timeout after {timeout_seconds}s")
 
     @classmethod
-    def _open_remote_session(cls, config):
+    def _open_remote_session(cls, config, remote_request_path: str | None = None):
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         try:
@@ -130,7 +132,13 @@ class FastDetectGPTAIDetectionBridge:
             raise FastDetectGPTAITransientError(f"failed to connect fast_detect_gpt host: {exc}") from exc
 
         try:
-            stdin, stdout, stderr = ssh.exec_command(config["remote_command"])
+            command = config["remote_command"]
+            if remote_request_path:
+                command = (
+                    f"export UNIFIED_AI_REQUEST_FILE={shlex.quote(remote_request_path)}; "
+                    f"{command}"
+                )
+            stdin, stdout, stderr = ssh.exec_command(command)
         except (paramiko.SSHException, OSError) as exc:
             ssh.close()
             raise FastDetectGPTAITransientError(f"failed to execute fast_detect_gpt remote command: {exc}") from exc
@@ -159,10 +167,16 @@ class FastDetectGPTAIDetectionBridge:
         with local_request_path.open("w", encoding="utf-8") as handle:
             json.dump(request_payload, handle, ensure_ascii=False, indent=2)
 
+        request_id = str(request_payload.get("request_id") or "fast-detect-gpt").replace("/", "_")
+        remote_request_path = (
+            Path(config["remote_request_dir"])
+            / f"{request_id}-{uuid.uuid4().hex}.json"
+        ).as_posix()
+
         try:
-            ssh, stdout, stderr = cls._open_remote_session(config)
+            ssh, stdout, stderr = cls._open_remote_session(config, remote_request_path)
             with SCPClient(ssh.get_transport()) as scp:
-                scp.put(str(local_request_path), config["remote_request_dir"])
+                scp.put(str(local_request_path), remote_path=remote_request_path)
 
             marker_found = False
             while True:
@@ -200,6 +214,10 @@ class FastDetectGPTAIDetectionBridge:
             except OSError:
                 pass
             if ssh:
+                try:
+                    ssh.exec_command(f"rm -f {shlex.quote(remote_request_path)}")
+                except Exception:
+                    pass
                 ssh.close()
 
     @classmethod
@@ -234,6 +252,63 @@ class FastDetectGPTAIDetectionBridge:
         )
         return cls._submit_request(request_payload, config)
 
+    @staticmethod
+    def _normalize_batch_result_item(item: dict):
+        return {
+            "item_id": item.get("item_id"),
+            "item_index": item.get("item_index"),
+            "is_aigc": item.get("is_aigc"),
+            "label": item.get("label"),
+            "label_name": item.get("label_name"),
+            "confidence_score": item.get("confidence_score"),
+            "probabilities": item.get("probabilities") or {},
+            "input_summary": item.get("input_summary") or {},
+            "fast_detect_gpt": item.get("fast_detect_gpt") or {},
+        }
+
+    @classmethod
+    def _normalize_batch_response(cls, result: dict):
+        if isinstance(result.get("batch_results"), list):
+            return result
+
+        items = result.get("items")
+        if not isinstance(items, list):
+            raise FastDetectGPTAIPermanentError(
+                "fast_detect_gpt batch result must include batch_results or items"
+            )
+
+        batch_results = [cls._normalize_batch_result_item(item) for item in items if isinstance(item, dict)]
+        n = len(batch_results)
+        scores = [r.get("confidence_score", 0) or 0 for r in batch_results]
+        aigc_probs = [r.get("probabilities", {}).get("aigc", 0) or 0 for r in batch_results]
+        summary = result.get("summary") or {}
+        item_count = int(summary.get("item_count", n) or n)
+        aigc_count = int(summary.get("aigc_count", sum(1 for r in batch_results if r.get("is_aigc"))) or 0)
+
+        aggregate = {
+            "aigc_ratio": (aigc_count / item_count) if item_count else 0.0,
+            "mean_aigc_probability": sum(aigc_probs) / n if n else 0.0,
+            "mean_confidence": sum(scores) / n if n else 0.0,
+            "max_confidence": max(scores) if scores else 0.0,
+            "min_confidence": min(scores) if scores else 0.0,
+        }
+
+        normalized = {
+            "batch_results": batch_results,
+            "item_count": item_count,
+            "aggregate": aggregate,
+            "project_root": result.get("project_root"),
+            "python": result.get("python"),
+            "model_dir": result.get("scoring_model_dir") or result.get("sampling_model_dir"),
+            "sampling_model_name": result.get("sampling_model_name"),
+            "scoring_model_name": result.get("scoring_model_name"),
+            "sampling_model_dir": result.get("sampling_model_dir"),
+            "scoring_model_dir": result.get("scoring_model_dir"),
+        }
+        if summary:
+            normalized["summary"] = summary
+        return normalized
+
     @classmethod
     def submit_batch(
         cls,
@@ -248,6 +323,4 @@ class FastDetectGPTAIDetectionBridge:
             max_length=max_length or config["max_length"],
         )
         result = cls._submit_request(request_payload, config)
-        if not isinstance(result.get("batch_results"), list):
-            raise FastDetectGPTAIPermanentError("fast_detect_gpt batch result must include batch_results")
-        return result
+        return cls._normalize_batch_response(result)

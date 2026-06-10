@@ -319,7 +319,7 @@ def _run_llm_analysis_for_image_task(task: DetectionTask, failed_count: int):
 # 1.  GPU 阶段 – 串行
 # ───────────────────────────────────────────────────────────────────────────────
 
-@shared_task(queue="ai", bind=True, acks_late=True, max_retries=3, default_retry_delay=15)
+@shared_task(queue="ai", bind=True, acks_late=True, max_retries=2, default_retry_delay=15)
 def fetch_batch(
     self,
     detection_result_ids: List[int],
@@ -388,7 +388,7 @@ def fetch_batch(
     # 2️⃣  GPU / 网络 调用
     results = get_result(zip_path, data_path)
     retry_count = 0
-    while (results is None or len(results[1][1]) != len(detection_result_ids)) and retry_count < 3:
+    while (results is None or len(results[1][1]) != len(detection_result_ids)) and retry_count < 2:
         reconnect()
         retry_count += 1
         results = get_result(zip_path, data_path)
@@ -1030,7 +1030,7 @@ def run_structured_detection_task(self, task_pk: int):
 
     try:
         StructuredDetectionService.execute_task(task)
-    except BertTextAITransientError as exc:
+    except (BertTextAITransientError, FastDetectGPTAITransientError) as exc:
         StructuredDetectionService.mark_failed(task, str(exc))
         send_task_progress_update(
             task_id=task_pk,

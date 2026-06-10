@@ -202,7 +202,16 @@ def _text_file_validation_error(files, material_label):
     return None
 
 
-def _submit_structured_detection(request, user, mode, task_name, cmd_block_size, urn_k, if_use_llm):
+def _submit_structured_detection(
+    request,
+    user,
+    mode,
+    task_name,
+    cmd_block_size,
+    urn_k,
+    if_use_llm,
+    detection_mode='bert_text',
+):
     detect_type, container_id, file_ids, review_text_ids = _normalize_structured_submit_payload(request)
 
     if detect_type not in {'paper', 'review', 'multi'}:
@@ -278,6 +287,7 @@ def _submit_structured_detection(request, user, mode, task_name, cmd_block_size,
         if_use_llm=if_use_llm,
         extra_payload={
             'mode': mode,
+            'detection_mode': detection_mode,
             'file_ids': file_ids,
             'review_text_ids': review_text_ids,
             'container_id': container.id if container else None,
@@ -299,6 +309,7 @@ def _submit_structured_detection(request, user, mode, task_name, cmd_block_size,
             'review_text_count': len(review_text_ids),
             'container_id': container.id if container else None,
             'if_use_llm': if_use_llm,
+            'detection_mode': detection_mode,
         },
     )
 
@@ -480,6 +491,7 @@ def submit_detection2(request):
             cmd_block_size=cmd_block_size,
             urn_k=urn_k,
             if_use_llm=if_use_llm,
+            detection_mode=org_config.get(detect_type, 'bert_text'),
         )
 
     if not image_ids:

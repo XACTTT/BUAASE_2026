@@ -2,7 +2,9 @@ import atexit
 import base64
 import json
 import pickle
+import shlex
 import socket
+import uuid
 from pathlib import Path
 
 import paramiko
@@ -56,7 +58,7 @@ def get_unified_ai_defaults(config=None) -> dict:
     }
 
 
-def remote_call(hostname, username, port, password, config=None):
+def remote_call(hostname, username, port, password, config=None, request_file=None):
     config = config or REMOTE_AI_CONFIG
 
     ssh_client = paramiko.SSHClient()
@@ -64,6 +66,8 @@ def remote_call(hostname, username, port, password, config=None):
     ssh_client.connect(hostname=hostname, username=username, port=port, password=password)
 
     command = build_remote_command(config)
+    if request_file:
+        command = f"export UNIFIED_AI_REQUEST_FILE={shlex.quote(str(request_file))}; {command}"
     stdin_stream, stdout_stream, stderr_stream = ssh_client.exec_command(command)
 
     # 设置 30 分钟超时
@@ -198,10 +202,31 @@ def close_ssh_connection():
 atexit.register(close_ssh_connection)
 
 
-def ensure_connection(config=None):
+def ensure_connection(config=None, request_file=None):
     global stdin, stdout, stderr, ssh
     config = config or REMOTE_AI_CONFIG
     if ssh is not None:
+        if request_file is None:
+            return
+        ssh.close()
+        stdin = stdout = stderr = ssh = None
+    stdin, stdout, stderr, ssh = remote_call(
+        config["hostname"],
+        config["username"],
+        config["port"],
+        config["password"],
+        config=config,
+        request_file=request_file,
+    )
+
+
+def reconnect(config=None, request_file=None):
+    global stdin, stdout, stderr, ssh
+    config = config or REMOTE_AI_CONFIG
+    if ssh is not None:
+        ssh.close()
+    stdin = stdout = stderr = ssh = None
+    if request_file is None:
         return
     stdin, stdout, stderr, ssh = remote_call(
         config["hostname"],
@@ -209,37 +234,26 @@ def ensure_connection(config=None):
         config["port"],
         config["password"],
         config=config,
-    )
-
-
-def reconnect(config=None):
-    global stdin, stdout, stderr, ssh
-    config = config or REMOTE_AI_CONFIG
-    if ssh is not None:
-        ssh.close()
-    stdin, stdout, stderr, ssh = remote_call(
-        config["hostname"],
-        config["username"],
-        config["port"],
-        config["password"],
-        config=config,
+        request_file=request_file,
     )
 
 
 def get_result(local_path, json_path, config=None):
     global ssh, stdout, stderr
     config = config or REMOTE_AI_CONFIG
-    ensure_connection(config)
 
     remote_upload_dir = Path(config["remote_upload_dir"])
     remote_request_dir = Path(config["remote_request_dir"])
 
     remote_json_path = str((remote_upload_dir / Path(json_path).name).as_posix())
     remote_zip_path = str((remote_upload_dir / Path(local_path).name).as_posix())
-    remote_request_path = str((remote_request_dir / "request.json").as_posix())
+    request_id = f"image-{Path(local_path).stem}-{uuid.uuid4().hex}"
+    remote_request_path = str((remote_request_dir / f"{request_id}.json").as_posix())
+
+    ensure_connection(config, request_file=remote_request_path)
 
     request_payload = {
-        "request_id": f"image-{Path(local_path).stem}",
+        "request_id": request_id,
         "pipeline": "image",
         "payload": {
             "image_zip": remote_zip_path,
@@ -247,7 +261,7 @@ def get_result(local_path, json_path, config=None):
         },
     }
 
-    local_request_path = Path(json_path).with_name("request.json")
+    local_request_path = Path(json_path).with_name(f"{request_id}.json")
     local_request_path.write_text(
         json.dumps(request_payload, ensure_ascii=False, indent=2),
         encoding="utf-8",
@@ -262,7 +276,15 @@ def get_result(local_path, json_path, config=None):
         print("远程调用结果:", result)
     except Exception as exc:
         print(f"发生错误: {str(exc)}")
+        reconnect(config)
         return None
+    finally:
+        try:
+            if ssh is not None:
+                ssh.exec_command(f"rm -f {shlex.quote(remote_request_path)}")
+            local_request_path.unlink(missing_ok=True)
+        except Exception as exc:
+            print(f"清理临时请求文件失败: {exc}")
     return result
 
 

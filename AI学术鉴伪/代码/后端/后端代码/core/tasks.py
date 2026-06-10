@@ -85,9 +85,13 @@ def run_ai_detection(detection_result_id, cmd_block_size=64, urn_k=0.3, if_use_l
         json.dump(data, f, ensure_ascii=False, indent=4)
 
     result = get_result(new_path, data_path)
-    while result is None:
+    retry_count = 0
+    while result is None and retry_count < 2:
         reconnect()
+        retry_count += 1
         result = get_result(new_path, data_path)
+    if result is None:
+        raise RuntimeError("AI 服务器不可达")
     # PICKLE_PATH = Path(settings.BASE_DIR) / 'fake_image_detector' / 'core' / 'data.pkl'
     # with PICKLE_PATH.open('rb') as f:
     #     result = pickle.load(f)
@@ -344,10 +348,13 @@ def run_ai_detection_batch(detection_result_ids, batch_dir, image_num):
     results = get_result(zip_path, data_path)
     # results 长度必须 == len(dr_list)
     if results is None or len(results[1][1]) != len(dr_list):
-        # 失败重连（与旧逻辑保持一致）
-        while results is None or len(results[1][1]) != len(dr_list):
+        retry_count = 0
+        while (results is None or len(results[1][1]) != len(dr_list)) and retry_count < 2:
             reconnect()
+            retry_count += 1
             results = get_result(Path(zip_path), Path(data_path))
+    if results is None or len(results[1][1]) != len(dr_list):
+        raise RuntimeError("AI 服务器不可达")
     # PICKLE_PATH = Path(settings.BASE_DIR) / 'fake_image_detector' / 'core' / 'result_new_none_llm.pkl'
     # with PICKLE_PATH.open('rb') as f:
     #     results = pickle.load(f)

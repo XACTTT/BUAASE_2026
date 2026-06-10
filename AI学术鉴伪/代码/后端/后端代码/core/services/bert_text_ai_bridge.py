@@ -2,10 +2,12 @@ import base64
 import json
 import os
 import selectors
+import shlex
 import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from pathlib import Path
 
 import paramiko
@@ -236,7 +238,7 @@ class BertTextAIDetectionBridge:
                 pass
 
     @classmethod
-    def _open_remote_session(cls, config):
+    def _open_remote_session(cls, config, remote_request_path: str | None = None):
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         try:
@@ -253,7 +255,13 @@ class BertTextAIDetectionBridge:
             raise BertTextAITransientError(f"failed to connect unified AI host: {exc}") from exc
 
         try:
-            stdin, stdout, stderr = ssh.exec_command(config["remote_command"])
+            command = config["remote_command"]
+            if remote_request_path:
+                command = (
+                    f"export UNIFIED_AI_REQUEST_FILE={shlex.quote(remote_request_path)}; "
+                    f"{command}"
+                )
+            stdin, stdout, stderr = ssh.exec_command(command)
         except (paramiko.SSHException, OSError) as exc:
             ssh.close()
             raise BertTextAITransientError(f"failed to execute unified AI command: {exc}") from exc
@@ -295,10 +303,16 @@ class BertTextAIDetectionBridge:
         with local_request_path.open("w", encoding="utf-8") as handle:
             json.dump(request_payload, handle, ensure_ascii=False, indent=2)
 
+        request_id = str(request_payload.get("request_id") or "bert-text").replace("/", "_")
+        remote_request_path = (
+            Path(config["remote_request_dir"])
+            / f"{request_id}-{uuid.uuid4().hex}.json"
+        ).as_posix()
+
         try:
-            ssh, stdout, stderr = cls._open_remote_session(config)
+            ssh, stdout, stderr = cls._open_remote_session(config, remote_request_path)
             with SCPClient(ssh.get_transport()) as scp:
-                scp.put(str(local_request_path), config["remote_request_dir"])
+                scp.put(str(local_request_path), remote_path=remote_request_path)
 
             marker_found = False
             while True:
@@ -321,6 +335,11 @@ class BertTextAIDetectionBridge:
                 Path(temp_dir).rmdir()
             except OSError:
                 pass
+            if ssh:
+                try:
+                    ssh.exec_command(f"rm -f {shlex.quote(remote_request_path)}")
+                except Exception:
+                    pass
             if ssh:
                 ssh.close()
 

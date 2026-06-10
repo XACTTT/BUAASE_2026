@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import zipfile
 from pathlib import Path
 
@@ -21,6 +22,7 @@ from core.models import (
 from core.services.content_extraction_service import ContentExtractionService
 from core.services.material_validation_service import MaterialValidationService
 from core.services.bert_text_ai_bridge import BertTextAIDetectionBridge
+from core.services.fast_detect_gpt_ai_bridge import FastDetectGPTAIDetectionBridge
 from core.services.llm_service import build_chat_completion_payload, call_openai_compatible_chat
 
 logger = logging.getLogger(__name__)
@@ -96,6 +98,9 @@ STAGE_PROMPT_TEMPLATES = {
 class StructuredDetectionService:
     PAPER_FILE_ROLES = {'paper_main', 'paper_supplementary', 'paper_revision'}
     REVIEW_FILE_ROLES = {'review_main', 'review_attachment'}
+    PAPER_MIN_DETECTION_CHARS = 420
+    PAPER_TARGET_DETECTION_CHARS = 1100
+    PAPER_MAX_DETECTION_CHARS = 1700
 
     @staticmethod
     def _build_paper_materials(task: DetectionTask):
@@ -223,18 +228,176 @@ class StructuredDetectionService:
         raise ValueError('UNSUPPORTED_DETECT_TYPE')
 
     @staticmethod
+    def _normalize_detection_text(text):
+        return re.sub(r'\s+', ' ', (text or '').replace('\u00ad', '')).strip()
+
+    @staticmethod
+    def _text_word_count(text):
+        return len(re.findall(r"[A-Za-z]+(?:[-'][A-Za-z]+)?|[\u4e00-\u9fff]", text or ''))
+
+    @staticmethod
+    def _looks_like_paper_noise(text):
+        normalized = StructuredDetectionService._normalize_detection_text(text)
+        if not normalized:
+            return True
+
+        lower = normalized.lower()
+        if lower in {'article', 'check for updates'}:
+            return True
+        if re.match(r'^(https?://|doi:|https?://doi\.org/)', lower):
+            return True
+        if re.match(r'^(received|accepted|published online|published):?\s+', lower):
+            return True
+        if re.search(r'\bnature\s*\|\s*vol\b', lower):
+            return True
+        if re.search(r'\bthese authors contributed equally\b', lower):
+            return True
+        if len(normalized) < 140 and not re.search(r'[.!?。？！]', normalized):
+            return True
+        if len(normalized) < 500 and normalized.count(',') >= 5 and not re.search(r'[.!?。？！]', normalized):
+            return True
+        if re.match(r'^\d+\s*[A-Z]', normalized) and re.search(
+            r'\b(University|Department|Institute|Hospital|School|Laboratory|Center|Centre|Academy)\b',
+            normalized,
+        ):
+            return True
+
+        alpha_count = len(re.findall(r'[A-Za-z\u4e00-\u9fff]', normalized))
+        word_count = StructuredDetectionService._text_word_count(normalized)
+        if len(normalized) < 3:
+            return True
+        if alpha_count < 12 and len(normalized) < 120:
+            return True
+        if len(normalized) < 80 and word_count < 6:
+            return True
+
+        lines = [line.strip() for line in str(text or '').splitlines() if line.strip()]
+        if len(lines) >= 4:
+            avg_line_len = sum(len(line) for line in lines) / len(lines)
+            short_line_ratio = sum(1 for line in lines if len(line) <= 20) / len(lines)
+            if avg_line_len <= 28 and short_line_ratio >= 0.6:
+                return True
+
+        return False
+
+    @staticmethod
+    def _join_detection_chunks(chunks):
+        return '\n\n'.join(chunk for chunk in chunks if chunk).strip()
+
+    @staticmethod
+    def _make_paper_detection_item(detect_type, file_idx, agg_idx, source_file, parts):
+        texts = [part['text'] for part in parts]
+        page_numbers = []
+        original_item_ids = []
+        titles = []
+        for part in parts:
+            original_item_ids.append(part['id'])
+            if part.get('title'):
+                titles.append(part['title'])
+            if part.get('page_number') is not None and part.get('page_number') not in page_numbers:
+                page_numbers.append(part.get('page_number'))
+
+        page_label = ''
+        if page_numbers:
+            if len(page_numbers) == 1:
+                page_label = f"第{page_numbers[0]}页"
+            else:
+                page_label = f"第{page_numbers[0]}-{page_numbers[-1]}页"
+
+        return {
+            'id': f"{detect_type}_paper_{file_idx}_agg_{agg_idx}",
+            'text': StructuredDetectionService._join_detection_chunks(texts),
+            'language': 'chinese',
+            'title': f"{page_label} 聚合段落{agg_idx + 1}".strip() or f"聚合段落{agg_idx + 1}",
+            'page_number': page_numbers[0] if page_numbers else None,
+            'page_numbers': page_numbers,
+            'source_file': source_file,
+            'original_item_ids': original_item_ids,
+            'original_titles': titles,
+        }
+
+    @staticmethod
+    def _build_paper_detection_items(paper_file, detect_type, file_idx):
+        source_file = paper_file.get('file_name', '')
+        candidates = []
+        skipped_count = 0
+        for sec_idx, section in enumerate(paper_file.get('sections', [])):
+            raw_text = section.get('text') or ''
+            text = StructuredDetectionService._normalize_detection_text(raw_text)
+            if StructuredDetectionService._looks_like_paper_noise(raw_text):
+                skipped_count += 1
+                continue
+            candidates.append({
+                'id': f"{detect_type}_paper_{file_idx}_{sec_idx}",
+                'text': text,
+                'title': section.get('title', ''),
+                'page_number': section.get('page_number'),
+            })
+
+        items = []
+        current_parts = []
+
+        def current_length():
+            return len(StructuredDetectionService._join_detection_chunks([part['text'] for part in current_parts]))
+
+        def flush_current():
+            if not current_parts:
+                return
+            items.append(StructuredDetectionService._make_paper_detection_item(
+                detect_type=detect_type,
+                file_idx=file_idx,
+                agg_idx=len(items),
+                source_file=source_file,
+                parts=current_parts,
+            ))
+            current_parts.clear()
+
+        for part in candidates:
+            part_len = len(part['text'])
+            if part_len >= StructuredDetectionService.PAPER_TARGET_DETECTION_CHARS:
+                flush_current()
+                items.append(StructuredDetectionService._make_paper_detection_item(
+                    detect_type=detect_type,
+                    file_idx=file_idx,
+                    agg_idx=len(items),
+                    source_file=source_file,
+                    parts=[part],
+                ))
+                continue
+
+            if not current_parts:
+                current_parts.append(part)
+                continue
+
+            merged_len = current_length() + 2 + part_len
+            if (
+                current_length() < StructuredDetectionService.PAPER_MIN_DETECTION_CHARS
+                or merged_len <= StructuredDetectionService.PAPER_MAX_DETECTION_CHARS
+            ):
+                current_parts.append(part)
+            else:
+                flush_current()
+                current_parts.append(part)
+
+        flush_current()
+
+        for item in items:
+            item['aggregation'] = {
+                'original_section_count': len(item.get('original_item_ids') or []),
+                'skipped_noise_count': skipped_count,
+            }
+        return items
+
+    @staticmethod
     def _extract_text_items_from_snapshot(snapshot, detect_type):
         items = []
         if detect_type in ('paper', 'multi'):
             for file_idx, paper_file in enumerate(snapshot.get('paper_files', [])):
-                for sec_idx, section in enumerate(paper_file.get('sections', [])):
-                    text = (section.get('text') or '').strip()
-                    if text:
-                        items.append({
-                            'id': f"{detect_type}_paper_{file_idx}_{sec_idx}",
-                            'text': text,
-                            'language': 'chinese',
-                        })
+                items.extend(StructuredDetectionService._build_paper_detection_items(
+                    paper_file=paper_file,
+                    detect_type=detect_type,
+                    file_idx=file_idx,
+                ))
         if detect_type in ('review', 'multi'):
             for file_idx, review_file in enumerate(snapshot.get('review_files', [])):
                 for sec_idx, section in enumerate(review_file.get('sections', [])):
@@ -244,15 +407,21 @@ class StructuredDetectionService:
                             'id': f"{detect_type}_review_file_{file_idx}_{sec_idx}",
                             'text': text,
                             'language': 'chinese',
+                            'title': section.get('title', ''),
+                            'page_number': section.get('page_number'),
+                            'source_file': review_file.get('file_name', ''),
                         })
             for text_idx, review_text in enumerate(snapshot.get('review_texts', [])):
                 text = (review_text.get('normalized_text') or review_text.get('raw_text') or '').strip()
                 if text:
                     items.append({
-                        'id': f"{detect_type}_review_text_{text_idx}",
-                        'text': text,
-                        'language': review_text.get('language', 'chinese'),
-                    })
+                            'id': f"{detect_type}_review_text_{text_idx}",
+                            'text': text,
+                            'language': review_text.get('language', 'chinese'),
+                            'title': f'评审文本 {text_idx + 1}',
+                            'page_number': None,
+                            'source_file': '',
+                        })
         return items
 
     @staticmethod
@@ -266,7 +435,8 @@ class StructuredDetectionService:
         return max(0.0, min(1.0, 1.0 - (variance ** 0.5) / mean))
 
     @staticmethod
-    def _aggregate_bert_batch(batch_response, detect_type, snapshot, text_items):
+    def _aggregate_text_batch(batch_response, detect_type, snapshot, text_items, detection_mode='bert_text'):
+        method_name = 'FastDetectGPT' if detection_mode == 'fast_detect_gpt' else 'BERT'
         batch_results = batch_response.get('batch_results', [])
         aggregate = batch_response.get('aggregate', {})
         n = len(batch_results)
@@ -280,33 +450,46 @@ class StructuredDetectionService:
 
         text_lookup = {item['id']: item for item in text_items}
         section_meta = {}
+        for item in text_items:
+            item_id = item.get('id')
+            if not item_id:
+                continue
+            section_meta[item_id] = {
+                'title': item.get('title', ''),
+                'page_number': item.get('page_number'),
+                'page_numbers': item.get('page_numbers') or [],
+                'source_file': item.get('source_file', ''),
+                'original_item_ids': item.get('original_item_ids') or [],
+                'original_titles': item.get('original_titles') or [],
+                'aggregation': item.get('aggregation') or {},
+            }
         if detect_type in ('paper', 'multi'):
             for file_idx, paper_file in enumerate(snapshot.get('paper_files', [])):
                 file_name = paper_file.get('file_name', '')
                 for sec_idx, section in enumerate(paper_file.get('sections', [])):
                     sid = f"{detect_type}_paper_{file_idx}_{sec_idx}"
-                    section_meta[sid] = {
+                    section_meta.setdefault(sid, {
                         'title': section.get('title', ''),
                         'page_number': section.get('page_number'),
                         'source_file': file_name,
-                    }
+                    })
         if detect_type in ('review', 'multi'):
             for file_idx, review_file in enumerate(snapshot.get('review_files', [])):
                 file_name = review_file.get('file_name', '')
                 for sec_idx, section in enumerate(review_file.get('sections', [])):
                     sid = f"{detect_type}_review_file_{file_idx}_{sec_idx}"
-                    section_meta[sid] = {
+                    section_meta.setdefault(sid, {
                         'title': section.get('title', ''),
                         'page_number': section.get('page_number'),
                         'source_file': file_name,
-                    }
+                    })
             for text_idx in range(len(snapshot.get('review_texts', []))):
                 sid = f"{detect_type}_review_text_{text_idx}"
-                section_meta[sid] = {
+                section_meta.setdefault(sid, {
                     'title': f'评审文本 {text_idx + 1}',
                     'page_number': None,
                     'source_file': '',
-                }
+                })
 
         per_section = []
         for r in batch_results:
@@ -322,7 +505,11 @@ class StructuredDetectionService:
                 'text': text_item.get('text', ''),
                 'title': meta.get('title', ''),
                 'page_number': meta.get('page_number'),
+                'page_numbers': meta.get('page_numbers') or [],
                 'source_file': meta.get('source_file', ''),
+                'original_item_ids': meta.get('original_item_ids') or [],
+                'original_titles': meta.get('original_titles') or [],
+                'aggregation': meta.get('aggregation') or {},
             })
 
         consistency = StructuredDetectionService._score_consistency(scores)
@@ -330,7 +517,7 @@ class StructuredDetectionService:
         if detect_type == 'paper':
             dimensions = [
                 {'name': 'aigc_generation', 'score': round(avg_aigc, 4),
-                 'summary': 'BERT AI生成概率（论文全文段落汇总）'},
+                 'summary': f'{method_name} AI生成概率（论文全文段落汇总）'},
                 {'name': 'section_consistency', 'score': round(consistency, 4),
                  'summary': '各段落预测结果的一致性'},
                 {'name': 'aigc_section_ratio', 'score': round(aigc_count / n, 4) if n else 0,
@@ -346,7 +533,7 @@ class StructuredDetectionService:
         elif detect_type == 'review':
             dimensions = [
                 {'name': 'aigc_generation', 'score': round(avg_aigc, 4),
-                 'summary': 'BERT AI生成概率（评审文本汇总）'},
+                 'summary': f'{method_name} AI生成概率（评审文本汇总）'},
                 {'name': 'aigc_section_ratio', 'score': round(aigc_count / n, 4) if n else 0,
                  'summary': f'{aigc_count}/{n} 个评审段落被分类为AI生成'},
                 {'name': 'cross_text_consistency', 'score': round(consistency, 4),
@@ -362,7 +549,7 @@ class StructuredDetectionService:
         else:
             dimensions = [
                 {'name': 'aigc_generation', 'score': round(avg_aigc, 4),
-                 'summary': 'BERT AI生成概率（全部材料汇总）'},
+                 'summary': f'{method_name} AI生成概率（全部材料汇总）'},
                 {'name': 'cross_material_consistency', 'score': round(consistency, 4),
                  'summary': '论文与评审文本预测结果的一致性'},
                 {'name': 'aigc_ratio', 'score': round(aigc_count / n, 4) if n else 0,
@@ -384,12 +571,13 @@ class StructuredDetectionService:
                 'confidence_score': round(avg_aigc, 4),
                 'risk_level': risk_level,
             },
-            'summary': f'BERT文本分类完成，共检测 {n} 个文本段落',
+            'summary': f'{method_name}文本分类完成，共检测 {n} 个文本段落',
             'material_summary': material_summary,
             'dimensions': dimensions,
             'evidence': {
                 'model_dir': batch_response.get('model_dir'),
                 'lang': batch_response.get('lang'),
+                'detection_mode': detection_mode,
                 'section_count': n,
                 'aigc_section_count': aigc_count,
                 'aggregate': aggregate,
@@ -607,7 +795,7 @@ class StructuredDetectionService:
             targeted_texts = {
                 'paper_summary': paper_summary,
                 'review_texts': [{'id': t['id'], 'text': t['text'][:2000]} for t in review_items],
-                'bert_score_summary': {
+                'text_model_score_summary': {
                     'paper_avg_aigc': result_payload_stripped.get('material_cards', [{}])[0].get('score', 0)
                     if any(c.get('type') == 'paper' for c in result_payload_stripped.get('material_cards', []))
                     else 0,
@@ -696,7 +884,7 @@ class StructuredDetectionService:
 
     @staticmethod
     def _build_basic_cross_analysis(result_payload, ai_response, text_items=None, snapshot=None):
-        """当LLM不可用时，从BERT结果生成基础交叉分析。"""
+        """当LLM不可用时，从文本鉴伪结果生成基础交叉分析。"""
         evidence = result_payload.get('evidence') or ai_response.get('evidence') or {}
         per_section = evidence.get('per_section', [])
 
@@ -726,7 +914,8 @@ class StructuredDetectionService:
         if abs(paper_rate - review_rate) > 0.3:
             recommendations.append('论文与评审材料的AI生成比例差异较大，建议进行交叉验证')
         if not cross_checks:
-            cross_checks.append('各材料BERT文本分类均未发现明显AI生成痕迹')
+            method_name = 'FastDetectGPT' if evidence.get('detection_mode') == 'fast_detect_gpt' else 'BERT'
+            cross_checks.append(f'各材料{method_name}文本分类均未发现明显AI生成痕迹')
 
         # --- Enhanced correlation analysis ---
         relevance_data = result_payload.get('_relevance_data')
@@ -868,7 +1057,7 @@ class StructuredDetectionService:
         # 3. Call GPU server (with retry)
         results = get_result(zip_path, data_path)
         retry_count = 0
-        while (results is None or len(results[1][1]) != len(detection_results)) and retry_count < 3:
+        while (results is None or len(results[1][1]) != len(detection_results)) and retry_count < 2:
             reconnect()
             retry_count += 1
             results = get_result(zip_path, data_path)
@@ -977,9 +1166,20 @@ class StructuredDetectionService:
         text_items = StructuredDetectionService._extract_text_items_from_snapshot(snapshot, task.detect_type)
         if not text_items:
             raise ValueError(f'No extractable text found for detect_type={task.detect_type}')
-        batch_response = BertTextAIDetectionBridge.submit_batch(text_items)
-        ai_response = StructuredDetectionService._aggregate_bert_batch(
-            batch_response, task.detect_type, snapshot, text_items
+
+        detection_mode = (task.extra_payload or {}).get('detection_mode') or 'bert_text'
+        if detection_mode not in {'bert_text', 'fast_detect_gpt'}:
+            detection_mode = 'bert_text'
+
+        if detection_mode == 'fast_detect_gpt':
+            batch_response = FastDetectGPTAIDetectionBridge.submit_batch(
+                [{'id': item['id'], 'text': item['text']} for item in text_items]
+            )
+        else:
+            batch_response = BertTextAIDetectionBridge.submit_batch(text_items)
+
+        ai_response = StructuredDetectionService._aggregate_text_batch(
+            batch_response, task.detect_type, snapshot, text_items, detection_mode
         )
         result_payload = StructuredDetectionService.normalize_result_payload(task, snapshot, ai_response)
 
@@ -1037,7 +1237,7 @@ class StructuredDetectionService:
         llm_result = StructuredDetectionService._run_llm_analysis(task, result_payload, ai_response, text_items)
         if llm_result is not None:
             result_payload['llm_analysis'] = llm_result
-            # 用LLM生成的中文摘要替换BERT英文摘要
+            # 用LLM生成的中文摘要替换文本模型摘要
             if llm_result.get('summary'):
                 result_payload['summary'] = llm_result['summary']
             if task.detect_type == 'multi':
