@@ -524,7 +524,7 @@ const templateLevel = computed(() => {
 
 // LLM analysis
 const llmAnalysis = computed(() => {
-  return props.taskMeta?.result?.llm_analysis || props.taskMeta?.ai_response?.llm_analysis || null
+  return props.taskMeta?.llm_analysis || props.taskMeta?.result?.llm_analysis || props.taskMeta?.ai_response?.llm_analysis || null
 })
 
 // Dimensions
@@ -1075,7 +1075,7 @@ onMounted(async () => {
                   <div class="d-flex flex-column gap-2">
                     <div class="info-item d-flex align-center" :class="isDarkMode ? 'info-item-dark' : ''">
                       <v-icon :color="isDarkMode ? 'grey-lighten-1' : 'grey-darken-2'" class="mr-2">mdi-clock-outline</v-icon>
-                      <span class="text-body-1">检测时间：{{ formatDateTime(firstDetectionTime) }}</span>
+                      <span class="text-body-1">检测时间：{{ formatDateTime(taskMeta?.completion_time || taskMeta?.upload_time) }}</span>
                     </div>
                     <div class="info-item d-flex align-center" :class="isDarkMode ? 'info-item-dark' : ''">
                       <v-icon :color="isDarkMode ? 'grey-lighten-1' : 'grey-darken-2'" class="mr-2">mdi-pound</v-icon>
@@ -1713,48 +1713,6 @@ onMounted(async () => {
         </v-col>
       </v-row>
 
-      <!-- LLM Analysis Card -->
-      <v-row v-if="llmAnalysis">
-        <v-col cols="12">
-          <v-card class="mb-6" elevation="2" rounded="lg">
-            <v-card-title class="pa-6">
-              <v-icon color="purple" class="mr-2">mdi-robot</v-icon>
-              <span class="text-h6">大模型分析</span>
-              <v-chip
-                v-if="llmAnalysis.risk_level"
-                :color="llmAnalysis.risk_level === 'high' ? 'error' : llmAnalysis.risk_level === 'medium' ? 'warning' : 'success'"
-                size="small"
-                class="ml-4"
-              >
-                {{ llmAnalysis.risk_level === 'high' ? '高风险' : llmAnalysis.risk_level === 'medium' ? '中风险' : '低风险' }}
-              </v-chip>
-            </v-card-title>
-            <v-card-text class="pa-6">
-              <div v-if="typeof llmAnalysis === 'string'" class="text-body-1 analysis-text">
-                {{ llmAnalysis }}
-              </div>
-              <div v-else-if="typeof llmAnalysis === 'object'">
-                <v-row>
-                  <v-col
-                    v-for="(value, key) in llmAnalysis"
-                    :key="String(key)"
-                    cols="12"
-                    sm="6"
-                  >
-                    <div class="llm-field">
-                      <div class="text-subtitle-2 font-weight-bold mb-1">{{ getChineseLabel(String(key)) }}</div>
-                      <v-card variant="outlined" rounded="lg" class="pa-3">
-                        <div class="text-body-2">{{ formatLlmAnalysisValue(value) }}</div>
-                      </v-card>
-                    </div>
-                  </v-col>
-                </v-row>
-              </div>
-            </v-card-text>
-          </v-card>
-        </v-col>
-      </v-row>
-
       <!-- Review Statistics Row -->
       <v-row class="mb-6">
         <v-col cols="12" md="3">
@@ -2130,6 +2088,51 @@ onMounted(async () => {
         </v-col>
       </v-row>
     </template>
+
+    <!-- LLM Analysis Card -->
+    <v-row>
+      <v-col cols="12">
+        <v-card class="mb-6" elevation="2" rounded="lg">
+          <v-card-title class="pa-6">
+            <v-icon color="purple" class="mr-2">mdi-robot</v-icon>
+            <span class="text-h6">大模型分析</span>
+            <v-chip
+              v-if="llmAnalysis?.risk_level"
+              :color="llmAnalysis.risk_level === 'high' ? 'error' : llmAnalysis.risk_level === 'medium' ? 'warning' : 'success'"
+              size="small"
+              class="ml-4"
+            >
+              {{ llmAnalysis.risk_level === 'high' ? '高风险' : llmAnalysis.risk_level === 'medium' ? '中风险' : '低风险' }}
+            </v-chip>
+          </v-card-title>
+          <v-card-text class="pa-6">
+            <div v-if="!llmAnalysis" class="text-body-2 text-medium-emphasis">
+             暂未开启大模型分析。请联系组织管理员在模型管理页面配置大模型 API 源。
+            </div>
+            <div v-else-if="typeof llmAnalysis === 'string'" class="text-body-1 analysis-text">
+              {{ llmAnalysis }}
+            </div>
+            <div v-else-if="typeof llmAnalysis === 'object'">
+              <v-row>
+                <v-col
+                  v-for="(value, key) in llmAnalysis"
+                  :key="String(key)"
+                  cols="12"
+                  sm="6"
+                >
+                  <div class="llm-field">
+                    <div class="text-subtitle-2 font-weight-bold mb-1">{{ getChineseLabel(String(key)) }}</div>
+                    <v-card variant="outlined" rounded="lg" class="pa-3">
+                      <div class="text-body-2">{{ formatLlmAnalysisValue(value) }}</div>
+                    </v-card>
+                  </div>
+                </v-col>
+              </v-row>
+            </div>
+          </v-card-text>
+        </v-card>
+      </v-col>
+    </v-row>
 
     <!-- ========== Section Detail Dialog (for TOP5 clicks) ========== -->
     <v-dialog v-model="showParagraphDialog" max-width="800">

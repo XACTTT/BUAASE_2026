@@ -142,7 +142,7 @@ const summaryText = computed(() => {
 
 // LLM analysis
 const llmAnalysis = computed(() => {
-  return result.value?.llm_analysis || props.taskMeta?.ai_response?.llm_analysis || null
+  return props.taskMeta?.llm_analysis || result.value?.llm_analysis || props.taskMeta?.ai_response?.llm_analysis || null
 })
 
 // AI contribution

@@ -1603,6 +1603,8 @@ def _serialize_structured_task_result(
         'material_cards': payload.get('material_cards') or [],
         'cross_material_analysis': payload.get('cross_material_analysis') or {},
         'ai_contribution': payload.get('ai_contribution') or [],
+        'upload_time': task.upload_time.strftime('%Y-%m-%d %H:%M:%S') if task.upload_time else None,
+        'completion_time': task.completion_time.strftime('%Y-%m-%d %H:%M:%S') if task.completion_time else None,
         'review_template_metric_available': review_template_metric_available,
         'result': payload,
         'ai_response': ai_response,
